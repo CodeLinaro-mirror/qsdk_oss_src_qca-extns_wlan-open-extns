@@ -3,16 +3,22 @@
  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
-#include <net/mac80211.h>
-#include <linux/skbuff.h>
-#include "../ieee80211_i.h"
-
 #ifndef CMN_EXTN_H
 #define CMN_EXTN_H
 
 struct ieee802_11_elems;
 enum ieee80211_conn_mode;
 struct ieee80211_conn_settings;
+struct sk_buff;
+struct ieee80211_sub_if_data;
+struct ieee80211_vif;
+struct ieee80211_local;
+struct link_sta_info;
+struct ieee80211_supported_band;
+struct cfg80211_bss;
+struct cfg80211_chan_def;
+struct ieee80211_link_sta;
+
 
 struct bw240MHz_parameters_extn {
 	struct ieee80211_240mhz_vendor_oper_extn *eht_240mhz_cap;

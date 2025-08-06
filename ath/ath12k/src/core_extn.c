@@ -21,6 +21,7 @@
 #include "../ce.h"
 #include "../hw.h"
 #include "ath12k_cmn_extn.h"
+#include "../net/mac80211/ieee80211_i.h"
 
 
 void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif)

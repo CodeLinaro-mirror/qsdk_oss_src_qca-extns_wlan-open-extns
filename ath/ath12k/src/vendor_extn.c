@@ -8,9 +8,9 @@
 #include <net/mac80211.h>
 #include <net/genetlink.h>
 #include <net/cfg80211.h>
+#include "../core.h"
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
-#include "../core.h"
 #include "../net/wireless/core.h"
 #include "../debug.h"
 #include "../mac.h"

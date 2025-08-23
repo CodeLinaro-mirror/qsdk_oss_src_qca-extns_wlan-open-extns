@@ -23,6 +23,10 @@ ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
 
 	ieee80211_240mhz_cap_to_eht_cap_extn(sdata, link_sta, sband,
 				bss->bss_extn.params_240MHz.eht_240mhz_cap);
+
+	link_sta->cur_max_bandwidth = ieee80211_sta_cap_rx_bw(link_sta);
+	link_sta->pub->bandwidth = ieee80211_sta_cur_vht_bw(link_sta);
+	link_sta->pub->sta_max_bandwidth = link_sta->cur_max_bandwidth;
 }
 
 void

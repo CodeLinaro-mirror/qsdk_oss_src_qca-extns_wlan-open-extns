@@ -116,11 +116,12 @@ Signed-off-by: Venkateswara Swamy Bandaru <vbandaru@qti.qualcomm.com>
  #include "mac.h"
  #include "ppe.h"
  #include "vendor.h"
-@@ -6590,6 +6595,16 @@ static struct wiphy_vendor_command ath12
+@@ -6590,6 +6595,18 @@ static struct wiphy_vendor_command ath12
  		.maxattr = QCA_WLAN_VENDOR_ATTR_DCS_MAX,
  		.flags = WIPHY_VENDOR_CMD_NEED_NETDEV,
  	},
 +
++#ifdef CPTCFG_QCN_EXTN
 +	{
 +		.info.vendor_id = QCA_NL80211_VENDOR_ID,
 +		.info.subcmd = QCA_NL80211_VENDOR_SUBCMD_240MHZ_INFO,
@@ -129,6 +130,7 @@ Signed-off-by: Venkateswara Swamy Bandaru <vbandaru@qti.qualcomm.com>
 +		.maxattr = QCA_WLAN_VENDOR_ATTR_240MHZ_MAX,
 +		.flags = WIPHY_VENDOR_CMD_NEED_NETDEV,
 +	},
++#endif
 +
  };
  

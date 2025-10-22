@@ -28,6 +28,46 @@ struct sta_240mhz_info {
 	struct list_head list;
 };
 
+#ifndef CPTCFG_QCN_EXTN
+
+static inline void
+ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
+			    const struct ieee80211_ops_extn *ops_extn)
+{
+	return;
+}
+
+static inline void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab)
+{
+	return;
+}
+
+static inline void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
+{
+	return;
+}
+
+static inline void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif)
+{
+	return;
+}
+
+static inline int
+ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
+				u8 *mac,
+				struct ieee80211_240mhz_vendor_oper_extn
+				*params)
+{
+	return -1;
+}
+
+static inline void ath12k_mac_setup_radio_iface_comb_extn(
+		struct ieee80211_iface_combination *comb)
+{
+	return;
+}
+
+#else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 			  const struct ieee80211_ops_extn *ops_extn);
@@ -45,5 +85,5 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb);
-
-#endif /*ATH12K_CMN_EXTN_H*/
+#endif /* CPTCFG_QCN_EXTN */
+#endif /* ATH12K_CMN_EXTN_H */

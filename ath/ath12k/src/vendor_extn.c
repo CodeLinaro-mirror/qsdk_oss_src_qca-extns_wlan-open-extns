@@ -28,6 +28,70 @@ ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 		.type = NLA_BINARY, .len = 3 },
 };
 
+const struct nla_policy
+ath12k_rule_config_policy[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] = NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN),
+};
+
+int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif, u8 *mac_addr)
+{
+	struct wireless_dev *wdev;
+	struct sk_buff *skb;
+
+	wdev = ieee80211_vif_to_wdev(vif);
+	if (!wdev)
+		return -EINVAL;
+
+	skb = cfg80211_vendor_event_alloc(wdev->wiphy, wdev, NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_SCS_RULE_CONFIG_INDEX,
+					  GFP_ATOMIC);
+	if (!skb)
+		return -ENOMEM;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR,
+		    ETH_ALEN, mac_addr)) {
+		kfree(skb);
+		return -ENOBUFS;
+	}
+
+	cfg80211_vendor_event(skb, GFP_ATOMIC);
+	ath12k_dbg(NULL, ATH12K_DBG_MAC, "rule config notify %pM", mac_addr);
+	return 0;
+}
+
+int ath12k_vendor_rule_config_notify(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data,
+				      int data_len)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	u8 mac_addr[ETH_ALEN] = {0};
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1];
+	int ret;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX, data,
+			data_len, ath12k_rule_config_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "Invalid attribute in rule config notify %d\n", ret);
+		return ret;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] &&
+	    (nla_len(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR]) == ETH_ALEN)) {
+		memcpy(mac_addr,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR]),
+		       ETH_ALEN);
+	} else {
+		ath12k_err(NULL, "Invalid MAC address in rule config notify\n");
+		return -EINVAL;
+	}
+
+	ath12k_vendor_send_rule_config_notify(vif, mac_addr);
+
+	ath12k_info(NULL, "scs rule config mac addr : %pM\n", mac_addr);
+
+	return 0;
+}
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
 				      struct wireless_dev *wdev,

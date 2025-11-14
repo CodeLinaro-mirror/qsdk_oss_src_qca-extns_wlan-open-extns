@@ -33,6 +33,34 @@ int ath12k_vendor_rule_config_notify(struct wiphy *wiphy,
 	return -1;
 }
 
+int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       struct ath12k_wifi_generic_params *params,
+				       u32 *value)
+{
+    return -1;
+}
+
+int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params,
+					u32 *value)
+{
+    return -1;
+}
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -44,6 +72,22 @@ int ath12k_vendor_rule_config_notify(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     const void *data,
 				     int data_len);
+
+int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       struct ath12k_wifi_generic_params *params,
+				       u32 *value);
+
+int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params,
+					u32 *value);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* VENDOR_EXTN_H */

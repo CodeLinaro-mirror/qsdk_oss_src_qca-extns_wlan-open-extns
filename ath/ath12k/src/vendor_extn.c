@@ -170,3 +170,331 @@ int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
 
 	return 0;
 }
+
+/* Send a 'reload' NL80211 event to userspace
+ * link_id is 'invalid' for non-mlo wdev.
+ * For mlo wdev, if 'invalid' link_id is passed, userspace will reload all
+ * BSSes of the mlo
+ * If valid link_id is passed for mlo wdev, only that BSS is reset
+ * in userspace.
+ */
+static int ath12k_vendor_event_iface_reload_link(struct wiphy *wiphy,
+                                            struct wireless_dev *wdev, u8 link_id)
+{
+        struct sk_buff *skb;
+
+        skb = cfg80211_vendor_event_alloc(wiphy, wdev,
+                                          NLMSG_DEFAULT_SIZE,
+                                          QCA_NL80211_VENDOR_SUBCMD_IFACE_RELOAD_INDEX,
+                                          GFP_KERNEL);
+        if (!skb)
+                return -ENOMEM;
+
+        if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_IFACE_RELOAD_LINKID, link_id)) {
+                kfree_skb(skb);
+                return -EINVAL;
+        }
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "send event to userspace link_id %d\n", link_id);
+        cfg80211_vendor_event(skb, GFP_KERNEL);
+
+        return 0;
+}
+
+/* Find the wdevs corresponding to the radio index of the wiphy
+ * and send the reload event to userspace
+ */
+static int ath12k_vendor_event_iface_reload(struct wiphy *wiphy, u8 radio_idx)
+{
+        struct ieee80211_hw *hw = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar = NULL;
+        struct ath12k_link_vif *arvif = NULL;
+        struct wireless_dev *wdev = NULL;
+
+        hw = wiphy_to_ieee80211_hw(wiphy);
+        ah = hw->priv;
+        ar = &ah->radio[radio_idx];
+        if (!ar) {
+                ath12k_err(NULL, "Failed to find ar\n");
+                return -ENODATA;
+        }
+        list_for_each_entry(arvif, &ar->arvifs, list) {
+                wdev = ieee80211_vif_to_wdev(arvif->ahvif->vif);
+                if (!wdev) {
+                        ath12k_err(NULL, "Failed to find wdev\n");
+                        return -ENODATA;
+                }
+                ath12k_vendor_event_iface_reload_link(wiphy, wdev, arvif->link_id);
+        }
+	        return 0;
+}
+
+/* Set link-vif level parameters
+ * set 'reload' to true to send reload event to userspace */
+static int ath12k_vendor_set_arvif_params(struct ath12k *ar, u32 param,
+                                          u32 value, bool *reload)
+{
+        int ret = -1;
+
+        switch (param) {
+        case QCA_WLAN_VENDOR_VDEV_PARAM_TEST_RELOAD:
+                *reload = true;
+                ret = 0;
+                break;
+        case PARAM_RADIO_TXCHAINSOFT:
+                ret = ath12k_mac_set_tx_antenna(ar, value);
+                break;
+        case ACFG_PARAM_RADIO_RXCHAINMASK:
+                ret = ath12k_mac_set_rx_antenna(ar, value);
+                break;
+        default:
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                           "Un-supported param: %d\n", param);
+                break;
+        }
+
+        return ret;
+}
+
+/* Set radio level parameters
+ * set 'reload' to true to send reload event to userspace */
+static int ath12k_vendor_set_radio_params(struct ath12k *ar,
+                                          u32 param, u32 value, bool *reload)
+{
+        int ret = -1;
+
+        switch (param) {
+        case QCA_WLAN_VENDOR_RADIO_PARAM_TEST_RELOAD:
+                *reload = true;
+                ret = 0;
+                break;
+        default:
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                           "Un-supported param: %d\n", param);
+                break;
+        }
+
+        return ret;
+}
+
+/* Find the link-vif of the wdev with the link id to set params
+ * If link id is invalid use the default link
+ */
+int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif = NULL;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar;
+        u32 *data = (u32 *)params->data;
+        u32 param = params->value;
+        bool reload = false;
+        u32 value;
+        int ret = -1;
+
+        lockdep_assert_wiphy(wiphy);
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif || !data)
+                return -EINVAL;
+
+        value = *data;
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif)
+                return -EINVAL;
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else {
+                if (params->link_id < ATH12K_NUM_MAX_LINKS)
+                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                return -EINVAL;
+        }
+
+        ar = arvif->ar;
+        rcu_read_unlock();
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "vif: %p param: %d value: %d if: %d link: %d\n",
+                   vif, param, value,
+                   params->ifindex, params->link_id);
+
+        ret = ath12k_vendor_set_arvif_params(ar, param, value, &reload);
+
+        if (!ret && reload)
+                ath12k_vendor_event_iface_reload_link(wiphy, wdev, params->link_id);
+
+        return ret;
+}
+
+/* Find the 'ar' radio instance using the radio index of the wiphy
+ * to set params
+ */
+int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_hw *hw = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar = NULL;
+        u32 param = params->value;
+        u32 *data = (u32 *)params->data;
+        u32 value = *data;
+        int ret = -1;
+        bool reload = false;
+
+        lockdep_assert_wiphy(wiphy);
+
+        if (params->radio_idx == INVALID_RADIO_INDEX)
+                return -ENODATA;
+
+        hw = wiphy_to_ieee80211_hw(wiphy);
+        ah = hw->priv;
+        ar = &ah->radio[params->radio_idx];
+        if (!ar) {
+                ath12k_err(NULL, "Failed to find ar\n");
+                return -ENODATA;
+        }
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "ar: %p param: %d value: %d if: %d radio: %d\n",
+                   ar, param, value,
+                   params->ifindex, params->radio_idx);
+
+        ret = ath12k_vendor_set_radio_params(ar, param, value, &reload);
+
+        if (!ret && reload)
+                ath12k_vendor_event_iface_reload(wiphy, params->radio_idx);
+
+        return ret;
+}
+
+/* Get link-vif level parameters */
+static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
+                                          u32 param, u32 *value)
+{
+        int ret = -1;
+
+        switch (param) {
+        case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
+                *value = 0;
+                ret = 0;
+                break;
+        default:
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                           "Un-supported param: %d\n", param);
+                break;
+        }
+
+        return ret;
+}
+
+/* Get radio level parameters */
+static int ath12k_vendor_get_radio_params(struct ath12k *ar,
+                                          u32 param, u32 *value)
+{
+        int ret = -1;
+
+        switch (param) {
+        case QCA_WLAN_VENDOR_RADIO_PARAM_TEST:
+                *value = 0;
+                ret = 0;
+                break;
+        default:
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                           "Un-supported param: %d\n", param);
+                break;
+        }
+
+        return ret;
+}
+
+/* Find the link-vif of the wdev with the link id to get params
+ * If link id is invalid use the default link
+ */
+int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       struct ath12k_wifi_generic_params *params,
+				       u32 *value)
+
+{
+        struct ieee80211_vif *vif = NULL;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+        struct ath12k_hw *ah = hw->priv;
+        int param = params->value;
+        int ret = -1;
+
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif)
+                return -EINVAL;
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+       if (!ahvif)
+                return -EINVAL;
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else {
+                if (params->link_id < ATH12K_NUM_MAX_LINKS)
+                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif) {
+                rcu_read_unlock();
+                return -EINVAL;
+        }
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "vif: %p param: %d if: %d link: %d\n",
+                   vif, param, params->ifindex, params->link_id);
+
+        ret = ath12k_vendor_get_arvif_params(arvif, param, value);
+        rcu_read_unlock();
+
+        return ret;
+}
+
+/* Find the 'ar' radio instance using the radio index of the wiphy
+ * to get params
+ */
+int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params,
+					u32 *value)
+{
+        struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+        struct ath12k_hw *ah = hw->priv;
+        struct ath12k *ar = NULL;
+        int param = params->value;
+        int ret = -1;
+
+        if (params->radio_idx == INVALID_RADIO_INDEX)
+                return -ENODATA;
+
+        ar = &ah->radio[params->radio_idx];
+ if (!ar) {
+                ath12k_err(NULL, "Failed to find ar\n");
+                return -ENODATA;
+        }
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "ar: %p param: %d if: %d radio: %d\n",
+                   ar, param, params->ifindex, params->radio_idx);
+        ret = ath12k_vendor_get_radio_params(ar, param, value);
+
+        return ret;
+}

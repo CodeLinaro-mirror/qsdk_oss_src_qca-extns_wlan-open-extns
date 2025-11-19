@@ -90,4 +90,13 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 					u32 *value);
 
 #endif /* CPTCFG_QCN_EXTN */
+
+typedef enum _CLI_DPD_STATUS {
+    CLI_DPD_STATUS_DISABLED   =  0x0,  /* DPD disabled via CLI dpd_enable */
+    CLI_DPD_STATUS_PASS       =  0x1,  /* DPD triggered via CLI dpd_enable and calibration passed */
+    CLI_DPD_CMD_INPROGRES     =  0x2,  /* DPD triggered via CLI dpd_enable and no response received yet from target */
+    /* Add any new status if any here */
+    CLI_DPD_NA_STATE          =  0xFE, /* DPD not triggered via CLI command hence invalid/NA state */
+    CLI_DPD_STATUS_FAIL       =  0xFF, /* DPD triggered via CLI dpd_enable & calibration failed OR DPD disabled BDF is loaded*/
+} CLI_DPD_STATUS;
 #endif /* VENDOR_EXTN_H */

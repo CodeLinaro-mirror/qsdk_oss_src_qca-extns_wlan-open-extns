@@ -49,7 +49,11 @@ struct sta_240mhz_info {
 
 /* Maximum wait time for off-channel operations (milliseconds). */
 #define ATH12K_MAX_OFFCHAN_WAIT        50
-
+/* Maximum number of custom pkts for tx per request */
+#define ATH12K_MAX_CUSTOM_TX_PKT	20
+/* Checks whether SKB has custom pkt */
+#define ATH12K_IS_CUSTOM_PKT(cb)	(cb->flags & (ATH12K_SKB_CUSTOM_MGMT_TX |\
+						      ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX))
 /**
  * struct ath12k_offchan_stat - statistics for off-channel activity
  * @noise_floor:        Noise floor in dBm (signed 16-bit).
@@ -87,6 +91,7 @@ struct ath12k_offchan_stat {
  * @vif:                  Associated virtual interface.
  * @transaction_id:       Transaction identifier per request.
  * @num_cmpl_pending:     Number of pending completions.
+ * @custom_tx_status:     Tx completion status of queued packets.
  * @home_chan:            True if currently on the home channel.
  */
 struct ath12k_raw_pkt_ctx {
@@ -97,6 +102,7 @@ struct ath12k_raw_pkt_ctx {
 	struct ieee80211_vif  *vif;
 	u32 transaction_id;
 	atomic_t num_cmpl_pending;
+	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
 	bool home_chan;
 };
 
@@ -164,6 +170,15 @@ static inline void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 }
 
+static inline int ath12k_custom_tx_extn(struct sk_buff *skb)
+{
+	return -1;
+}
+
+
+static inline void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
+{
+}
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -185,6 +200,38 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 				     u8 *mac,
 				     struct ieee80211_240mhz_vendor_oper_extn
 				     *params);
+/**
+ * ath12k_custom_tx_extn() - Extended custom transmission handler for
+ *                           management frames
+ * @skb: skb the frame to transmit
+ *
+ * This function handles the transmission of custom management frames,
+ * including both regular and off-channel transmissions.
+ * It performs various validation checks,
+ * manages the transmission queue, and directly invokes the workq handler.
+ *
+ * Return: 0 on success (frame queued for transmission)
+ *         -EINVAL if arvif or ar is NULL
+ *         -EOPNOTSUPP if called on monitor interface
+ *         -EPERM if device is in recovery, crash flush, or bridge mode
+ *         -EAGAIN if CAC is running or CSA is active
+ *         -EBUSY if queue is full or probe response threshold exceeded
+ */
+int ath12k_custom_tx_extn(struct sk_buff *skb);
+
+/**
+ * ath12k_custom_tx_free_extn() - Free custom management TX skb and
+ *                                update status
+ * @skb: Socket buffer containing the transmitted frame
+ * @status: Transmission status code from firmware
+ *
+ * This function handles the cleanup of custom management frames (both regular
+ * and off-channel) after transmission. It updates the transmission status in
+ * the virtual interface structure and frees the socket buffer.
+ *
+ * Return: Void
+ */
+void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
 
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb);

@@ -270,6 +270,29 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                 *reload = true;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_MGMT_RETRY_LIMIT:
+		if (value < ATH12K_MGMT_TX_RETRY_LIMIT_MIN ||
+		    value > ATH12K_MGMT_TX_RETRY_LIMIT_MAX) {
+			ath12k_err(NULL, "Invalid tx retry limit %u (range %d to %d)\n",
+				   value, ATH12K_MGMT_TX_RETRY_LIMIT_MIN,
+				   ATH12K_MGMT_TX_RETRY_LIMIT_MAX);
+			return -EINVAL;
+		}
+
+		/*
+		 * Firmware accounts the very first frame (without retry bit set) also
+		 * in the retry count. Increase the user provided tx retry count by 1
+		 * to match the number of tx frames with retry bit set in the air.
+		 */
+		ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_MGMT_RETRY_LIMIT,
+						value + 1, ar->pdev->pdev_id);
+		if (ret) {
+			ath12k_err(ar->ab, "Failed to set tx retry limit for mgmt frame: %d\n",
+				   ret);
+			return -EINVAL;
+		}
+		ar->mgmt_tx_retry_limit = value;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -356,11 +379,15 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
         lockdep_assert_wiphy(wiphy);
 
-        if (params->radio_idx == INVALID_RADIO_INDEX)
-                return -ENODATA;
-
         hw = wiphy_to_ieee80211_hw(wiphy);
         ah = hw->priv;
+
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index %u (valid range: 0..%u)\n",
+			   params->radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+		return -ENODATA;
+	}
+
         ar = &ah->radio[params->radio_idx];
         if (!ar) {
                 ath12k_err(NULL, "Failed to find ar\n");
@@ -411,6 +438,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 *value = 0;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_MGMT_RETRY_LIMIT:
+		*value = ar->mgmt_tx_retry_limit;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -482,8 +513,11 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
         int param = params->value;
         int ret = -1;
 
-        if (params->radio_idx == INVALID_RADIO_INDEX)
-                return -ENODATA;
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index %u (valid range: 0..%u)\n",
+			   params->radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+		return -ENODATA;
+	}
 
         ar = &ah->radio[params->radio_idx];
  if (!ar) {

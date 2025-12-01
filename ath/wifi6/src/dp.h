@@ -15,6 +15,53 @@
 struct ath12k_base;
 struct ath12k_dp;
 
+struct ath12k_dp_wifi6_rx_desc_info {
+	struct list_head list;
+	u32 cookie;
+	u8 pool_id;
+	dma_addr_t paddr;
+	struct sk_buff *skb;
+	u8 *vaddr;
+	u32 magic;
+	u8 in_use : 1,
+	   unmapped : 1,
+	   reserved : 6;
+	/* Add new fields here - new parameters should be added at the end
+	 * as the reset function (ath12k_wifi6_dp_rx_desc_reset) preserves
+	 * the 'list' 'cookie' and 'pool id' field and resets everything else
+	 */
+};
+
+struct ath12k_dp_rx_desc_pool {
+	struct ath12k_dp_wifi6_rx_desc_info *mon_desc_pool;
+	struct list_head rx_desc_free_list;
+	spinlock_t rx_mon_desc_lock;
+	bool dest_frag_enable;
+	struct page_frag_cache rx_mon_pf_cache;
+	u32 pool_size;
+	u8 owner;
+	u16 buf_size;
+	u8 buf_alignment;
+};
+
+
+struct ath12k_dp_wifi6 {
+	struct ath12k_dp *dp;
+	struct ath12k_dp_rx_desc_pool rx_desc_buf;
+	struct ath12k_dp_rx_desc_pool rx_desc_mon;
+	struct ath12k_dp_rx_desc_pool rx_desc_status;
+};
+
+static inline struct ath12k_dp_wifi6 *ath12k_get_dp_wifi6(struct ath12k_dp *dp)
+{
+	return (struct ath12k_dp_wifi6 *)dp->arch_data;
+}
+
+static inline struct ath12k_dp *ath12k_get_dp(struct ath12k_dp_wifi6 *dp_wifi6)
+{
+	return dp_wifi6->dp;
+}
+
 struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab);
 void ath12k_wifi6_dp_deinit(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_pdev_alloc(struct ath12k_base *ab);

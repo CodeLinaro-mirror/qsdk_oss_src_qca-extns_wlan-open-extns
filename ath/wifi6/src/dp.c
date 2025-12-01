@@ -129,8 +129,9 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		}
 	}
 	 */
-	if (dp->hw_params->ring_mask->reo_status[grp_id])
+	if (dp->hw_params->ring_mask->reo_status[grp_id]) {
 		ath12k_wifi6_dp_rx_process_reo_status(dp);
+	}
 
 	if (dp->hw_params->ring_mask->host2rxdma[grp_id]) {
 		struct dp_rxdma_ring *rx_ring = &dp->rx_refill_buf_ring;
@@ -339,26 +340,11 @@ static struct ath12k_dp_hw_group *ath12k_wifi6_dp_hw_group_alloc(void)
 static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_op_device_init = ath12k_wifi6_dp_op_device_init,
 	.dp_op_device_deinit = ath12k_wifi6_dp_op_device_deinit,
-	.dp_tx_get_vdev_bank_config = ath12k_wifi6_dp_tx_get_vdev_bank_config,
-	.dp_reo_cmd_send = ath12k_wifi6_dp_reo_cmd_send,
-	.setup_pn_check_reo_cmd = ath12k_wifi6_dp_setup_pn_check_reo_cmd,
-	.rx_peer_tid_delete = ath12k_wifi6_dp_rx_peer_tid_delete,
-	.reo_cache_flush = ath12k_wifi6_dp_reo_cache_flush,
 	.rx_link_desc_return = ath12k_wifi6_dp_rx_link_desc_return,
-	.peer_rx_tid_reo_update = ath12k_wifi6_peer_rx_tid_reo_update,
-	.alloc_reo_qdesc = ath12k_wifi6_dp_alloc_reo_qdesc,
-	.peer_rx_tid_qref_setup = ath12k_wifi6_peer_rx_tid_qref_setup,
+	.dp_hw_group_alloc = ath12k_wifi6_dp_hw_group_alloc,
 	.dp_pdev_alloc = ath12k_wifi6_dp_pdev_alloc,
 	.dp_pdev_free = ath12k_wifi6_dp_pdev_free,
-	.rx_fst_attach = ath12k_wifi6_dp_rx_fst_attach,
-	.rx_fst_detach = ath12k_wifi6_dp_rx_fst_detach,
-	.rx_flow_dump_entry = ath12k_wifi6_dp_rx_flow_dump_entry,
-	.rx_flow_add_entry = ath12k_wifi6_dp_rx_flow_add_entry,
-	.rx_flow_delete_entry = ath12k_wifi6_dp_rx_flow_delete_entry,
-	.rx_flow_delete_all_entries = ath12k_wifi6_dp_rx_flow_delete_all_entries,
-	.dump_fst_table = ath12k_wifi6_dp_dump_fst_table,
-	.dp_hw_group_alloc = ath12k_wifi6_dp_hw_group_alloc,
-	.peer_migrate_reo_cmd = ath12k_wifi6_dp_peer_migrate_reo_cmd,
+	.dp_tx_get_vdev_bank_config = ath12k_wifi6_dp_tx_get_vdev_bank_config,
 	.sdwf_reinject_handler = ath12k_wifi6_sdwf_reinject_handler,
 };
 

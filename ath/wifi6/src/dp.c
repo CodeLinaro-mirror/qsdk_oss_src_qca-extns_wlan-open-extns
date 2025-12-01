@@ -6,13 +6,10 @@
 #include "../../core.h"
 #include "../../debug.h"
 #include "../../dp_rx.h"
-#include "../../dp_tx.h"
 #include "../../hif.h"
 #include "../../dp_cmn.h"
 #include "dp_rx.h"
 #include "dp.h"
-#include "dp_tx.h"
-#include "dp_rx.h"
 #include "hal.h"
 
 static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
@@ -24,20 +21,9 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 	int work_done = 0;
 	int i = 0;
 	int tot_work_done = 0;
-	u8 rx_mask, tx_mask;
+	u8 rx_mask;
 
 	rx_mask = dp->hw_params->ring_mask->rx[grp_id];
-	tx_mask = dp->hw_params->ring_mask->tx[grp_id];
-
-	while (tx_mask) {
-		i = fls(tx_mask) - 1;
-		tx_mask ^= 1 << i;
-		work_done = ath12k_wifi6_dp_tx_completion_handler(dp, i, budget);
-		budget -= work_done;
-		tot_work_done += work_done;
-		if (budget <= 0)
-			goto done;
-	}
 
 	if (dp->hw_params->ring_mask->rx_err[grp_id]) {
 		work_done = ath12k_wifi6_dp_rx_process_err(dp, napi, budget);
@@ -313,7 +299,6 @@ static void ath12k_wifi6_dp_op_device_deinit(struct ath12k_dp *dp)
 	ath12k_dp_cc_cleanup(ab);
 	ath12k_dp_reoq_lut_cleanup(ab);
 	ath12k_dp_deinit_bank_profiles(ab);
-	ath12k_wifi6_dp_tx_ring_cleanup(ab);
 	ath12k_dp_srng_common_cleanup(ab);
 
 /*
@@ -344,8 +329,6 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_hw_group_alloc = ath12k_wifi6_dp_hw_group_alloc,
 	.dp_pdev_alloc = ath12k_wifi6_dp_pdev_alloc,
 	.dp_pdev_free = ath12k_wifi6_dp_pdev_free,
-	.dp_tx_get_vdev_bank_config = ath12k_wifi6_dp_tx_get_vdev_bank_config,
-	.sdwf_reinject_handler = ath12k_wifi6_sdwf_reinject_handler,
 };
 
 /* TODO: remove export once this file is built with wifi6 ko */

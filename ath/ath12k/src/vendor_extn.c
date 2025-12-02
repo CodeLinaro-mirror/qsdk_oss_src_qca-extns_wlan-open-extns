@@ -1545,3 +1545,88 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 {
 	return 0;
 }
+
+/**
+ * ath12k_vendor_fw_recovery_event - Send a firmware recovery
+ * vendor NL80211 event to userspace
+ * @wiphy: Pointer to the wireless PHY context
+ * @wdev: Pointer to the wireless device context
+ * @hw_link_id: Hardware link identifier
+ * @event_type: Vendor-defined recovery event type
+ * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
+				    struct wireless_dev *wdev,
+				    u8 hw_link_id, int event_type)
+{
+	struct sk_buff *skb;
+	void *hdr;
+
+	skb = cfg80211_vendor_event_alloc(wiphy, wdev,
+					  NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_WLAN_FW_RECOVERY_INDEX,
+					  GFP_KERNEL);
+	if (!skb)
+		return -ENOMEM;
+
+	hdr = nla_nest_start(skb, NL80211_ATTR_VENDOR_DATA);
+
+	if (!hdr) {
+		printk("Failed to start vendor data\n");
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_FW_RECOVERY_HW_LINK_ID, hw_link_id)) {
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+	if (nla_put_u8(skb, QCA_VENDOR_ATTR_FW_RECOVERY_EVENT_TYPE, event_type)) {
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+	nla_nest_end(skb, hdr);
+
+	ath12k_info(NULL, "send event to userspace hw_link_id %d event type is %d\n", hw_link_id, event_type );
+	cfg80211_vendor_event(skb, GFP_KERNEL);
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_send_event - Driver helper to
+ * send a device-wide firmware recovery vendor event
+ * @ab: Pointer to the ath12k base device context
+ * @event_flag: Vendor-defined recovery event type
+ * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
+ */
+void ath12k_vendor_send_event(struct ath12k_base *ab,
+			      u8 event_flag)
+{
+	struct ath12k_pdev *pdev;
+	struct ath12k *ar;
+
+	if (ab->num_radios > 0) {
+		/*
+		* Use the first radio's pdev context to send the vendor event.
+		* This assumes that the recovery event is device-wide and not
+		* specific to a particular radio.
+		*/
+		pdev = &ab->pdevs[0];
+		ar = pdev->ar;
+
+		if (ar && ar->ah && ar->ah->hw && ar->ah->hw->wiphy) {
+			ath12k_vendor_fw_recovery_event(ar->ah->hw->wiphy, NULL,
+							ar->hw_link_id,
+							event_flag);
+			ath12k_info(ab, "FW recovery vendor event send: event_type: %u link: %d\n",
+					event_flag, ar->hw_link_id);
+		} else {
+			ath12k_err(ab, "Cannot send recovery vendor event: invalid radio context\n");
+
+		}
+	} else {
+		ath12k_err(ab, "Cannot send recovery vendor event: no radios available\n");
+	}
+}

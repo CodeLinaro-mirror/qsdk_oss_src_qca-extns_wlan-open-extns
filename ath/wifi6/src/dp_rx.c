@@ -79,16 +79,6 @@ int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9274(struct ath12k_base *ab)
 	tlv_filter.offset_valid = true;
 	tlv_filter.rx_packet_offset = hal_rx_desc_sz;
 
-	tlv_filter.rx_mpdu_start_offset =
-		ath12k_wifi6_hal_rx_desc_get_mpdu_start_offset_qcn9274();
-	tlv_filter.rx_msdu_end_offset =
-		ath12k_wifi6_hal_rx_desc_get_msdu_end_offset_qcn9274();
-
-	tlv_filter.rx_mpdu_start_wmask =
-			ath12k_wifi6_hal_rx_mpdu_start_wmask_get_qcn9274();
-	tlv_filter.rx_msdu_end_wmask =
-			ath12k_wifi6_hal_rx_msdu_end_wmask_get_qcn9274();
-
 	ath12k_dbg(ab, ATH12K_DBG_DATA,
 		   "Configuring compact tlv masks rx_mpdu_start_wmask 0x%x rx_msdu_end_wmask 0x%x\n",
 		   tlv_filter.rx_mpdu_start_wmask, tlv_filter.rx_msdu_end_wmask);
@@ -97,7 +87,6 @@ int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9274(struct ath12k_base *ab)
 					       HAL_RXDMA_BUF,
 					       DP_RX_BUFFER_SIZE,
 					       &tlv_filter);
-
 	return ret;
 }
 

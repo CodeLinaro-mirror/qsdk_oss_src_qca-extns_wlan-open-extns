@@ -486,11 +486,12 @@ void ath12k_wifi6_hal_reo_shared_qaddr_cache_clear(struct ath12k_base *ab);
 void ath12k_hal_qcn9274_get_tsf2_scratch_reg(struct ath12k_base *ab,
 					     u8 mac_id, u64 *value);
 void ath12k_hal_qcn9274_get_tqm_scratch_reg(struct ath12k_base *ab, u64 *value);
-void ath12k_wifi6_hal_rx_msdu_list_get(void *desc,
-				       void *list,
-				       u16 *num_msdus);
+void ath12k_wifi6_hal_rx_msdu_list_get(void *desc, void *list, u16 *num_msdus);
 void ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get(void *rx_desc, dma_addr_t *paddr,
 					       u32 *sw_cookie,
 					       struct ath12k_buffer_addr **pp_buf_addr,
 					       u8 *rbm, u32 *msdu_cnt);
+void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,
+					   dma_addr_t paddr, u32 cookie,
+					   u8 manager);
 #endif

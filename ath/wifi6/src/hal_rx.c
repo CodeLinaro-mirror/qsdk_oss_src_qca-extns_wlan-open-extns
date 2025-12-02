@@ -1464,3 +1464,19 @@ void ath12k_wifi6_hal_reset_rx_reo_tid_q(void *vaddr,
 					  HAL_DESC_REO_QUEUE_EXT_DESC,
 					  REO_QUEUE_DESC_MAGIC_DEBUG_PATTERN_3);
 }
+
+void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,
+					   dma_addr_t paddr, u32 cookie,
+					   u8 manager)
+{
+	struct ath12k_buffer_addr *binfo = (struct ath12k_buffer_addr *)b_info;
+	u32 paddr_lo, paddr_hi;
+
+	paddr_lo = lower_32_bits(paddr);
+	paddr_hi = upper_32_bits(paddr);
+
+	binfo->info0 = le32_encode_bits(paddr_lo, WIFI6_BUFFER_ADDR_INFO0_ADDR);
+	binfo->info1 = le32_encode_bits(paddr_hi, WIFI6_BUFFER_ADDR_INFO1_ADDR) |
+		le32_encode_bits(manager, WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR) |
+		le32_encode_bits(cookie, WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
+}

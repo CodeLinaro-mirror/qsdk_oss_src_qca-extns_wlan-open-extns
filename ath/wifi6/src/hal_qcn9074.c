@@ -49,7 +49,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	[HAL_REO_CMD] = {
 		.start_ring_id = HAL_SRNG_RING_ID_REO_CMD,
 		.max_rings = 1,
-		.entry_size = (sizeof(struct hal_tlv_64_hdr) +
+		.entry_size = (sizeof(struct hal_tlv_hdr) +
 			sizeof(struct hal_reo_get_queue_stats)) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_SRC,
@@ -59,7 +59,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	[HAL_REO_STATUS] = {
 		.start_ring_id = HAL_SRNG_RING_ID_REO_STATUS,
 		.max_rings = 1,
-		.entry_size = (sizeof(struct hal_tlv_64_hdr) +
+		.entry_size = (sizeof(struct hal_tlv_hdr) +
 			sizeof(struct hal_reo_get_queue_stats_status)) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_DST,
@@ -718,4 +718,7 @@ const struct hal_ops hal_qcn9074_ops = {
 	.hal_mon_ops_init = NULL,
 	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
 	.rx_desc_get_fse_info = ath12k_wifi6_hal_rx_desc_get_fse_info_qcn9274,
+	.rx_reo_ent_buf_paddr_get = ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get,
+	.rx_msdu_list_get = ath12k_wifi6_hal_rx_msdu_list_get,
+	.rx_desc_get_mpdu_start_tag = ath12k_wifi6_hal_rx_desc_get_mpdu_start_tag_qcn9074,
 };

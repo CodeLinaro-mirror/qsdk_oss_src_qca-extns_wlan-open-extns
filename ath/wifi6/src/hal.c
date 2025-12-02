@@ -448,12 +448,12 @@ void ath12k_wifi6_hal_set_link_desc_addr(struct hal_wbm_link_desc *desc,
 					 u8 rbm)
 {
 	desc->buf_addr_info.info0 = le32_encode_bits((paddr & HAL_ADDR_LSB_REG_MASK),
-						     BUFFER_ADDR_INFO0_ADDR);
+						     WIFI6_BUFFER_ADDR_INFO0_ADDR);
 	desc->buf_addr_info.info1 =
 		le32_encode_bits(((u64)paddr >> HAL_ADDR_MSB_REG_SHIFT),
-				 BUFFER_ADDR_INFO1_ADDR) |
-		le32_encode_bits(rbm, BUFFER_ADDR_INFO1_RET_BUF_MGR) |
-		le32_encode_bits(cookie, BUFFER_ADDR_INFO1_SW_COOKIE);
+				WIFI6_BUFFER_ADDR_INFO1_ADDR) |
+		le32_encode_bits(rbm, WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR) |
+		le32_encode_bits(cookie, WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
 }
 
 u32 ath12k_wifi6_hal_ce_dst_status_get_length(struct hal_ce_srng_dst_status_desc *desc)
@@ -676,4 +676,19 @@ void ath12k_wifi6_hal_get_hw_hptp(struct ath12k_base *ab, enum hal_ring_type typ
 		*hp = ath12k_hif_read32(ab, reg_base);
 		*tp = ath12k_hif_read32(ab, reg_base + HAL_TCL1_RING_TP_OFFSET);
 	}
+}
+
+void *ath12k_wifi6_hal_srng_src_get_cur_desc_n_move_next(struct ath12k_base *ab,
+							  struct hal_srng *srng)
+{
+	void *curr_desc = NULL;
+	u32 next_hp;
+
+	curr_desc = srng->ring_base_vaddr + srng->u.src_ring.hp;
+	next_hp = (srng->u.src_ring.hp + srng->entry_size) % srng->ring_size;
+
+	if (next_hp != srng->u.src_ring.cached_tp)
+		srng->u.src_ring.hp = next_hp;
+
+	return curr_desc;
 }

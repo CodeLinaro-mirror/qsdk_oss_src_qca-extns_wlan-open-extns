@@ -574,14 +574,6 @@ ath12k_wifi6_hal_setup_link_idle_list(struct ath12k_base *ab,
 			   val);
 }
 
-void ath12k_wifi6_hal_tx_configure_bank_register(struct ath12k_base *ab,
-						 u32 bank_config,
-						 u8 bank_id)
-{
-	ath12k_hif_write32(ab, HAL_TCL_SW_CONFIG_BANK_ADDR + 4 * bank_id,
-			   bank_config);
-}
-
 u32 ath12k_wifi6_hal_tx_read_bank_register(struct ath12k_base *ab, u8 bank_id)
 {
 	u32 reg_val;

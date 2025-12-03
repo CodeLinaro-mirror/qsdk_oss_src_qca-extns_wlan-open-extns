@@ -13,10 +13,7 @@ void ath12k_wifi6_dp_mon_ops_register(struct ath12k_dp *dp)
 {
 	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
 
-	if (ath12k_dp_get_mon_type(dp) == ATH12K_DP_MON_TYPE_DUAL_RING)
-		dp_mon->mon_ops = &ath12k_wifi6_dp_arch_mon_dual_ring_ops;
-	else
-		dp_mon->mon_ops = &ath12k_wifi6_dp_arch_mon_quad_ring_ops;
+	dp_mon->mon_ops = &ath12k_wifi6_dp_arch_mon_quad_ring_ops;
 }
 
 static inline
@@ -53,6 +50,8 @@ void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp);
 void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp);
+int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 mac_id);
+void ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup(struct ath12k_pdev_dp *dp_pdev);
 int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp,
 					     int mac_id, struct napi_struct *napi,
 					     int *budget);

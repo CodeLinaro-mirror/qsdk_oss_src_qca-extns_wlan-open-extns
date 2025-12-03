@@ -264,9 +264,10 @@ static bool ath12k_reg_is_band_present(struct ath12k *ar, enum nl80211_band band
 
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
-static int ath12k_vendor_set_arvif_params(struct ath12k *ar, u32 param,
+static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
                                           u32 value, bool *reload)
 {
+	struct ath12k *ar = arvif->ar;
         int ret = -1;
 
         switch (param) {
@@ -279,14 +280,151 @@ static int ath12k_vendor_set_arvif_params(struct ath12k *ar, u32 param,
                 break;
         case ACFG_PARAM_RADIO_RXCHAINMASK:
                 ret = ath12k_mac_set_rx_antenna(ar, value);
-                break;
-        default:
-                ath12k_dbg(NULL, ATH12K_DBG_CFG,
-                           "Un-supported param: %d\n", param);
-                break;
-        }
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DYN_BW_RTS:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_DISABLE_DYN_BW_RTS, value);
+		if (!ret ) {
+			arvif->vap_cfg.dyn_bw_rts = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_DISABLE_DYN_BW_RTS to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CWM_ENABLE:
+		if (value >= 0) {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_PDEV_PARAM_DYNAMIC_BW, value);
+			if (!ret ) {
+				arvif->vap_cfg.cwm_enable = value;
+			} else {
+				ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_DYNAMIC_BW to firmware");
+			}
+		} else {
+			ath12k_err(NULL, "Enable Channel width management with a value of 0 or more.");
+			ret = -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RATE_DROPDOWN:
+#define RATE_DROPDOWN_LIMIT 7 /* Maximum Value for Rate Drop Down Logic */
+		if ((value >= 0) && (value <= RATE_DROPDOWN_LIMIT)) {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_RATE_DROPDOWN_BMAP, value);
+			if (!ret ) {
+				arvif->vap_cfg.rate_dropdown = value;
+			} else {
+				ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_RATE_DROPDOWN_BMAP to firmware");
+			}
+		} else {
+			ath12k_err(NULL, "Rate Control Logic is [0-7]");
+			ret = -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CTSPROT_DTIM_BCN:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_DTIM_ENABLE_CTS, value);
+		if (!ret ) {
+			arvif->vap_cfg.cts_dtim_bcn = !!value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_DTIM_ENABLE_CTS to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CABQ_MAXDUR:
+		if (value > 0 && value < 100) {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_CABQ_MAXDUR, value);
+			if (!ret ) {
+				arvif->vap_cfg.cabq_maxdur = value;
+			} else {
+				ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_CABQ_MAXDUR to firmware");
+			}
+		} else {
+			ath12k_err(NULL, "Percentage should be between 0 and 100.");
+			ret = -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RC_STALE_PERIOD:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_MCAST_RC_STALE_PERIOD, value);
+		if (!ret ) {
+			arvif->vap_cfg.mcast_rc_stale_period = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MCAST_RC_STALE_PERIOD to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ENABLE_MCAST_RC:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_ENABLE_MCAST_RC, value);
+		if (!ret ) {
+			arvif->vap_cfg.mcast_rc = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_ENABLE_MCAST_RC to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RC_NUM_RETRIES:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_RC_NUM_RETRIES, value);
+		if (!ret ) {
+			arvif->vap_cfg.rc_num_retries = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_RC_NUM_RETRIES to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DISABLE_CABQ:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_DISABLE_CABQ, value);
+		if (!ret ) {
+			arvif->vap_cfg.disable_cabq = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_DISABLE_CABQ to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_SOUNDING_MODE:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_SET_HE_SOUNDING_MODE, value);
+		if (!ret ) {
+			arvif->vap_cfg.he_snd_mode = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_SET_HE_SOUNDING_MODE to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_MAX_MTU_SIZE:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_MAX_MTU_SIZE, value);
+		if (!ret ) {
+			arvif->vap_cfg.max_mtu_size = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MAX_MTU_SIZE to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_GTX_ENABLE:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_GTX_ENABLE, value);
+		if (!ret ) {
+			arvif->vap_cfg.gtx_enable = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_GTX_ENABLE to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HWCTS2SELF_OFDMA:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "Invalid value, it should be 0 or 1.");
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_HWCTS2SELF_OFDMA, value);
+			if (!ret ) {
+				arvif->vap_cfg.hwcts2self_ofdma = value;
+			} else {
+				ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_HWCTS2SELF_OFDMA to firmware");
+			}
+		}
+		break;
+	default:
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				"Un-supported param: %d\n", param);
+		break;
+	}
 
-        return ret;
+	return ret;
 }
 
 /* Set radio level parameters
@@ -1197,14 +1335,14 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         }
 
         ar = arvif->ar;
-        rcu_read_unlock();
 
         ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "vif: %p param: %d value: %d if: %d link: %d\n",
                    vif, param, value,
                    params->ifindex, params->link_id);
 
-        ret = ath12k_vendor_set_arvif_params(ar, param, value, &reload);
+        ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload);
+        rcu_read_unlock();
 
         if (!ret && reload)
                 ath12k_vendor_event_iface_reload_link(wiphy, wdev, params->link_id);
@@ -1266,6 +1404,46 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
         switch (param) {
         case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
                 *value = 0;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DYN_BW_RTS:
+                *value = arvif->vap_cfg.dyn_bw_rts;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CWM_ENABLE:
+                *value = arvif->vap_cfg.cwm_enable;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RATE_DROPDOWN:
+                *value = arvif->vap_cfg.rate_dropdown;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CTSPROT_DTIM_BCN:
+                *value = arvif->vap_cfg.cts_dtim_bcn;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RC_STALE_PERIOD:
+                *value = arvif->vap_cfg.mcast_rc_stale_period;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ENABLE_MCAST_RC:
+                *value = arvif->vap_cfg.mcast_rc;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RC_NUM_RETRIES:
+                *value = arvif->vap_cfg.rc_num_retries;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DISABLE_CABQ:
+                *value = arvif->vap_cfg.disable_cabq;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_SOUNDING_MODE:
+                *value = arvif->vap_cfg.he_snd_mode;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_MAX_MTU_SIZE:
+                *value = arvif->vap_cfg.max_mtu_size;
                 ret = 0;
                 break;
         default:

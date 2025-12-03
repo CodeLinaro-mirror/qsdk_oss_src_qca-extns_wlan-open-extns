@@ -193,19 +193,15 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 		goto fail_dp_rx_free;
 	}
 
-/*
 	ret = ath12k_dp_mon_rx_alloc(dp);
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rxdma rings ret = %d\n", ret);
 		goto fail_dp_mon_rx_free;
 	}
-*/
 	return 0;
 
-/*
- * fail_dp_mon_rx_free:
+fail_dp_mon_rx_free:
 	ath12k_dp_mon_rx_free(dp);
-*/
 
 fail_dp_rx_free:
 	ath12k_wifi6_dp_rx_ring_free(ab);
@@ -231,9 +227,7 @@ static void ath12k_wifi6_dp_op_device_deinit(struct ath12k_dp *dp)
 	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
 	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
-/*
 	ath12k_dp_mon_rx_free(dp);
-*/
 	ath12k_wifi6_dp_rx_ring_free(ab);
 
 	ath12k_hif_ext_irq_cleanup(dp->ab);

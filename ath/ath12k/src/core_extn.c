@@ -82,3 +82,22 @@ void ath12k_mac_setup_radio_iface_comb_extn(
 	/* Add 320MHz support for 240MHz */
 	comb->radar_detect_widths |= BIT(NL80211_CHAN_WIDTH_320);
 }
+
+int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
+			  struct sk_buff *skb)
+{
+	switch (id) {
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+void ath12k_mac_setup_extn(struct ath12k *ar)
+{
+}
+
+void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
+{
+}

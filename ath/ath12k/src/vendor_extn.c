@@ -8,6 +8,7 @@
 #include <net/mac80211.h>
 #include <net/genetlink.h>
 #include <net/cfg80211.h>
+#include <linux/etherdevice.h>
 #include "../core.h"
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
@@ -15,6 +16,8 @@
 #include "../debug.h"
 #include "../mac.h"
 #include "esp_extn.h"
+#include "../ini.h"
+#include "../cmn_defs.h"
 
 
 const struct nla_policy
@@ -32,6 +35,17 @@ ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 const struct nla_policy
 ath12k_rule_config_policy[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] = NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN),
+};
+
+const struct nla_policy
+ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_RADIO_INDEX] = {.type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_RADIO_BSS_ID] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAC_ADDR] = { .len = ETH_ALEN },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_IFTYPE] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_FLAGS] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE] = { .type = NLA_U8 },
 };
 
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif, u8 *mac_addr)
@@ -1781,6 +1795,55 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 	return 0;
 }
 
+int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar = NULL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index\n");
+		return -EINVAL;
+	}
+
+	if (params->data_len != ETH_ALEN) {
+		ath12k_err(NULL, "Invalid radio MAC address len\n");
+		return -EINVAL;
+	}
+
+	if (!is_valid_ether_addr(params->data)) {
+		ath12k_err(NULL, "Invalid radio MAC address\n");
+		return -EINVAL;
+	}
+
+	ar = &ah->radio[params->radio_idx];
+
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
+		   "ar: %p hwaddr: %pM if: %d radio: %d\n",
+		   ar, params->data,
+		   params->ifindex, params->radio_idx);
+
+	/* Configure the base MAC address of radio */
+	if (wiphy->addresses && params->radio_idx < wiphy->n_addresses) {
+		ether_addr_copy(ar->mac_addr, (u8 *)params->data);
+		if (ar->ab->pdevs_macaddr_valid)
+			ether_addr_copy(ar->pdev->mac_addr, ar->mac_addr);
+
+		if (params->radio_idx == 0) {
+			ether_addr_copy(ar->ab->mac_addr, ar->mac_addr);
+			SET_IEEE80211_PERM_ADDR(hw, ar->mac_addr);
+		}
+
+		ether_addr_copy((u8 *)(&wiphy->addresses[params->radio_idx]),
+				ar->mac_addr);
+	}
+
+	return 0;
+}
+
 /**
  * ath12k_vendor_send_event - Driver helper to
  * send a device-wide firmware recovery vendor event
@@ -1816,4 +1879,231 @@ void ath12k_vendor_send_event(struct ath12k_base *ab,
 	} else {
 		ath12k_err(ab, "Cannot send recovery vendor event: no radios available\n");
 	}
+}
+
+/*
+ * Derive 6 GHz MBSSID MAC address by modifying only the lower 4 bits
+ * of the last octet. The algorithm supports grouping via grp_id/grp_size
+ * and keeps the base MAC for grp_id 0, mbssid_idx 0.
+ */
+static void ath12k_compute_6ghz_mbssid_mac(u8 mac[ETH_ALEN], u8 grp_id,
+					   u8 grp_size, u8 mbssid_idx)
+{
+	u8 mask, base_low, block_start, idx_in_block, new_low;
+
+	/* Ensure locally administered and unicast */
+	mac[0] &= ~0x01;
+	mac[0] |= 0x02;
+
+	mask = (grp_size - 1) & 0x0F;
+	base_low = mac[5] & 0x0F;
+	block_start = (base_low & ~mask);
+	block_start = (block_start + ((grp_id & 0x0F) * grp_size)) & 0x0F;
+
+	idx_in_block = mbssid_idx & mask;
+
+	if ((grp_id & 0x0F) == 0)
+		new_low = block_start | ((base_low + idx_in_block) & mask);
+	else
+		new_low = block_start | idx_in_block;
+
+	mac[5] = (mac[5] & 0xF0) | new_low;
+}
+
+static void ath12k_compute_link_vif_mac(u8 *mac_addr,
+					const u8 *base,
+					u8 vif_id,
+					bool use_byte0)
+{
+	u8 cur, add, new;
+
+	ether_addr_copy(mac_addr, base);
+
+	if (use_byte0) {
+		cur = (mac_addr[0] >> 2) & 0x3F;
+		add = vif_id & 0x3F;
+		new = (cur + add) & 0x3F;
+		mac_addr[0] = (mac_addr[0] & ~0xFC) | (new << 2);
+		mac_addr[0] &= ~0x01;
+	} else {
+		cur = mac_addr[5] & 0xF;
+		add = vif_id & 0xF;
+		new = (cur + add) & 0xF;
+		mac_addr[5] = (mac_addr[5] & ~0xF) | new;
+	}
+	mac_addr[0] |= 0x02;
+}
+
+#define ATH12K_VENDOR_MAC_CONFIG_FLAG_ALLOC_BSSID 0x00000001
+#define ATH12K_VENDOR_MAC_CONFIG_FLAG_FREE_BSSID 0x00000002
+
+int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
+					    struct wireless_dev *wdev,
+					    const void *data,
+					    int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1];
+	struct sk_buff *skb;
+	struct ieee80211_hw *hw;
+	struct ath12k_hw *ah;
+	struct ath12k *ar = NULL;
+	struct ath12k_link_vif *arvif;
+	u8 mac_addr[ETH_ALEN], *base_addr;
+	u8 radio_idx, vif_id = 0xff;
+	u8 grp_id = 0xff, grp_size = 0;
+	u32 flags = 0;
+	enum nl80211_iftype iftype = NL80211_IFTYPE_UNSPECIFIED;
+	u8 pdev_bitmap;
+	bool byte0 = true;
+	int ret;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX,
+			data, data_len,
+			ath12k_wifi_mac_config_policy, NULL);
+	if (ret)
+		return ret;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_RADIO_INDEX])
+		radio_idx = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_RADIO_INDEX]);
+	else {
+		ath12k_err(NULL, "Missing radio index\n");
+		return -EINVAL;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_RADIO_BSS_ID])
+		vif_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_RADIO_BSS_ID]);
+	else {
+		ath12k_err(NULL, "Missing BSS id\n");
+		return -EINVAL;
+	}
+
+	/* Optional flags provided by userspace */
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_FLAGS])
+		flags = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_FLAGS]);
+
+	/* Optional interface type provided by userspace */
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_IFTYPE]) {
+		iftype = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_IFTYPE]);
+		if (iftype > NL80211_IFTYPE_MAX) {
+			ath12k_err(NULL, "Invalid iftype\n");
+			return -EINVAL;
+		}
+	}
+
+	if (!wiphy->addresses || radio_idx >= wiphy->n_addresses) {
+		ath12k_err(NULL, "No base addresses available\n");
+		return -EINVAL;
+	}
+
+	if (vif_id > (TARGET_NUM_VDEVS - 1)) {
+		ath12k_err(NULL, "Invalid BSS id\n");
+		return -EINVAL;
+	}
+
+	/* Optional MBSSID group parameters from userspace */
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID])
+		grp_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID]);
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE])
+		grp_size = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE]);
+
+	/* Get hw/ah to know which byte index to use for VIF ID */
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	ah = hw ? hw->priv : NULL;
+	ar = ah ? &ah->radio[radio_idx] : NULL;
+
+	if (!ar)
+		return -EINVAL;
+
+	base_addr = wiphy->addresses[radio_idx].addr;
+	/*
+	 * 6 GHz MBSSID: per spec, only the last octet may vary and
+	 * only the lower 4 bits encode the BSSID index (0..15).
+	 * Preserve upper 4 bits of the last octet and modify lower 4.
+	 */
+	if (ar->supports_6ghz && iftype == NL80211_IFTYPE_AP && grp_size) {
+		u8 group_size = grp_size;
+
+		if (grp_size < 2 || grp_size > 8 ||
+		    vif_id >= grp_size || grp_id >= 8) {
+			ath12k_err(NULL, "Check group size:%d id:%d idx:%d\n",
+				   grp_size, grp_id, vif_id);
+			return -EINVAL;
+		}
+
+		/* Check grp_size is pwr of 2 or not */
+		while (group_size != 1) {
+			if (group_size % 2 != 0) {
+				ath12k_err(NULL, "group size:%d not pwr of 2\n",
+					   grp_size);
+				return -EINVAL;
+			}
+			group_size = group_size / 2;
+		}
+
+		ether_addr_copy(mac_addr, base_addr);
+		ath12k_compute_6ghz_mbssid_mac(mac_addr, grp_id,
+					       grp_size, vif_id);
+
+		vif_id = ((16 + (mac_addr[5] & 0x0F)) - (base_addr[5] & 0x0F)) % 16;
+	} else {
+		/* Return base MAC for first VIF (id 0), derive otherwise */
+		ether_addr_copy(mac_addr, base_addr);
+		if (vif_id) {
+			/* Select byte index to encode VIF ID: 0 or 5 */
+			if (iftype == NL80211_IFTYPE_AP) {
+				if (ar->supports_6ghz)
+					byte0 = false;
+				else {
+					pdev_bitmap = ath12k_cfg_get(ar->ab,
+					     ATH12K_CFG_COHOSTED_BSS_IND_ENABLE);
+					if (pdev_bitmap & (1 << ar->pdev_idx))
+						byte0 = false;
+				}
+			}
+
+			ath12k_compute_link_vif_mac(mac_addr,
+					    base_addr,
+					    vif_id,
+					    byte0);
+		}
+	}
+
+	/* Check and set the used MAC bit only when ALLOC flag is set */
+	if (flags & ATH12K_VENDOR_MAC_CONFIG_FLAG_ALLOC_BSSID) {
+		if (ar->vendor_mac_used_bitmap & (1 << vif_id)) {
+			ath12k_err(NULL, "Requested id %d addr %pM in use\n",
+				   vif_id, mac_addr);
+			return -EADDRINUSE;
+		}
+
+		list_for_each_entry(arvif, &ar->arvifs, list) {
+			if (!is_zero_ether_addr(arvif->bssid) &&
+			    ether_addr_equal(arvif->bssid, mac_addr)) {
+				ath12k_err(NULL, "Requested id %d addr %pM in use\n",
+					   vif_id, mac_addr);
+				return -EADDRINUSE;
+			}
+		}
+
+		ar->vendor_mac_used_bitmap |= (1 << vif_id);
+		ath12k_err(NULL, "Allocated BSS id %d MAC %pM \n",
+			   vif_id, mac_addr);
+	} else if (flags & ATH12K_VENDOR_MAC_CONFIG_FLAG_FREE_BSSID) {
+		ar->vendor_mac_used_bitmap &= ~(1 << vif_id);
+		ath12k_err(NULL, "Freed BSS id %d MAC %pM \n",
+			   vif_id, mac_addr);
+	}
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, nla_total_size(ETH_ALEN));
+	if (!skb)
+		return -ENOMEM;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAC_ADDR, ETH_ALEN, mac_addr))
+		goto nla_put_failure;
+
+	return cfg80211_vendor_cmd_reply(skb);
+
+nla_put_failure:
+	kfree_skb(skb);
+	return -EMSGSIZE;
 }

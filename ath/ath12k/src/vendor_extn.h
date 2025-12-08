@@ -15,6 +15,18 @@ extern const struct nla_policy
 ath12k_rule_config_policy[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1];
 
 extern const struct nla_policy
+ath12k_vendor_home_offchan_tx_rx_policy[
+	QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_MAX + 1];
+
+extern const struct nla_policy
+ath12k_vendor_home_offchan_tx_rx_frame_policy[
+	QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX + 1];
+
+extern const struct nla_policy
+ath12k_vendor_home_offchan_tx_rx_pkt_status_policy[
+	QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_PKT_STATUS_MAX + 1];
+
+extern const struct nla_policy
 ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1];
 
 #ifndef CPTCFG_QCN_EXTN

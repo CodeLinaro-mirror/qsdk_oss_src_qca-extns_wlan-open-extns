@@ -20,9 +20,6 @@
 	sizeof(struct hal_rx_mpdu_start)
 #define HAL_MON_RX_MSDU_END_TLV_SIZE		\
 	sizeof(struct hal_rx_msdu_end)
-#define HAL_MON_RX_PPDU_EU_STATS_TLV_SIZE	\
-	sizeof(struct hal_rx_ppdu_end_user_stats)
-
 /**
  * @HAL_RX_MON_PPDU_START: PPDU start TLV is decoded in HAL
  * @HAL_RX_MON_PPDU_END: PPDU end TLV is decoded in HAL
@@ -43,79 +40,21 @@ enum hal_ppdu_status {
 	HAL_RX_MASK(block, field)) >> \
 	HAL_RX_LSB(block, field))
 
-#define HAL_RX_PPDU_END_USER_STATS_INFO0_MCS			GENMASK(16, 13)
-#define HAL_RX_PPDU_END_USER_STATS_INFO0_NSS			GENMASK(19, 17)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO1_PEER_ID		GENMASK(13, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO1_DEVICE_ID		GENMASK(15, 14)
-#define HAL_RX_PPDU_END_USER_STATS_INFO1_MPDU_CNT_FCS_ERR	GENMASK(26, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_MPDU_CNT_FCS_OK	GENMASK(10, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_FC_VALID		BIT(11)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_QOS_CTRL_VALID		BIT(12)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_HT_CTRL_VALID		BIT(13)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_SEQ_CTRL_VALID		BIT(14)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_PKT_TYPE               GENMASK(24, 21)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO3_AST_INDEX		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO3_FRAME_CTRL		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO4_SEQ_CTRL		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO4_QOS_CTRL		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO5_UDP_MSDU_CNT		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO5_TCP_MSDU_CNT		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO6_OTHER_MSDU_CNT		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO6_TCP_ACK_MSDU_CNT	GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO7_TID_BITMAP		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO7_TID_EOSP_BITMAP	GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO8_MPDU_OK_BYTE_CNT       GENMASK(24, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO9_MPDU_ERR_BYTE_CNT      GENMASK(24, 0)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO10_MSDU_RETRY_CNT        GENMASK(31, 16)
-#define HAL_RX_PPDU_END_USER_STATS_INFO11_MPDU_RETRY_CNT        GENMASK(28, 18)
-
-/* The below hal_rx_ppdu_end_user_stats structure is non-compact
- * structure for PPDU END USER STATS TLV.
- * Only WCN chipset is using non-compact tlv structures.
- */
-struct hal_rx_ppdu_end_user_stats {
-	__le32 rsvd0;
-	__le32 info0;
-	__le32 info1;
-	__le32 info2;
-	__le32 info3;
-	__le32 info4;
-	__le32 ht_ctrl;
-	__le32 rsvd1[2];
-	__le32 info5;
-	__le32 info6;
-	__le32 usr_resp_ref;
-	__le32 info7;
-	__le32 rsvd2[4];
-	__le32 info8;
-	__le32 rsvd3;
-	__le32 info9;
-	__le32 info10;
-	__le32 rsvd4;
-	__le32 usr_resp_ref_ext;
-	__le32 info11;
-	__le32 rsvd5[6];
-} __packed;
-
-struct hal_rx_ppdu_end_user_stats_ext {
-	__le32 info0;
-	__le32 info1;
-	__le32 info2;
-	__le32 info3;
-	__le32 info4;
-	__le32 info5;
-	__le32 info6;
-	__le32 rsvd0;
-} __packed;
+enum hal_rx_mpdu_info_sw_frame_group_id_type {
+	HAL_MPDU_SW_FRAME_GROUP_NDP_FRAME = 0,
+	HAL_MPDU_SW_FRAME_GROUP_MULTICAST_DATA,
+	HAL_MPDU_SW_FRAME_GROUP_UNICAST_DATA,
+	HAL_MPDU_SW_FRAME_GROUP_NULL_DATA,
+	HAL_MPDU_SW_FRAME_GROUP_MGMT,
+	HAL_MPDU_SW_FRAME_GROUP_MGMT_PROBE_REQ = 8,
+	HAL_MPDU_SW_FRAME_GROUP_MGMT_BEACON = 12,
+	HAL_MPDU_SW_FRAME_GROUP_CTRL = 20,
+	HAL_MPDU_SW_FRAME_GROUP_CTRL_NDPA = 25,
+	HAL_MPDU_SW_FRAME_GROUP_CTRL_BAR = 28,
+	HAL_MPDU_SW_FRAME_GROUP_CTRL_RTS = 31,
+	HAL_MPDU_SW_FRAME_GROUP_UNSUPPORTED = 36,
+	HAL_MPDU_SW_FRAME_GROUP_MAX = 37,
+};
 
 #define HAL_RX_HT_SIG_INFO_INFO0_MCS		GENMASK(6, 0)
 #define HAL_RX_HT_SIG_INFO_INFO0_BW		BIT(7)
@@ -546,95 +485,6 @@ struct hal_rx_mon_msdu_end_compact {
 	__le32 rsvd1;
 } __packed;
 
-#define PPDU_END_USER_STATS_SELECT_INFO0_MCS_NSS                  BIT(0)
-#define PPDU_END_USER_STATS_SELECT_INFO1_INFO02                   BIT(1)
-#define PPDU_END_USER_STATS_SELECT_INFO3_INFO04                   BIT(2)
-#define PPDU_END_USER_STATS_SELECT_HTCTRL                         BIT(3)
-#define PPDU_END_USER_STATS_SELECT_INFO5_UDP_TCP_COUNT            BIT(4)
-#define PPDU_END_USER_STATS_SELECT_INFO6_USR_RESP_REF             BIT(5)
-#define PPDU_END_USER_STATS_SELECT_INFO7_TID_BITMAP               BIT(6)
-#define PPDU_END_USER_STATS_SELECT_INFO8_MPDU_OK_COUNT            BIT(8)
-#define PPDU_END_USER_STATS_SELECT_INFO9_MPDU_ERR_COUNT           BIT(9)
-#define PPDU_END_USER_STATS_SELECT_INFO10_MSDU_RETRY_COUNT        BIT(10)
-#define PPDU_END_USER_STATS_SELECT_USR_RESP_REF_EXT_INFO11        BIT(11)
-
-#define RX_MON_PPDU_END_USER_STATS_WMASK \
-		(PPDU_END_USER_STATS_SELECT_INFO0_MCS_NSS |          \
-		 PPDU_END_USER_STATS_SELECT_INFO1_INFO02 |           \
-		 PPDU_END_USER_STATS_SELECT_INFO3_INFO04 |           \
-		 PPDU_END_USER_STATS_SELECT_HTCTRL |                 \
-		 PPDU_END_USER_STATS_SELECT_INFO5_UDP_TCP_COUNT |    \
-		 PPDU_END_USER_STATS_SELECT_INFO6_USR_RESP_REF  |    \
-		 PPDU_END_USER_STATS_SELECT_INFO7_TID_BITMAP    |    \
-		 PPDU_END_USER_STATS_SELECT_INFO8_MPDU_OK_COUNT |    \
-		 PPDU_END_USER_STATS_SELECT_INFO9_MPDU_ERR_COUNT |   \
-		 PPDU_END_USER_STATS_SELECT_INFO10_MSDU_RETRY_COUNT |\
-		 PPDU_END_USER_STATS_SELECT_USR_RESP_REF_EXT_INFO11)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO0_MCS_CMPCT			GENMASK(16, 13)
-#define HAL_RX_PPDU_END_USER_STATS_INFO0_NSS_CMPCT			GENMASK(19, 17)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO1_PEER_ID_CMPCT			GENMASK(13, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO1_DEVICE_ID_CMPCT		GENMASK(15, 14)
-#define HAL_RX_PPDU_END_USER_STATS_INFO1_MPDU_CNT_FCS_ERR_CMPCT		GENMASK(26, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_MPDU_CNT_FCS_OK_CMPCT		GENMASK(10, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_FC_VALID_CMPCT			BIT(11)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_QOS_CTRL_VALID_CMPCT		BIT(12)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_HT_CTRL_VALID_CMPCT		BIT(13)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_SEQ_CTRL_VALID_CMPCT		BIT(14)
-#define HAL_RX_PPDU_END_USER_STATS_INFO2_PKT_TYPE_CMPCT			GENMASK(24, 21)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO3_AST_INDEX_CMPCT		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO3_FRAME_CTRL_CMPCT		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO4_SEQ_CTRL_CMPCT			GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO4_QOS_CTRL_CMPCT			GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO5_UDP_MSDU_CNT_CMPCT		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO5_TCP_MSDU_CNT_CMPCT		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO6_OTHER_MSDU_CNT_CMPCT		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO6_TCP_ACK_MSDU_CNT_CMPCT		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO7_TID_BITMAP_CMPCT		GENMASK(15, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO7_TID_EOSP_BITMAP_CMPCT		GENMASK(31, 16)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO8_MPDU_OK_BYTE_CNT_CMPCT		GENMASK(24, 0)
-#define HAL_RX_PPDU_END_USER_STATS_INFO9_MPDU_ERR_BYTE_CNT_CMPCT	GENMASK(24, 0)
-
-#define HAL_RX_PPDU_END_USER_STATS_INFO10_MSDU_RETRY_CNT_CMPCT		GENMASK(31, 16)
-#define HAL_RX_PPDU_END_USER_STATS_INFO11_MPDU_RETRY_CNT_CMPCT		GENMASK(28, 18)
-
-/* The below hal_rx_mon_ppdu_end_user_stats_compact structure is tied
- * with the mask value RX_MON_PPDU_END_USER_STATS_WMASK.
- * If the mask value changes the structure will also change.
- * ipq5424/5332, qcn6432 uses common compact staructure as they share same
- * wmask and qcn9274 uses hal_rx_mon_ppdu_end_user_stats_compact_qcn9274
- */
-struct hal_rx_mon_ppdu_end_user_stats_compact {
-	__le32 rsvd0;
-	__le32 info0;
-	__le32 info1;
-	__le32 info2;
-	__le32 info3;
-	__le32 info4;
-	__le32 ht_ctrl;
-	__le32 rsvd1[2];
-	__le32 info5;
-	__le32 info6;
-	__le32 usr_resp_ref;
-	__le32 info7;
-	__le32 rsvd2[2];
-	__le32 info8;
-	__le32 rsvd3;
-	__le32 info9;
-	__le32 info10;
-	__le32 rsvd4;
-	__le32 usr_resp_ref_ext;
-	__le32 info11;
-} __packed;
-
 static __always_inline void
 ath12k_wifi6_hal_mon_parse_rx_msdu_end_err(u32 info, u32 *errmap)
 {
@@ -662,8 +512,8 @@ ath12k_wifi6_hal_mon_parse_rx_msdu_end_err(u32 info, u32 *errmap)
 
 enum hal_rx_mon_status
 ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
-					 struct hal_rx_mon_ppdu_info *ppdu_info,
-					 struct hal_tlv_parsed_hdr *tlv_parsed_hdr);
+                                        struct hal_rx_mon_ppdu_info *ppdu_info,
+                                        struct hal_tlv_parsed_hdr *tlv_parsed_hdr);
 enum hal_tx_mon_status
 ath12k_wifi6_hal_mon_tx_parse_status_tlv(struct hal_tx_mon_ppdu_info *tx_ppdu_info,
 					 u16 tlv_tag, const void *tlv_data, u32 userid);
@@ -674,7 +524,6 @@ ath12k_wifi6_hal_mon_tx_status_get_num_user(u16 tlv_tag,
 u32 ath12k_wifi6_hal_mon_rx_mpdu_start_wmask_get(void);
 u32 ath12k_wifi6_hal_mon_rx_mpdu_end_wmask_get(void);
 u32 ath12k_wifi6_hal_mon_rx_msdu_end_wmask_get(void);
-u32 ath12k_wifi6_hal_mon_rx_ppdu_end_usr_stats_wmask_get(void);
 void
 ath12k_wifi6_hal_mon_rx_mpdu_start_info_parse(const void *tlv_data, u32 userid,
 					      struct hal_rx_mon_ppdu_info *ppdu_info,
@@ -683,9 +532,5 @@ void
 ath12k_wifi6_hal_mon_rx_msdu_end_info_parse(const void *tlv_data, u32 userid,
 					    struct hal_rx_mon_ppdu_info *ppdu_info,
 					    u32 tlv_len);
-void
-ath12k_wifi6_hal_mon_rx_ppdu_eu_stats_info_parse(const void *tlv_data, u32 userid,
-						 struct hal_rx_mon_ppdu_info *ppdu_info,
-						 u32 tlv_len);
 u8 *ath12k_wifi6_hal_mon_rx_desc_get_msdu_payload(void *rx_desc);
 #endif

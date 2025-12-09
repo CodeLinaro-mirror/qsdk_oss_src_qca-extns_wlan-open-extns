@@ -3,6 +3,30 @@
  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
+#define HAL_RX_GET_PPDU_ID(rx_mpdu_start)       \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_9, PHY_PPDU_ID)
+
+#define HAL_RX_GET_FC_VALID(rx_mpdu_start)      \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_11, MPDU_FRAME_CONTROL_VALID)
+
+#define HAL_RX_GET_TO_DS_FLAG(rx_mpdu_start)    \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_11, TO_DS)
+
+#define HAL_RX_GET_SW_FRAME_GROUP_ID(rx_mpdu_start)     \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_9, SW_FRAME_GROUP_ID)
+
+#define HAL_RX_GET_SW_PEER_ID(rx_mpdu_start)    \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_10, SW_PEER_ID)
+
+#define HAL_RX_GET_ENCRYPT_TYPE(rx_mpdu_start)  \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_7, ENCRYPT_TYPE)
+
+#define HAL_RX_GET_MAC_ADDR2_VALID(rx_mpdu_start) \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_11, MAC_ADDR_AD2_VALID)
+
+#define HAL_RX_GET_FILTER_CATEGORY(rx_mpdu_start) \
+	HAL_RX_GET(rx_mpdu_start, RX_MPDU_INFO_9, RXPCU_MPDU_FILTER_IN_CATEGORY)
+
 #define RX_PPDU_START_0_PHY_PPDU_ID_OFFSET                           0x00000000
 #define RX_PPDU_START_0_PHY_PPDU_ID_LSB                              0
 #define RX_PPDU_START_0_PHY_PPDU_ID_MASK                             0x0000ffff
@@ -740,3 +764,55 @@
 
 #define UNIFIED_PHYRX_RSSI_LEGACY_19_RECEIVE_RSSI_INFO_PREAMBLE_RSSI_INFO_DETAILS_OFFSET \
 	PHYRX_RSSI_LEGACY_19_PREAMBLE_RSSI_INFO_DETAILS_RSSI_PRI20_CHAIN0_OFFSET
+
+#define RX_MPDU_INFO_7_ENCRYPT_TYPE_OFFSET                           0x0000001c
+#define RX_MPDU_INFO_7_ENCRYPT_TYPE_LSB                              2
+#define RX_MPDU_INFO_7_ENCRYPT_TYPE_MASK                             0x0000003c
+
+#define RX_MPDU_INFO_9_RXPCU_MPDU_FILTER_IN_CATEGORY_OFFSET          0x00000024
+#define RX_MPDU_INFO_9_RXPCU_MPDU_FILTER_IN_CATEGORY_LSB             0
+#define RX_MPDU_INFO_9_RXPCU_MPDU_FILTER_IN_CATEGORY_MASK            0x00000003
+
+#define RX_MPDU_INFO_9_SW_FRAME_GROUP_ID_OFFSET                      0x00000024
+#define RX_MPDU_INFO_9_SW_FRAME_GROUP_ID_LSB                         2
+#define RX_MPDU_INFO_9_SW_FRAME_GROUP_ID_MASK                        0x000001fc
+
+#define RX_MPDU_INFO_9_PHY_PPDU_ID_OFFSET                            0x00000024
+#define RX_MPDU_INFO_9_PHY_PPDU_ID_LSB                               16
+#define RX_MPDU_INFO_9_PHY_PPDU_ID_MASK                              0xffff0000
+
+#define RX_MPDU_INFO_10_SW_PEER_ID_OFFSET                            0x00000028
+#define RX_MPDU_INFO_10_SW_PEER_ID_LSB                               16
+#define RX_MPDU_INFO_10_SW_PEER_ID_MASK                              0xffff0000
+
+#define RX_MPDU_INFO_11_MPDU_FRAME_CONTROL_VALID_OFFSET              0x0000002c
+#define RX_MPDU_INFO_11_MPDU_FRAME_CONTROL_VALID_LSB                 0
+#define RX_MPDU_INFO_11_MPDU_FRAME_CONTROL_VALID_MASK                0x00000001
+
+#define RX_MPDU_INFO_11_MAC_ADDR_AD2_VALID_OFFSET                    0x0000002c
+#define RX_MPDU_INFO_11_MAC_ADDR_AD2_VALID_LSB                       3
+#define RX_MPDU_INFO_11_MAC_ADDR_AD2_VALID_MASK                      0x00000008
+
+#define RX_MPDU_INFO_11_TO_DS_OFFSET                                 0x0000002c
+#define RX_MPDU_INFO_11_TO_DS_LSB                                    17
+#define RX_MPDU_INFO_11_TO_DS_MASK                                   0x00020000
+
+#define RX_MPDU_INFO_13_MPDU_LENGTH_OFFSET                           0x00000034
+#define RX_MPDU_INFO_13_MPDU_LENGTH_LSB                              0
+#define RX_MPDU_INFO_13_MPDU_LENGTH_MASK                             0x00003fff
+
+#define RX_MPDU_INFO_13_MCAST_BCAST_OFFSET                           0x00000034
+#define RX_MPDU_INFO_13_MCAST_BCAST_LSB                              15
+#define RX_MPDU_INFO_13_MCAST_BCAST_MASK                             0x00008000
+
+#define RX_MPDU_INFO_14_MPDU_FRAME_CONTROL_FIELD_OFFSET              0x00000038
+#define RX_MPDU_INFO_14_MPDU_FRAME_CONTROL_FIELD_LSB                 0
+#define RX_MPDU_INFO_14_MPDU_FRAME_CONTROL_FIELD_MASK                0x0000ffff
+
+#define RX_MPDU_INFO_16_MAC_ADDR_AD2_15_0_OFFSET                     0x00000040
+#define RX_MPDU_INFO_16_MAC_ADDR_AD2_15_0_LSB                        16
+#define RX_MPDU_INFO_16_MAC_ADDR_AD2_15_0_MASK                       0xffff0000
+
+#define RX_MPDU_INFO_17_MAC_ADDR_AD2_47_16_OFFSET                    0x00000044
+#define RX_MPDU_INFO_17_MAC_ADDR_AD2_47_16_LSB                       0
+#define RX_MPDU_INFO_17_MAC_ADDR_AD2_47_16_MASK                      0xffffffff

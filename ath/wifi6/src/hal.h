@@ -808,6 +808,9 @@ void ath12k_wifi6_hal_srng_hw_disable(struct ath12k_base *ab,
 				      struct hal_srng *srng);
 void *ath12k_wifi6_hal_srng_src_get_cur_desc_n_move_next(struct ath12k_base *ab,
 							  struct hal_srng *srng);
+void *ath12k_wifi6_hal_srng_src_next_next_peek(struct ath12k_base *ab,
+					       struct hal_srng *srng);
+
 static inline
 void *ath12k_hal_srng_src_begin_get_next_entry_nolock_fast(struct hal_srng *srng)
 {

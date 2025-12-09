@@ -119,3 +119,16 @@ void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,
 		le32_encode_bits(manager, WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR) |
 		le32_encode_bits(cookie, WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
 }
+
+void ath12k_wifi6_hal_rx_buf_addr_info_get(struct ath12k_buffer_addr *b_info,
+					   dma_addr_t *paddr, u32 *cookie,
+					   u8 *rbm)
+{
+	struct ath12k_buffer_addr *binfo = (struct ath12k_buffer_addr *)b_info;
+
+	*paddr = (((u64)le32_get_bits(binfo->info1,
+				      WIFI6_BUFFER_ADDR_INFO1_ADDR)) << 32) |
+				      le32_get_bits(binfo->info0, WIFI6_BUFFER_ADDR_INFO0_ADDR);
+	*cookie = le32_get_bits(binfo->info1, WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
+	*rbm = le32_get_bits(binfo->info1, WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR);
+}

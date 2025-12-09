@@ -1539,3 +1539,9 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 
         return ret;
 }
+
+int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
+				       struct wireless_dev *wdev)
+{
+	return 0;
+}

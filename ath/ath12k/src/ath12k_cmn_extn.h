@@ -22,6 +22,10 @@ struct ath12k_vif_extn {
 	spinlock_t data_lock;
 };
 
+struct ath12k_extn {
+	/* Add ath12k_extn structures here */
+};
+
 struct sta_240mhz_info {
 	struct ieee80211_240mhz_vendor_oper_extn params_240MHz_extn;
 	u8 mac_addr[ETH_ALEN];
@@ -52,6 +56,13 @@ static inline void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif
 	return;
 }
 
+static inline
+int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
+			  struct sk_buff *skb)
+{
+	return -1;
+}
+
 static inline int
 ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 				u8 *mac,
@@ -67,6 +78,14 @@ static inline void ath12k_mac_setup_radio_iface_comb_extn(
 	return;
 }
 
+static inline void ath12k_mac_setup_extn(struct ath12k *ar)
+{
+}
+
+static inline void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
+{
+}
+
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -76,7 +95,13 @@ void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
 
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif);
 
+const void **ath12k_wmi_tlv_parse_alloc(struct ath12k_base *ab,
+					struct sk_buff *skb, gfp_t gfp);
+
 void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif);
+
+int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
+			  struct sk_buff *skb);
 
 int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 				     u8 *mac,
@@ -85,5 +110,10 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb);
+
+void ath12k_mac_setup_extn(struct ath12k *ar);
+
+void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
+
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

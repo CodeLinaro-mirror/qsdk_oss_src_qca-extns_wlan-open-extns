@@ -15,11 +15,6 @@
 
 #define HAL_MPDU_START_SW_FRAME_GRP_NULL_DATA	0x3
 
-#define RX_MON_MPDU_END_WMASK	0xff
-#define HAL_MON_RX_MPDU_START_TLV_SIZE		\
-	sizeof(struct hal_rx_mpdu_start)
-#define HAL_MON_RX_MSDU_END_TLV_SIZE		\
-	sizeof(struct hal_rx_msdu_end)
 /**
  * @HAL_RX_MON_PPDU_START: PPDU start TLV is decoded in HAL
  * @HAL_RX_MON_PPDU_END: PPDU end TLV is decoded in HAL
@@ -110,22 +105,6 @@ enum hal_rx_mpdu_info_sw_frame_group_id_type {
 	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(5, 10, 11, ppdu_info, rssi_info_tlv) \
 	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(6, 12, 13, ppdu_info, rssi_info_tlv) \
 	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(7, 14, 15, ppdu_info, rssi_info_tlv)} \
-
-#define HAL_RX_MSDU_END_INFO0_SW_FRAME_GRP_ID			GENMASK(8, 2)
-#define HAL_RX_MSDU_END_INFO1_DECAP_FORMAT			GENMASK(9, 8)
-
-/* The below hal_rx_msdu_end structure is non-compact
- * structure for MSDU END TLV.
- * Only WCN chipset is using non-compact tlv structures.
- */
-struct hal_rx_msdu_end {
-	__le32 info0;
-	__le32 rsvd0[18];
-	__le32 info1;
-	__le32 rsvd1[10];
-	__le32 info2;
-	__le32 rsvd2;
-} __packed;
 
 #define HAL_TX_FES_STATUS_END_INFO0_START_TIMESTAMP_15_0	GENMASK(15, 0)
 #define HAL_TX_FES_STATUS_END_INFO0_START_TIMESTAMP_31_16	GENMASK(31, 16)
@@ -275,57 +254,6 @@ struct hal_tlv_parsed_hdr {
 	u8 *data;
 };
 
-#define MSDU_END_SELECT_INFO0_SW_GRPID                         BIT(0)
-#define MSDU_END_SELECT_INFO1_DECAP_FORMAT                     BIT(9)
-#define MSDU_END_SELECT_INFO2_ERR_MAP                          BIT(15)
-
-#define RX_MON_MSDU_END_WMASK \
-		(MSDU_END_SELECT_INFO0_SW_GRPID |              \
-		 MSDU_END_SELECT_INFO1_DECAP_FORMAT |          \
-		 MSDU_END_SELECT_INFO2_ERR_MAP)
-
-#define HAL_RX_MSDU_END_INFO0_SW_FRAME_GRP_ID_CMPCT		GENMASK(8, 2)
-#define HAL_RX_MSDU_END_INFO1_DECAP_FORMAT_CMPCT		GENMASK(9, 8)
-
-/* The below hal_rx_mon_msdu_end_compact structure is tied with the mask value
- * RX_MON_MSDU_END_WMASK. If the mask value changes the structure will also
- * change.
- * ipq5424/5332, qcn6432/9274 uses common compact staructure as they share same
- * msdu end wmask.
- */
-struct hal_rx_mon_msdu_end_compact {
-	__le32 info0;
-	__le32 rsvd0[2];
-	__le32 info1;
-	__le32 info2;
-	__le32 rsvd1;
-} __packed;
-
-static __always_inline void
-ath12k_wifi6_hal_mon_parse_rx_msdu_end_err(u32 info, u32 *errmap)
-{
-	if (info & RX_MSDU_END_INFO13_FCS_ERR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_FCS;
-
-	if (info & RX_MSDU_END_INFO13_DECRYPT_ERR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_DECRYPT;
-
-	if (info & RX_MSDU_END_INFO13_TKIP_MIC_ERR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_TKIP_MIC;
-
-	if (info & RX_MSDU_END_INFO13_A_MSDU_ERROR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_AMSDU_ERR;
-
-	if (info & RX_MSDU_END_INFO13_OVERFLOW_ERR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_OVERFLOW;
-
-	if (info & RX_MSDU_END_INFO13_MSDU_LEN_ERR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_MSDU_LEN;
-
-	if (info & RX_MSDU_END_INFO13_MPDU_LEN_ERR)
-		*errmap |= HAL_RX_MON_MPDU_ERR_MPDU_LEN;
-}
-
 enum hal_rx_mon_status
 ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
                                         struct hal_rx_mon_ppdu_info *ppdu_info,
@@ -337,16 +265,5 @@ enum hal_tx_mon_status
 ath12k_wifi6_hal_mon_tx_status_get_num_user(u16 tlv_tag,
 					    const void *tx_tlv,
 					    u8 *num_users);
-u32 ath12k_wifi6_hal_mon_rx_mpdu_start_wmask_get(void);
-u32 ath12k_wifi6_hal_mon_rx_mpdu_end_wmask_get(void);
-u32 ath12k_wifi6_hal_mon_rx_msdu_end_wmask_get(void);
-void
-ath12k_wifi6_hal_mon_rx_mpdu_start_info_parse(const void *tlv_data, u32 userid,
-					      struct hal_rx_mon_ppdu_info *ppdu_info,
-					      u32 tlv_len);
-void
-ath12k_wifi6_hal_mon_rx_msdu_end_info_parse(const void *tlv_data, u32 userid,
-					    struct hal_rx_mon_ppdu_info *ppdu_info,
-					    u32 tlv_len);
 u8 *ath12k_wifi6_hal_mon_rx_desc_get_msdu_payload(void *rx_desc);
 #endif

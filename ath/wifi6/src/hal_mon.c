@@ -11,16 +11,6 @@
 #include "hal_mon_qcn9074.h"
 #include "dp_rx.h"
 
-u32 ath12k_wifi6_hal_mon_rx_mpdu_end_wmask_get(void)
-{
-	return RX_MON_MPDU_END_WMASK;
-}
-
-u32 ath12k_wifi6_hal_mon_rx_msdu_end_wmask_get(void)
-{
-	return RX_MON_MSDU_END_WMASK;
-}
-
 static __always_inline void
 ath12k_wifi6_hal_mon_get_mac_addr(u32 addr_l32, u16 addr_h16, u8 *addr)
 {
@@ -765,61 +755,6 @@ ath12k_wifi6_hal_mon_rx_parse_mpdu_start(const void *tlv_data, u32 userid,
 }
 
 static __always_inline void
-ath12k_wifi6_hal_mon_rx_msdu_end_info_get(const void *tlv_data, u32 userid,
-					  struct hal_rx_mon_ppdu_info *ppdu_info)
-{
-	struct hal_rx_msdu_end *msdu_end =
-		(struct hal_rx_msdu_end *)tlv_data;
-	u32 info[3];
-
-	info[0] = __le32_to_cpu(msdu_end->info0);
-	info[1] = __le32_to_cpu(msdu_end->info1);
-	info[2] = __le32_to_cpu(msdu_end->info2);
-
-	ppdu_info->grp_id = u32_get_bits(info[0],
-					 HAL_RX_MSDU_END_INFO0_SW_FRAME_GRP_ID);
-
-	ppdu_info->decap_format = u32_get_bits(info[1],
-					       HAL_RX_MSDU_END_INFO1_DECAP_FORMAT);
-	ath12k_wifi6_hal_mon_parse_rx_msdu_end_err(info[2],
-						   &ppdu_info->errmap);
-}
-
-static __always_inline void
-ath12k_wifi6_hal_mon_rx_msdu_end_info_get_compact(const void *tlv_data, u32 userid,
-						  struct hal_rx_mon_ppdu_info *ppdu_info)
-{
-	struct hal_rx_mon_msdu_end_compact *msdu_end =
-		(struct hal_rx_mon_msdu_end_compact *)tlv_data;
-	u32 info[3];
-
-	info[0] = __le32_to_cpu(msdu_end->info0);
-	info[1] = __le32_to_cpu(msdu_end->info1);
-	info[2] = __le32_to_cpu(msdu_end->info2);
-
-	ppdu_info->grp_id = u32_get_bits(info[0],
-					 HAL_RX_MSDU_END_INFO0_SW_FRAME_GRP_ID_CMPCT);
-
-	ppdu_info->decap_format = u32_get_bits(info[1],
-					       HAL_RX_MSDU_END_INFO1_DECAP_FORMAT_CMPCT);
-	ath12k_wifi6_hal_mon_parse_rx_msdu_end_err(info[2],
-						   &ppdu_info->errmap);
-}
-
-void
-ath12k_wifi6_hal_mon_rx_msdu_end_info_parse(const void *tlv_data, u32 userid,
-					    struct hal_rx_mon_ppdu_info *ppdu_info,
-					    u32 tlv_len)
-{
-	if (likely(tlv_len < HAL_MON_RX_MSDU_END_TLV_SIZE))
-		ath12k_wifi6_hal_mon_rx_msdu_end_info_get_compact(tlv_data, userid,
-								  ppdu_info);
-	else
-		ath12k_wifi6_hal_mon_rx_msdu_end_info_get(tlv_data, userid,
-							  ppdu_info);
-}
-
-static __always_inline void
 ath12k_wifi6_hal_mon_handle_ofdma_info(const void *tlv_data,
 				       struct hal_rx_user_status *rx_user_status)
 {
@@ -980,6 +915,8 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
                ath12k_wifi6_hal_mon_rx_parse_ppdu_end_usr_stats(tlv_data,
 								userid, ppdu_info);
 		break;
+	case HAL_RX_PPDU_END_USER_STATS_EXT:
+		break;
 	case HAL_PHYRX_HT_SIG:
 		ath12k_wifi6_hal_mon_parse_ht_sig(tlv_data, ppdu_info);
 		break;
@@ -1088,6 +1025,8 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 	case HAL_RX_PPDU_END:
 		ppdu_info->ppdu_info_extn.rx_state = HAL_RX_MON_PPDU_END;
 		break;
+	case HAL_PHYRX_PKT_END:
+		break;
 
 	case HAL_RXPCU_PPDU_END_INFO: {
 		ppdu_info->ppdu_info_extn.rx_antenna = HAL_RX_GET(tlv_data,
@@ -1111,17 +1050,6 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 		/* TODO: add msdu start parsing logic */
 		break;
 	case HAL_RX_MSDU_END:
-
-		ath12k_hal_mon_rx_msdu_end_info_get(hal, tlv_data, userid, ppdu_info,
-						    tlv_len);
-
-		if (ppdu_info->grp_id == RX_MSDU_END_INFO0_SW_FRAMEGROUP_UCAST_DATA ||
-		    ppdu_info->grp_id == RX_MSDU_END_INFO0_SW_FRAMEGROUP_MCAST_DATA) {
-			if (userid < HAL_MAX_UL_MU_USERS) {
-				ppdu_info->userstats[userid].errmap = ppdu_info->errmap;
-			}
-		}
-
 		return HAL_RX_MON_STATUS_MSDU_END;
 	case HAL_RX_MPDU_END:
 		return HAL_RX_MON_STATUS_MPDU_END;

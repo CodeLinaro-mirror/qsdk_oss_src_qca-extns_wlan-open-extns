@@ -138,3 +138,261 @@
 #define RX_PPDU_END_USER_STATS_22_SW_RESPONSE_REFERENCE_PTR_EXT_OFFSET 0x00000058
 #define RX_PPDU_END_USER_STATS_22_SW_RESPONSE_REFERENCE_PTR_EXT_LSB  0
 #define RX_PPDU_END_USER_STATS_22_SW_RESPONSE_REFERENCE_PTR_EXT_MASK 0xffffffff
+
+#define PHYRX_HT_SIG_0_PHYRX_HT_SIG_INFO_DETAILS_MCS_OFFSET          0x00000000
+#define PHYRX_HT_SIG_0_PHYRX_HT_SIG_INFO_DETAILS_MCS_LSB             0
+#define PHYRX_HT_SIG_0_PHYRX_HT_SIG_INFO_DETAILS_MCS_MASK            0x0000007f
+
+#define HT_SIG_INFO_0_MCS_OFFSET                                     0x00000000
+#define HT_SIG_INFO_0_MCS_LSB                                        0
+#define HT_SIG_INFO_0_MCS_MASK                                       0x0000007f
+
+#define HT_SIG_INFO_0_CBW_OFFSET                                     0x00000000
+#define HT_SIG_INFO_0_CBW_LSB                                        7
+#define HT_SIG_INFO_0_CBW_MASK                                       0x00000080
+
+#define HT_SIG_INFO_0_LENGTH_OFFSET                                  0x00000000
+#define HT_SIG_INFO_0_LENGTH_LSB                                     8
+#define HT_SIG_INFO_0_LENGTH_MASK                                    0x00ffff00
+
+#define HT_SIG_INFO_1_SMOOTHING_OFFSET                               0x00000004
+#define HT_SIG_INFO_1_SMOOTHING_LSB                                  0
+#define HT_SIG_INFO_1_SMOOTHING_MASK                                 0x00000001
+
+#define HT_SIG_INFO_1_NOT_SOUNDING_OFFSET                            0x00000004
+#define HT_SIG_INFO_1_NOT_SOUNDING_LSB                               1
+#define HT_SIG_INFO_1_NOT_SOUNDING_MASK                              0x00000002
+
+#define HT_SIG_INFO_1_AGGREGATION_OFFSET                             0x00000004
+#define HT_SIG_INFO_1_AGGREGATION_LSB                                3
+#define HT_SIG_INFO_1_AGGREGATION_MASK                               0x00000008
+
+#define HT_SIG_INFO_1_STBC_OFFSET                                    0x00000004
+#define HT_SIG_INFO_1_STBC_LSB                                       4
+#define HT_SIG_INFO_1_STBC_MASK                                      0x00000030
+
+#define HT_SIG_INFO_1_FEC_CODING_OFFSET                              0x00000004
+#define HT_SIG_INFO_1_FEC_CODING_LSB                                 6
+#define HT_SIG_INFO_1_FEC_CODING_MASK                                0x00000040
+
+#define HT_SIG_INFO_1_SHORT_GI_OFFSET                                0x00000004
+#define HT_SIG_INFO_1_SHORT_GI_LSB                                   7
+#define HT_SIG_INFO_1_SHORT_GI_MASK                                  0x00000080
+
+#define HT_SIG_INFO_1_CRC_OFFSET                                     0x00000004
+#define HT_SIG_INFO_1_CRC_LSB                                        10
+#define HT_SIG_INFO_1_CRC_MASK                                       0x0003fc00
+
+#define UNIFIED_PHYRX_HT_SIG_0_HT_SIG_INFO_PHYRX_HT_SIG_INFO_DETAILS_OFFSET \
+	PHYRX_HT_SIG_0_PHYRX_HT_SIG_INFO_DETAILS_MCS_OFFSET
+
+#define PHYRX_L_SIG_B_0_PHYRX_L_SIG_B_INFO_DETAILS_RATE_OFFSET       0x00000000
+#define PHYRX_L_SIG_B_0_PHYRX_L_SIG_B_INFO_DETAILS_RATE_LSB          0
+#define PHYRX_L_SIG_B_0_PHYRX_L_SIG_B_INFO_DETAILS_RATE_MASK         0x0000000f
+
+#define L_SIG_B_INFO_0_RATE_OFFSET                                   0x00000000
+#define L_SIG_B_INFO_0_RATE_LSB                                      0
+#define L_SIG_B_INFO_0_RATE_MASK                                     0x0000000f
+
+#define UNIFIED_PHYRX_L_SIG_B_0_L_SIG_B_INFO_PHYRX_L_SIG_B_INFO_DETAILS_OFFSET \
+	PHYRX_L_SIG_B_0_PHYRX_L_SIG_B_INFO_DETAILS_RATE_OFFSET
+
+#define PHYRX_L_SIG_A_0_PHYRX_L_SIG_A_INFO_DETAILS_RATE_OFFSET       0x00000000
+#define PHYRX_L_SIG_A_0_PHYRX_L_SIG_A_INFO_DETAILS_RATE_LSB          0
+#define PHYRX_L_SIG_A_0_PHYRX_L_SIG_A_INFO_DETAILS_RATE_MASK         0x0000000f
+
+#define L_SIG_A_INFO_0_RATE_OFFSET                                   0x00000000
+#define L_SIG_A_INFO_0_RATE_LSB                                      0
+#define L_SIG_A_INFO_0_RATE_MASK                                     0x0000000f
+
+#define UNIFIED_PHYRX_L_SIG_A_0_L_SIG_A_INFO_PHYRX_L_SIG_A_INFO_DETAILS_OFFSET \
+	PHYRX_L_SIG_A_0_PHYRX_L_SIG_A_INFO_DETAILS_RATE_OFFSET
+
+#define PHYRX_VHT_SIG_A_0_PHYRX_VHT_SIG_A_INFO_DETAILS_BANDWIDTH_OFFSET 0x00000000
+#define PHYRX_VHT_SIG_A_0_PHYRX_VHT_SIG_A_INFO_DETAILS_BANDWIDTH_LSB 0
+#define PHYRX_VHT_SIG_A_0_PHYRX_VHT_SIG_A_INFO_DETAILS_BANDWIDTH_MASK 0x00000003
+
+#define VHT_SIG_A_INFO_0_BANDWIDTH_OFFSET                            0x00000000
+#define VHT_SIG_A_INFO_0_BANDWIDTH_LSB                               0
+#define VHT_SIG_A_INFO_0_BANDWIDTH_MASK                              0x00000003
+
+#define VHT_SIG_A_INFO_0_STBC_OFFSET                                 0x00000000
+#define VHT_SIG_A_INFO_0_STBC_LSB                                    3
+#define VHT_SIG_A_INFO_0_STBC_MASK                                   0x00000008
+
+#define VHT_SIG_A_INFO_0_GROUP_ID_OFFSET                             0x00000000
+#define VHT_SIG_A_INFO_0_GROUP_ID_LSB                                4
+#define VHT_SIG_A_INFO_0_GROUP_ID_MASK                               0x000003f0
+
+#define VHT_SIG_A_INFO_0_N_STS_OFFSET                                0x00000000
+#define VHT_SIG_A_INFO_0_N_STS_LSB                                   10
+#define VHT_SIG_A_INFO_0_N_STS_MASK                                  0x003ffc00
+
+#define VHT_SIG_A_INFO_1_GI_SETTING_OFFSET                           0x00000004
+#define VHT_SIG_A_INFO_1_GI_SETTING_LSB                              0
+#define VHT_SIG_A_INFO_1_GI_SETTING_MASK                             0x00000003
+
+#define VHT_SIG_A_INFO_1_SU_MU_CODING_OFFSET                         0x00000004
+#define VHT_SIG_A_INFO_1_SU_MU_CODING_LSB                            2
+#define VHT_SIG_A_INFO_1_SU_MU_CODING_MASK                           0x00000004
+
+#define VHT_SIG_A_INFO_1_MCS_OFFSET                                  0x00000004
+#define VHT_SIG_A_INFO_1_MCS_LSB                                     4
+#define VHT_SIG_A_INFO_1_MCS_MASK                                    0x000000f0
+
+#define VHT_SIG_A_INFO_1_BEAMFORMED_OFFSET                           0x00000004
+#define VHT_SIG_A_INFO_1_BEAMFORMED_LSB                              8
+#define VHT_SIG_A_INFO_1_BEAMFORMED_MASK                             0x00000100
+
+#define UNIFIED_PHYRX_VHT_SIG_A_0_VHT_SIG_A_INFO_PHYRX_VHT_SIG_A_INFO_DETAILS_OFFSET \
+	PHYRX_VHT_SIG_A_0_PHYRX_VHT_SIG_A_INFO_DETAILS_BANDWIDTH_OFFSET
+
+#define PHYRX_HE_SIG_A_SU_0_PHYRX_HE_SIG_A_SU_INFO_DETAILS_FORMAT_INDICATION_OFFSET 0x00000000
+#define PHYRX_HE_SIG_A_SU_0_PHYRX_HE_SIG_A_SU_INFO_DETAILS_FORMAT_INDICATION_LSB 0
+#define PHYRX_HE_SIG_A_SU_0_PHYRX_HE_SIG_A_SU_INFO_DETAILS_FORMAT_INDICATION_MASK 0x00000001
+
+#define HE_SIG_A_SU_INFO_0_FORMAT_INDICATION_OFFSET                  0x00000000
+#define HE_SIG_A_SU_INFO_0_FORMAT_INDICATION_LSB                     0
+#define HE_SIG_A_SU_INFO_0_FORMAT_INDICATION_MASK                    0x00000001
+
+#define HE_SIG_A_SU_INFO_0_BEAM_CHANGE_OFFSET                        0x00000000
+#define HE_SIG_A_SU_INFO_0_BEAM_CHANGE_LSB                           1
+#define HE_SIG_A_SU_INFO_0_BEAM_CHANGE_MASK                          0x00000002
+
+#define HE_SIG_A_SU_INFO_0_DL_UL_FLAG_OFFSET                         0x00000000
+#define HE_SIG_A_SU_INFO_0_DL_UL_FLAG_LSB                            2
+#define HE_SIG_A_SU_INFO_0_DL_UL_FLAG_MASK                           0x00000004
+
+#define HE_SIG_A_SU_INFO_0_TRANSMIT_MCS_OFFSET                       0x00000000
+#define HE_SIG_A_SU_INFO_0_TRANSMIT_MCS_LSB                          3
+#define HE_SIG_A_SU_INFO_0_TRANSMIT_MCS_MASK                         0x00000078
+
+#define HE_SIG_A_SU_INFO_0_DCM_OFFSET                                0x00000000
+#define HE_SIG_A_SU_INFO_0_DCM_LSB                                   7
+#define HE_SIG_A_SU_INFO_0_DCM_MASK                                  0x00000080
+
+#define HE_SIG_A_SU_INFO_0_BSS_COLOR_ID_OFFSET                       0x00000000
+#define HE_SIG_A_SU_INFO_0_BSS_COLOR_ID_LSB                          8
+#define HE_SIG_A_SU_INFO_0_BSS_COLOR_ID_MASK                         0x00003f00
+
+#define HE_SIG_A_SU_INFO_0_SPATIAL_REUSE_OFFSET                      0x00000000
+#define HE_SIG_A_SU_INFO_0_SPATIAL_REUSE_LSB                         15
+#define HE_SIG_A_SU_INFO_0_SPATIAL_REUSE_MASK                        0x00078000
+
+#define HE_SIG_A_SU_INFO_0_TRANSMIT_BW_OFFSET                        0x00000000
+#define HE_SIG_A_SU_INFO_0_TRANSMIT_BW_LSB                           19
+#define HE_SIG_A_SU_INFO_0_TRANSMIT_BW_MASK                          0x00180000
+
+#define HE_SIG_A_SU_INFO_0_CP_LTF_SIZE_OFFSET                        0x00000000
+#define HE_SIG_A_SU_INFO_0_CP_LTF_SIZE_LSB                           21
+#define HE_SIG_A_SU_INFO_0_CP_LTF_SIZE_MASK                          0x00600000
+
+#define HE_SIG_A_SU_INFO_0_NSTS_OFFSET                               0x00000000
+#define HE_SIG_A_SU_INFO_0_NSTS_LSB                                  23
+#define HE_SIG_A_SU_INFO_0_NSTS_MASK                                 0x03800000
+
+#define HE_SIG_A_SU_INFO_1_TXOP_DURATION_OFFSET                      0x00000004
+#define HE_SIG_A_SU_INFO_1_TXOP_DURATION_LSB                         0
+#define HE_SIG_A_SU_INFO_1_TXOP_DURATION_MASK                        0x0000007f
+
+#define HE_SIG_A_SU_INFO_1_CODING_OFFSET                             0x00000004
+#define HE_SIG_A_SU_INFO_1_CODING_LSB                                7
+#define HE_SIG_A_SU_INFO_1_CODING_MASK                               0x00000080
+
+#define HE_SIG_A_SU_INFO_1_LDPC_EXTRA_SYMBOL_OFFSET                  0x00000004
+#define HE_SIG_A_SU_INFO_1_LDPC_EXTRA_SYMBOL_LSB                     8
+#define HE_SIG_A_SU_INFO_1_LDPC_EXTRA_SYMBOL_MASK                    0x00000100
+
+#define HE_SIG_A_SU_INFO_1_STBC_OFFSET                               0x00000004
+#define HE_SIG_A_SU_INFO_1_STBC_LSB                                  9
+#define HE_SIG_A_SU_INFO_1_STBC_MASK                                 0x00000200
+
+#define HE_SIG_A_SU_INFO_1_TXBF_OFFSET                               0x00000004
+#define HE_SIG_A_SU_INFO_1_TXBF_LSB                                  10
+#define HE_SIG_A_SU_INFO_1_TXBF_MASK                                 0x00000400
+
+#define HE_SIG_A_SU_INFO_1_PACKET_EXTENSION_A_FACTOR_OFFSET          0x00000004
+#define HE_SIG_A_SU_INFO_1_PACKET_EXTENSION_A_FACTOR_LSB             11
+#define HE_SIG_A_SU_INFO_1_PACKET_EXTENSION_A_FACTOR_MASK            0x00001800
+
+#define HE_SIG_A_SU_INFO_1_PACKET_EXTENSION_PE_DISAMBIGUITY_OFFSET   0x00000004
+#define HE_SIG_A_SU_INFO_1_PACKET_EXTENSION_PE_DISAMBIGUITY_LSB      13
+#define HE_SIG_A_SU_INFO_1_PACKET_EXTENSION_PE_DISAMBIGUITY_MASK     0x00002000
+
+#define HE_SIG_A_SU_INFO_1_DOPPLER_INDICATION_OFFSET                 0x00000004
+#define HE_SIG_A_SU_INFO_1_DOPPLER_INDICATION_LSB                    15
+#define HE_SIG_A_SU_INFO_1_DOPPLER_INDICATION_MASK                   0x00008000
+
+#define UNIFIED_PHYRX_HE_SIG_A_SU_0_HE_SIG_A_SU_INFO_PHYRX_HE_SIG_A_SU_INFO_DETAILS_OFFSET \
+	PHYRX_HE_SIG_A_SU_0_PHYRX_HE_SIG_A_SU_INFO_DETAILS_FORMAT_INDICATION_OFFSET
+
+#define PHYRX_HE_SIG_A_MU_DL_0_PHYRX_HE_SIG_A_MU_DL_INFO_DETAILS_DL_UL_FLAG_OFFSET 0x00000000
+#define PHYRX_HE_SIG_A_MU_DL_0_PHYRX_HE_SIG_A_MU_DL_INFO_DETAILS_DL_UL_FLAG_LSB 0
+#define PHYRX_HE_SIG_A_MU_DL_0_PHYRX_HE_SIG_A_MU_DL_INFO_DETAILS_DL_UL_FLAG_MASK 0x00000001
+
+#define HE_SIG_A_MU_DL_INFO_0_DL_UL_FLAG_OFFSET                      0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_DL_UL_FLAG_LSB                         0
+#define HE_SIG_A_MU_DL_INFO_0_DL_UL_FLAG_MASK                        0x00000001
+
+#define HE_SIG_A_MU_DL_INFO_0_MCS_OF_SIG_B_OFFSET                    0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_MCS_OF_SIG_B_LSB                       1
+#define HE_SIG_A_MU_DL_INFO_0_MCS_OF_SIG_B_MASK                      0x0000000e
+
+#define HE_SIG_A_MU_DL_INFO_0_DCM_OF_SIG_B_OFFSET                    0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_DCM_OF_SIG_B_LSB                       4
+#define HE_SIG_A_MU_DL_INFO_0_DCM_OF_SIG_B_MASK                      0x00000010
+
+#define HE_SIG_A_MU_DL_INFO_0_BSS_COLOR_ID_OFFSET                    0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_BSS_COLOR_ID_LSB                       5
+#define HE_SIG_A_MU_DL_INFO_0_BSS_COLOR_ID_MASK                      0x000007e0
+
+#define HE_SIG_A_MU_DL_INFO_0_SPATIAL_REUSE_OFFSET                   0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_SPATIAL_REUSE_LSB                      11
+#define HE_SIG_A_MU_DL_INFO_0_SPATIAL_REUSE_MASK                     0x00007800
+
+#define HE_SIG_A_MU_DL_INFO_0_TRANSMIT_BW_OFFSET                     0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_TRANSMIT_BW_LSB                        15
+#define HE_SIG_A_MU_DL_INFO_0_TRANSMIT_BW_MASK                       0x00038000
+
+#define HE_SIG_A_MU_DL_INFO_0_NUM_SIG_B_SYMBOLS_OFFSET               0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_NUM_SIG_B_SYMBOLS_LSB                  18
+#define HE_SIG_A_MU_DL_INFO_0_NUM_SIG_B_SYMBOLS_MASK                 0x003c0000
+
+#define HE_SIG_A_MU_DL_INFO_0_COMP_MODE_SIG_B_OFFSET                 0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_COMP_MODE_SIG_B_LSB                    22
+#define HE_SIG_A_MU_DL_INFO_0_COMP_MODE_SIG_B_MASK                   0x00400000
+
+#define HE_SIG_A_MU_DL_INFO_0_CP_LTF_SIZE_OFFSET                     0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_CP_LTF_SIZE_LSB                        23
+#define HE_SIG_A_MU_DL_INFO_0_CP_LTF_SIZE_MASK                       0x01800000
+
+#define HE_SIG_A_MU_DL_INFO_0_DOPPLER_INDICATION_OFFSET              0x00000000
+#define HE_SIG_A_MU_DL_INFO_0_DOPPLER_INDICATION_LSB                 25
+#define HE_SIG_A_MU_DL_INFO_0_DOPPLER_INDICATION_MASK                0x02000000
+
+#define HE_SIG_A_MU_DL_INFO_1_TXOP_DURATION_OFFSET                   0x00000004
+#define HE_SIG_A_MU_DL_INFO_1_TXOP_DURATION_LSB                      0
+#define HE_SIG_A_MU_DL_INFO_1_TXOP_DURATION_MASK                     0x0000007f
+
+#define HE_SIG_A_MU_DL_INFO_1_NUM_LTF_SYMBOLS_OFFSET                 0x00000004
+#define HE_SIG_A_MU_DL_INFO_1_NUM_LTF_SYMBOLS_LSB                    8
+#define HE_SIG_A_MU_DL_INFO_1_NUM_LTF_SYMBOLS_MASK                   0x00000700
+
+#define HE_SIG_A_MU_DL_INFO_1_LDPC_EXTRA_SYMBOL_OFFSET               0x00000004
+#define HE_SIG_A_MU_DL_INFO_1_LDPC_EXTRA_SYMBOL_LSB                  11
+#define HE_SIG_A_MU_DL_INFO_1_LDPC_EXTRA_SYMBOL_MASK                 0x00000800
+
+#define HE_SIG_A_MU_DL_INFO_1_STBC_OFFSET                            0x00000004
+#define HE_SIG_A_MU_DL_INFO_1_STBC_LSB                               12
+#define HE_SIG_A_MU_DL_INFO_1_STBC_MASK                              0x00001000
+
+#define HE_SIG_A_MU_DL_INFO_1_PACKET_EXTENSION_A_FACTOR_OFFSET       0x00000004
+#define HE_SIG_A_MU_DL_INFO_1_PACKET_EXTENSION_A_FACTOR_LSB          13
+#define HE_SIG_A_MU_DL_INFO_1_PACKET_EXTENSION_A_FACTOR_MASK         0x00006000
+
+#define HE_SIG_A_MU_DL_INFO_1_PACKET_EXTENSION_PE_DISAMBIGUITY_OFFSET 0x00000004
+#define HE_SIG_A_MU_DL_INFO_1_PACKET_EXTENSION_PE_DISAMBIGUITY_LSB   15
+#define HE_SIG_A_MU_DL_INFO_1_PACKET_EXTENSION_PE_DISAMBIGUITY_MASK  0x00008000
+
+#define UNIFIED_PHYRX_HE_SIG_A_MU_DL_0_HE_SIG_A_MU_DL_INFO_PHYRX_HE_SIG_A_MU_DL_INFO_DETAILS_OFFSET \
+	PHYRX_HE_SIG_A_MU_DL_0_PHYRX_HE_SIG_A_MU_DL_INFO_DETAILS_DL_UL_FLAG_OFFSET

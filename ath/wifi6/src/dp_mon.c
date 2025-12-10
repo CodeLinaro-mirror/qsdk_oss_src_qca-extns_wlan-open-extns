@@ -55,11 +55,6 @@ int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)
 	int i, ret;
 
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
-		idr_init(&dp_mon->rx_mon_status_refill_ring[i].bufs_idr);
-		spin_lock_init(&dp_mon->rx_mon_status_refill_ring[i].idr_lock);
-	}
-
-	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
 		srng = &dp_mon->rx_mon_status_refill_ring[i].refill_buf_ring;
 		ret = ath12k_dp_srng_setup(ab, srng,
 					   HAL_RXDMA_MONITOR_STATUS, 0, i,
@@ -113,38 +108,25 @@ void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp)
 static int
 ath12k_wifi6_dp_mon_rx_status_bufs_replenish(struct ath12k_dp *dp,
 					     struct dp_rxdma_mon_ring *rx_ring,
-					     int req_entries)
+					     struct list_head *used_list,
+					     int req_entries,
+					     struct ath12k_dp_rx_desc_pool *rx_desc_pool)
 {
 	struct ath12k_base *ab = dp->ab;
-	enum hal_rx_buf_return_buf_manager mgr =
-		ab->hal.hal_params->rx_buf_rbm;
-	int num_free, num_remain, buf_id;
-	void *desc;
+	struct ath12k_buffer_addr *desc;
 	struct hal_srng *srng;
+	struct ath12k_dp_wifi6_rx_desc_info *rx_desc, *tmp_rx_desc;
 	struct sk_buff *skb;
 	dma_addr_t paddr;
-	u32 cookie;
+	int ret = 0;
+	int allocated_entries = 0;
 
-	req_entries = min(req_entries, rx_ring->bufs_max);
-
-	srng = &ab->hal.srng_list[rx_ring->refill_buf_ring.ring_id];
-
-	spin_lock_bh(&srng->lock);
-
-	ath12k_hal_srng_access_begin(ab, srng);
-
-	num_free = ath12k_hal_srng_src_num_free(ab, srng, true);
-	if (!req_entries && (num_free > (rx_ring->bufs_max * 3) / 4))
-		req_entries = num_free;
-
-	req_entries = min(num_free, req_entries);
-	num_remain = req_entries;
-
-	while (num_remain > 0) {
-		skb = dev_alloc_skb(RX_MON_STATUS_BUF_SIZE);
+	list_for_each_entry_safe(rx_desc, tmp_rx_desc, used_list, list) {
+		skb = dev_alloc_skb(rx_desc_pool->buf_size);
 		if (!skb)
 			break;
 
+		skb_reserve(skb, RX_MON_STATUS_BUF_RESERVATION);
 		if (!IS_ALIGNED((unsigned long)skb->data,
 				RX_MON_STATUS_BUF_ALIGN)) {
 			skb_pull(skb,
@@ -152,69 +134,134 @@ ath12k_wifi6_dp_mon_rx_status_bufs_replenish(struct ath12k_dp *dp,
 				 skb->data);
 		}
 
+		memset(skb->data, 0, RX_MON_STATUS_BUF_SIZE);
 		paddr = dma_map_single(ab->dev, skb->data,
-				       skb->len + skb_tailroom(skb),
+				       rx_desc_pool->buf_size,
 				       DMA_FROM_DEVICE);
-		if (dma_mapping_error(ab->dev, paddr))
-			goto fail_free_skb;
+		if (dma_mapping_error(ab->dev, paddr)) {
+			dev_kfree_skb_any(skb);
+			rx_desc->skb = NULL;
+			ret = -EIO;
+			 goto out;
+		}
 
-		spin_lock_bh(&rx_ring->idr_lock);
-		buf_id = idr_alloc(&rx_ring->bufs_idr, skb, 0,
-				   rx_ring->bufs_max * 3, GFP_ATOMIC);
-		spin_unlock_bh(&rx_ring->idr_lock);
-		if (buf_id < 0)
-			goto fail_dma_unmap;
-		cookie = u32_encode_bits(buf_id, DP_MON_RXDMA_BUF_COOKIE_BUF_ID);
+		allocated_entries++;
+		rx_desc->skb = skb;
+		rx_desc->paddr = ATH12K_SKB_RXCB(skb)->paddr = paddr;
+		rx_desc->in_use = 1;
+		rx_desc->unmapped = 0;
 
-		desc = ath12k_hal_srng_src_get_next_entry(ab, srng);
-		if (!desc)
-			goto fail_buf_unassign;
-
-		ATH12K_SKB_RXCB(skb)->paddr = paddr;
-
-		num_remain--;
-
-		ath12k_hal_rx_buf_addr_info_set(desc, paddr, cookie, mgr);
 	}
 
-	ath12k_hal_srng_access_end(ab, srng);
+	srng = &ab->hal.srng_list[rx_ring->refill_buf_ring.ring_id];
+	spin_lock_bh(&srng->lock);
+	ath12k_hal_srng_access_begin(ab, srng);
+	while (allocated_entries > 0) {
+		rx_desc = list_first_entry_or_null(used_list,
+						   struct ath12k_dp_wifi6_rx_desc_info,
+						   list);
+		if (unlikely(!rx_desc)) {
+			ret = -ENOSPC;
+			goto ring_unlock;
+		}
 
+		desc = ath12k_wifi6_hal_srng_src_get_cur_desc_n_move_next(ab, srng);
+		if (unlikely(!desc)) {
+			ret = -ENOSPC;
+			goto ring_unlock;
+		}
+
+		list_del(&rx_desc->list);
+		allocated_entries--;
+		ath12k_wifi6_hal_rx_buf_addr_info_set(desc, rx_desc->paddr,
+						      rx_desc->cookie,
+						      rx_desc_pool->owner);
+	}
+
+ring_unlock:
+	ath12k_hal_srng_access_end(ab, srng);
 	spin_unlock_bh(&srng->lock);
 
-	return req_entries - num_remain;
+out:
+	if (unlikely(!list_empty(used_list))) {
+		list_for_each_entry_safe(rx_desc, tmp_rx_desc, used_list, list) {
+			skb = rx_desc->skb;
+			if (skb) {
+				dma_unmap_single(ab->dev, rx_desc->paddr,
+						 rx_desc_pool->buf_size,
+						 DMA_FROM_DEVICE);
+				dev_kfree_skb_any(skb);
+				rx_desc->skb = NULL;
+				rx_desc->unmapped = 1;
+			}
+			rx_desc->in_use = 0;
+		}
+		spin_lock_bh(&rx_desc_pool->rx_mon_desc_lock);
+		list_splice_tail(used_list, &rx_desc_pool->rx_desc_free_list);
+		spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
+	}
 
-fail_buf_unassign:
-	spin_lock_bh(&rx_ring->idr_lock);
-	idr_remove(&rx_ring->bufs_idr, buf_id);
-	spin_unlock_bh(&rx_ring->idr_lock);
-fail_dma_unmap:
-	dma_unmap_single(ab->dev, paddr, skb->len + skb_tailroom(skb),
-			 DMA_FROM_DEVICE);
-fail_free_skb:
-	dev_kfree_skb_any(skb);
+	return ret;
+}
 
-	ath12k_hal_srng_access_end(ab, srng);
+static int
+ath12k_wifi6_dp_mon_rx_status_buf_setup(struct ath12k_dp *dp, int mac_id)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	struct dp_rxdma_mon_ring *rx_ring;
+	struct dp_srng *rx_status_srng;
+	int num_entries;
+	size_t req_entries;
+	LIST_HEAD(list);
+	u16 ring_size;
+	int ret = 0;
 
-	spin_unlock_bh(&srng->lock);
+	rx_desc_pool = &dp_wifi6->rx_desc_status[mac_id];
+	ring_size = HAL_RX_MON_STATUS_RING_SIZE;
 
-	return req_entries - num_remain;
+	ret =  ath12k_wifi6_rx_desc_pool_init(dp, rx_desc_pool, mac_id, ring_size);
+	if (ret) {
+		ath12k_warn(dp, "rx desc pool init failed %d\n", ret);
+		return ret;
+	}
+	rx_desc_pool->dest_frag_enable =  false;
+	rx_desc_pool->buf_size = RX_MON_STATUS_BUF_SIZE;
+
+	rx_ring = &dp_mon->rx_mon_status_refill_ring[mac_id];
+	rx_status_srng = &rx_ring->refill_buf_ring;
+
+	num_entries = rx_ring->refill_buf_ring.size /
+		ath12k_hal_srng_get_entrysize(ab, HAL_RXDMA_MONITOR_STATUS);
+	rx_ring->bufs_max = num_entries;
+
+	req_entries = ath12k_wifi6_dp_get_req_entries_from_buf_ring(dp, rx_status_srng,
+								    &list,
+								    rx_desc_pool);
+	if (req_entries)
+		ret = ath12k_wifi6_dp_mon_rx_status_bufs_replenish(dp,
+								   rx_ring, &list,
+								   req_entries,
+								   rx_desc_pool);
+	else
+		ath12k_warn(dp, "No required entries available for mon buf ring\n");
+
+	return ret;
 }
 
 int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
-	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
-	struct dp_rxdma_mon_ring *rx_ring;
-	int i, ret;
-	int num_entries;
+	int i, ret = 0;
 
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
-		rx_ring = &dp_mon->rx_mon_status_refill_ring[i];
-		num_entries = rx_ring->refill_buf_ring.size /
-			ath12k_hal_srng_get_entrysize(ab, HAL_RXDMA_MONITOR_STATUS);
-		rx_ring->bufs_max = num_entries;
-
-		ath12k_wifi6_dp_mon_rx_status_bufs_replenish(dp, rx_ring, num_entries);
+		ret = ath12k_wifi6_dp_mon_rx_status_buf_setup(dp, i);
+		if (ret) {
+			ath12k_err(ab, "failed to setup monitor status ring\n");
+			return ret;
+		}
 	}
 
 	if (ath12k_dp_mon_rxdma1_enable(dp)) {
@@ -227,38 +274,50 @@ int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp)
 }
 
 static
-void ath12k_wifi6_dp_rxdma_mon_buf_ring_free(struct ath12k_dp *dp,
-				       struct dp_rxdma_mon_ring *rx_ring)
+void ath12k_wifi6_dp_mon_rx_status_ring_free(struct ath12k_dp *dp, int mac_id)
 {
 	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
 	struct sk_buff *skb;
-	int buf_id;
+	int i;
+	dma_addr_t paddr;
 
-	spin_lock_bh(&rx_ring->idr_lock);
-	idr_for_each_entry(&rx_ring->bufs_idr, skb, buf_id) {
-		idr_remove(&rx_ring->bufs_idr, buf_id);
-		/* TODO: Understand where internal driver does this dma_unmap
-		 * of rxdma_buffer.
-		 */
-		dma_unmap_single(ab->dev, ATH12K_SKB_RXCB(skb)->paddr,
-				 skb->len + skb_tailroom(skb), DMA_FROM_DEVICE);
-		dev_kfree_skb_any(skb);
+	rx_desc_pool = &dp_wifi6->rx_desc_status[mac_id];
+	spin_lock_bh(&rx_desc_pool->rx_mon_desc_lock);
+
+	if (!rx_desc_pool->mon_desc_pool) {
+		spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
+		return;
 	}
 
-	idr_destroy(&rx_ring->bufs_idr);
-	spin_unlock_bh(&rx_ring->idr_lock);
+	for (i = 0; i < rx_desc_pool->pool_size; i++) {
+		if (rx_desc_pool->mon_desc_pool[i].in_use != 1)
+			continue;
+		skb = rx_desc_pool->mon_desc_pool[i].skb;
+		paddr = rx_desc_pool->mon_desc_pool[i].paddr;
+
+		if (!(rx_desc_pool->mon_desc_pool[i].unmapped)) {
+			dma_unmap_single(ab->dev, paddr, rx_desc_pool->buf_size,
+					 DMA_FROM_DEVICE);
+			rx_desc_pool->mon_desc_pool[i].unmapped = 1;
+		}
+		dev_kfree_skb_any(skb);
+		rx_desc_pool->mon_desc_pool[i].skb = NULL;
+	}
+
+	kfree(rx_desc_pool->mon_desc_pool);
+	rx_desc_pool->mon_desc_pool = NULL;
+	spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
 }
 
 void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
-	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
-	struct dp_rxdma_mon_ring *rx_ring;
 	int i;
 
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
-		rx_ring = &dp_mon->rx_mon_status_refill_ring[i];
-		ath12k_wifi6_dp_rxdma_mon_buf_ring_free(dp, rx_ring);
+		ath12k_wifi6_dp_mon_rx_status_ring_free(dp, i);
 	}
 
 	if (ath12k_dp_mon_rxdma1_enable(dp))

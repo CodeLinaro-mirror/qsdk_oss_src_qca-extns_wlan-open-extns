@@ -211,6 +211,35 @@ struct ath12k_home_offchan_params {
 	u8 func;
 };
 
+/**
+ * struct hal_rx_frm_type_info - Per-PPDU 802.11 frame type counters
+ * @rx_mgmt_cnt: Number of 802.11 management frames decoded for this PPDU
+ * @rx_ctrl_cnt: Number of 802.11 control frames decoded for this PPDU
+ * @rx_data_cnt: Number of 802.11 data frames decoded for this PPDU
+ */
+struct hal_rx_frm_type_info {
+	u8 rx_mgmt_cnt;
+	u8 rx_ctrl_cnt;
+	u8 rx_data_cnt;
+};
+
+/**
+ * struct hal_mon_ppdu_info_extn - Monitor-mode PPDU extension metadata
+ * @rx_state: RX pipeline state at the time this PPDU was reported
+ * @rx_antenna: RX antenna bitmap (one bit per RF chain) indicating chains that contributed
+ * @rssi: Per-chain RSSI(signed), indexed by RF chain (up to 8 entries)
+ * @sw_frame_group_id: Software-defined frame group identifier for this PPDU
+ * @frm_type_info: Aggregated 802.11 frame-type counters for the PPDU
+ */
+
+struct hal_mon_ppdu_info_extn {
+	u8 rx_state;
+	u32 rx_antenna;
+	s8 rssi[8];
+	u8 sw_frame_group_id;
+	struct hal_rx_frm_type_info frm_type_info;
+};
+
 #ifndef CPTCFG_QCN_EXTN
 
 static inline void

@@ -9,6 +9,10 @@
 #ifndef HAL_MON_H
 #define HAL_MON_H
 
+#define HAL_PPDU_START_GET_CHAN			0x0000FFFF
+#define HAL_PPDU_START_GET_FREQ			0xFFFF0000
+#define HAL_PPDU_START_FREQ_MASK		16
+
 #define HAL_MPDU_START_SW_FRAME_GRP_NULL_DATA	0x3
 
 #define RX_MON_MPDU_END_WMASK	0xff
@@ -19,17 +23,25 @@
 #define HAL_MON_RX_PPDU_EU_STATS_TLV_SIZE	\
 	sizeof(struct hal_rx_ppdu_end_user_stats)
 
-#define HAL_RX_PPDU_START_INFO0_PPDU_ID			GENMASK(15, 0)
-#define HAL_RX_PPDU_START_INFO1_CHAN_NUM		GENMASK(15, 0)
-#define HAL_RX_PPDU_START_INFO1_CHAN_FREQ		GENMASK(31, 16)
+/**
+ * @HAL_RX_MON_PPDU_START: PPDU start TLV is decoded in HAL
+ * @HAL_RX_MON_PPDU_END: PPDU end TLV is decoded in HAL
+ * @HAL_RX_MON_PPDU_RESET: Not PPDU start and end TLV
+ */
+enum hal_ppdu_status {
+	HAL_RX_MON_PPDU_START = 0,
+	HAL_RX_MON_PPDU_END,
+	HAL_RX_MON_PPDU_RESET,
+};
 
-struct hal_rx_ppdu_start {
-	__le32 info0;
-	__le32 info1;
-	__le32 ppdu_start_ts_31_0;
-	__le32 ppdu_start_ts_63_32;
-	__le32 rsvd0[2];
-} __packed;
+#define HAL_RX_OFFSET(block, field) block##_##field##_OFFSET
+#define HAL_RX_LSB(block, field) block##_##field##_LSB
+#define HAL_RX_MASK(block, field) block##_##field##_MASK
+
+#define HAL_RX_GET(_ptr, block, field) \
+	(((*((volatile uint32_t *)_ptr + (HAL_RX_OFFSET(block, field)>>2))) & \
+	HAL_RX_MASK(block, field)) >> \
+	HAL_RX_LSB(block, field))
 
 #define HAL_RX_PPDU_END_USER_STATS_INFO0_MCS			GENMASK(16, 13)
 #define HAL_RX_PPDU_END_USER_STATS_INFO0_NSS			GENMASK(19, 17)
@@ -153,45 +165,6 @@ struct hal_phyrx_common_user_info {
 	__le32 rsvd0[2];
 	__le32 info0;
 	__le32 rsvd1;
-} __packed;
-
-#define HAL_RX_USR_INFO0_PHY_PPDU_ID		GENMASK(15, 0)
-#define HAL_RX_USR_INFO0_USR_RSSI		GENMASK(23, 16)
-#define HAL_RX_USR_INFO0_PKT_TYPE		GENMASK(27, 24)
-#define HAL_RX_USR_INFO0_STBC			BIT(28)
-#define HAL_RX_USR_INFO0_RECEPTION_TYPE		GENMASK(31, 29)
-
-#define HAL_RX_USR_INFO1_MCS			GENMASK(3, 0)
-#define HAL_RX_USR_INFO1_SGI			GENMASK(5, 4)
-#define HAL_RX_USR_INFO1_HE_RANGING_NDP		BIT(6)
-#define HAL_RX_USR_INFO1_MIMO_SS_BITMAP		GENMASK(15, 8)
-#define HAL_RX_USR_INFO1_RX_BW			GENMASK(18, 16)
-#define HAL_RX_USR_INFO1_DL_OFMDA_USR_IDX	GENMASK(31, 24)
-
-#define HAL_RX_USR_INFO2_DL_OFDMA_CONTENT_CHAN	BIT(0)
-#define HAL_RX_USR_INFO2_NSS			GENMASK(10, 8)
-#define HAL_RX_USR_INFO2_STREAM_OFFSET		GENMASK(13, 11)
-#define HAL_RX_USR_INFO2_STA_DCM		BIT(14)
-#define HAL_RX_USR_INFO2_LDPC			BIT(15)
-#define HAL_RX_USR_INFO2_RU_TYPE_80_0		GENMASK(19, 16)
-#define HAL_RX_USR_INFO2_RU_TYPE_80_1		GENMASK(23, 20)
-#define HAL_RX_USR_INFO2_RU_TYPE_80_2		GENMASK(27, 24)
-#define HAL_RX_USR_INFO2_RU_TYPE_80_3		GENMASK(31, 28)
-
-#define HAL_RX_USR_INFO3_RU_START_IDX_80_0	GENMASK(5, 0)
-#define HAL_RX_USR_INFO3_RU_START_IDX_80_1	GENMASK(13, 8)
-#define HAL_RX_USR_INFO3_RU_START_IDX_80_2	GENMASK(21, 16)
-#define HAL_RX_USR_INFO3_RU_START_IDX_80_3	GENMASK(29, 24)
-
-struct hal_receive_user_info {
-	__le32 info0;
-	__le32 info1;
-	__le32 info2;
-	__le32 info3;
-	__le32 user_fd_rssi_seg0;
-	__le32 user_fd_rssi_seg1;
-	__le32 user_fd_rssi_seg2;
-	__le32 user_fd_rssi_seg3;
 } __packed;
 
 #define HAL_RX_HE_SIG_A_SU_INFO_INFO0_TRANSMIT_MCS	GENMASK(6, 3)
@@ -335,13 +308,6 @@ struct hal_rx_msdu_end {
 	__le32 rsvd1[10];
 	__le32 info2;
 	__le32 rsvd2;
-} __packed;
-
-#define HAL_RX_PPDU_END_DURATION	GENMASK(23, 0)
-struct hal_rx_ppdu_end_duration {
-	__le32 rsvd0[9];
-	__le32 info0;
-	__le32 rsvd1[18];
 } __packed;
 
 #define HAL_TX_FES_STATUS_END_INFO0_START_TIMESTAMP_15_0	GENMASK(15, 0)

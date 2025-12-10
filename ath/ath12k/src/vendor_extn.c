@@ -14,6 +14,7 @@
 #include "../net/wireless/core.h"
 #include "../debug.h"
 #include "../mac.h"
+#include "esp_extn.h"
 
 
 const struct nla_policy
@@ -1543,5 +1544,13 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)
 {
+	int ret;
+
+	ret = ath12k_vendor_set_esp_params_extn(wiphy, tb, wdev);
+	if (ret) {
+		ath12k_err(NULL, "Failed to set ESP params: %d\n", ret);
+		return ret;
+	}
+
 	return 0;
 }

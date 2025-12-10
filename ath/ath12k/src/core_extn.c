@@ -22,6 +22,7 @@
 #include "../hw.h"
 #include "ath12k_cmn_extn.h"
 #include "../net/mac80211/ieee80211_i.h"
+#include "esp_extn.h"
 
 
 void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif)
@@ -87,6 +88,9 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 			  struct sk_buff *skb)
 {
 	switch (id) {
+	case WMI_ESP_ESTIMATE_EVENTID:
+		ath12k_wmi_esp_estimate_event_extn(ab, skb);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -96,8 +100,10 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 
 void ath12k_mac_setup_extn(struct ath12k *ar)
 {
+	ath12k_esp_init_extn(ar);
 }
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
+	ath12k_esp_cleanup_extn(ar);
 }

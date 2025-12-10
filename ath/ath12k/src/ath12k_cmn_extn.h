@@ -22,8 +22,28 @@ struct ath12k_vif_extn {
 	spinlock_t data_lock;
 };
 
+/**
+ * struct esp_extn - ESP (Estimated Service Parameters) extension
+ * @air_time_fraction: Configured airtime fraction
+ * @ppdu_duration: Configured PPDU duration
+ * @ba_window: Configured Block ACK window size
+ * @periodicity: ESP Airtime fraction indication period in seconds
+ * @fw_esp_air_time: Firmware-estimated airtime (from WMI event)
+ * @airtime_update_work: Work struct for vendor event delivery to report
+ * airtime received from firmware
+ */
+struct esp_extn {
+	u32 air_time_fraction;
+	u8 ppdu_duration;
+	u8 ba_window;
+	u16 periodicity;
+	u32 fw_esp_air_time;
+	struct wiphy_work airtime_update_work;
+};
+
 struct ath12k_extn {
 	/* Add ath12k_extn structures here */
+	struct esp_extn esp;
 };
 
 struct sta_240mhz_info {

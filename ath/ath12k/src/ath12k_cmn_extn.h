@@ -41,15 +41,73 @@ struct esp_extn {
 	struct wiphy_work airtime_update_work;
 };
 
-struct ath12k_extn {
-	/* Add ath12k_extn structures here */
-	struct esp_extn esp;
-};
-
 struct sta_240mhz_info {
 	struct ieee80211_240mhz_vendor_oper_extn params_240MHz_extn;
 	u8 mac_addr[ETH_ALEN];
 	struct list_head list;
+};
+
+/* Maximum wait time for off-channel operations (milliseconds). */
+#define ATH12K_MAX_OFFCHAN_WAIT        50
+
+/**
+ * struct ath12k_offchan_stat - statistics for off-channel activity
+ * @noise_floor:        Noise floor in dBm (signed 16-bit).
+ * @blanking_params_valid: Blanking parameters validity flag.
+ * @tx_frame_count:        Number of frames transmitted.
+ * @rx_frame_count:        Number of frames received.
+ * @rx_clear_count:        RX clear time (units: driver-specific ticks).
+ * @cycle_count:           Total channel cycle time (units: ticks).
+ * @dwell_time:            Dwell time on the off-channel (ms).
+ * @chanswitch_time_htof:  Time to switch from home to off-channel (us).
+ * @chanswitch_time_ftoh:  Time to switch from off-channel to home (us).
+ * @blanking_count:        Number of blanking events.
+ * @blanking_duration:     Total blanking duration (ms).
+ */
+struct ath12k_offchan_stat {
+	s16 noise_floor;
+	u8  blanking_params_valid;
+	u32 tx_frame_count;
+	u32 rx_frame_count;
+	u32 rx_clear_count;
+	u32 cycle_count;
+	u32 dwell_time;
+	u32 chanswitch_time_htof;
+	u32 chanswitch_time_ftoh;
+	u32 blanking_count;
+	u32 blanking_duration;
+};
+
+/**
+ * struct ath12k_raw_pkt_ctx - context for raw packet off-channel ops
+ * @pkt_list:            Queue of pending raw packets.
+ * @chan_lock:            Lock protecting @pkt_list and channel state.
+ * @offchan_timer:        Timeout timer for off-channel operations.
+ * @chan_stat:            Accumulated off-channel statistics.
+ * @vif:                  Associated virtual interface.
+ * @transaction_id:       Transaction identifier per request.
+ * @num_cmpl_pending:     Number of pending completions.
+ * @home_chan:            True if currently on the home channel.
+ */
+struct ath12k_raw_pkt_ctx {
+	struct sk_buff_head  pkt_list;
+	spinlock_t chan_lock;
+	struct timer_list offchan_timer;
+	struct ath12k_offchan_stat chan_stat;
+	struct ieee80211_vif  *vif;
+	u32 transaction_id;
+	atomic_t num_cmpl_pending;
+	bool home_chan;
+};
+
+/**
+ * struct ath12k_extn - ath12k driver private extensions
+ * @esp:  esp extensions structure
+ * @raw_pkt_ctx:   Pointer to raw packet home/off-channel context.
+ */
+struct ath12k_extn {
+	struct esp_extn esp;
+	struct ath12k_raw_pkt_ctx  *raw_pkt_ctx;
 };
 
 #ifndef CPTCFG_QCN_EXTN

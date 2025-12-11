@@ -65,7 +65,21 @@ static inline
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)
 {
-	return -1;
+    return -1;
+}
+
+static inline int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
+						  struct wireless_dev *wdev,
+						  u8 hw_link_id,
+						  int event_type)
+{
+    return -1;
+}
+
+static inline void ath12k_vendor_send_event(struct ath12k_base *ab,
+					    u8 event_flag)
+{
+
 }
 
 #else
@@ -98,6 +112,14 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev);
+
+int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
+				    struct wireless_dev *wdev,
+				    u8 hw_link_id,
+				    int event_type);
+
+void ath12k_vendor_send_event(struct ath12k_base *ab,
+			      u8 event_flag);
 
 #endif /* CPTCFG_QCN_EXTN */
 

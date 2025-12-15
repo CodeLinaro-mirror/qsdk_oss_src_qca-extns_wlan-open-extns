@@ -386,35 +386,6 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 	},
 };
 
-#ifdef CPTCFG_ATH12K_PPE_DS_SUPPORT
-static int ath12k_mac_op_set_mtu(struct ieee80211_hw *hw,
-				 struct ieee80211_vif *vif,
-				 int mtu)
-{
-	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
-	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
-	int ret = 0;
-
-	if (!wdev)
-		return -ENODEV;
-
-	wiphy_lock(ahvif->ah->hw->wiphy);
-	if (ahvif->vdev_type == WMI_VDEV_TYPE_MONITOR || !wdev->netdev) {
-		wiphy_unlock(ahvif->ah->hw->wiphy);
-		return 0;
-	}
-
-	if (ahvif->dp_vif.ppe_vp_type != ATH12K_INVALID_PPE_VP_TYPE &&
-	    ahvif->dp_vif.ppe_vp_num != ATH12K_INVALID_PPE_VP_NUM) {
-		ret = ath12k_vif_set_mtu(ahvif, mtu);
-	}
-
-	wiphy_unlock(ahvif->ah->hw->wiphy);
-
-	return ret;
-}
-#endif
-
 void ath12k_wifi6_ieee80211_free_txskb(struct ieee80211_hw *hw,
 				       struct sk_buff *skb,
 				       struct ath12k_dp_vif *dp_vif,

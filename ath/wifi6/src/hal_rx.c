@@ -1071,6 +1071,7 @@ static void ath12k_hal_get_tsf_reg(u8 mac_id, enum hal_scratch_reg_enum *tsf_enu
 void ath12k_hal_qcn9274_get_tsf2_scratch_reg(struct ath12k_base *ab,
 					     u8 mac_id, u64 *value)
 {
+	u32 pmm_reg_base = HAL_PMM_REG_BASE(&ab->hal);
 	enum hal_scratch_reg_enum enum_lo, enum_hi;
 	u32 offset_lo, offset_hi;
 
@@ -1080,18 +1081,14 @@ void ath12k_hal_qcn9274_get_tsf2_scratch_reg(struct ath12k_base *ab,
 		offset_lo = ath12k_hif_pmm_read32(ab, ATH12K_PPT_ADDR_OFFSET(enum_lo));
 		offset_hi = ath12k_hif_pmm_read32(ab, ATH12K_PPT_ADDR_OFFSET(enum_hi));
 	} else if (ab->hw_rev == ATH12K_HW_QCN6432_HW10) {
-		offset_lo = ath12k_hif_cmem_read32(ab,
-						   PMM_REG_BASE_QCN9224 +
+		offset_lo = ath12k_hif_cmem_read32(ab, pmm_reg_base +
 						   ATH12K_PPT_ADDR_OFFSET(enum_lo));
-		offset_hi = ath12k_hif_cmem_read32(ab,
-						   PMM_REG_BASE_QCN9224 +
+		offset_hi = ath12k_hif_cmem_read32(ab, pmm_reg_base +
 						   ATH12K_PPT_ADDR_OFFSET(enum_hi));
 	} else {
-		offset_lo = ath12k_hif_read32(ab,
-					      PMM_REG_BASE_QCN9224 +
+		offset_lo = ath12k_hif_read32(ab, pmm_reg_base +
 					      ATH12K_PPT_ADDR_OFFSET(enum_lo));
-		offset_hi = ath12k_hif_read32(ab,
-					      PMM_REG_BASE_QCN9224 +
+		offset_hi = ath12k_hif_read32(ab, pmm_reg_base +
 					      ATH12K_PPT_ADDR_OFFSET(enum_hi));
 	}
 
@@ -1100,31 +1097,26 @@ void ath12k_hal_qcn9274_get_tsf2_scratch_reg(struct ath12k_base *ab,
 
 void ath12k_hal_qcn9274_get_tqm_scratch_reg(struct ath12k_base *ab, u64 *value)
 {
-	u32 offset_lo, offset_hi, offset_mask;
+	u32 pmm_reg_base = HAL_PMM_REG_BASE(&ab->hal);
+	u32 offset_lo, offset_hi;
 
 	if (ab->hif.ops->pmm_read32) {
-		offset_mask = ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_LO_US);
-		offset_lo = ath12k_hif_pmm_read32(ab, offset_mask);
-
-		offset_mask = ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_HI_US);
-		offset_hi = ath12k_hif_pmm_read32(ab, offset_mask);
-
+		offset_lo = ath12k_hif_pmm_read32(ab, ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_LO_US));
+		offset_hi = ath12k_hif_pmm_read32(ab, ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_HI_US));
 	} else if (ab->hw_rev == ATH12K_HW_QCN6432_HW10) {
-		offset_mask = PMM_REG_BASE_QCN9224 +
-			      ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_LO_US);
-		offset_lo = ath12k_hif_cmem_read32(ab, offset_mask);
-
-		offset_mask = PMM_REG_BASE_QCN9224 +
-			      ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_HI_US);
-		offset_hi = ath12k_hif_cmem_read32(ab, offset_mask);
+		offset_lo = ath12k_hif_cmem_read32(ab,
+						   pmm_reg_base +
+						   ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_LO_US));
+		offset_hi = ath12k_hif_cmem_read32(ab,
+						   pmm_reg_base +
+						   ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_HI_US));
 	} else {
-		offset_mask = PMM_REG_BASE_QCN9224 +
-			      ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_LO_US);
-		offset_lo = ath12k_hif_read32(ab, offset_mask);
-
-		offset_mask = PMM_REG_BASE_QCN9224 +
-			      ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_HI_US);
-		offset_hi = ath12k_hif_read32(ab, offset_mask);
+		offset_lo = ath12k_hif_read32(ab,
+					      pmm_reg_base +
+					      ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_LO_US));
+		offset_hi = ath12k_hif_read32(ab,
+					      pmm_reg_base +
+					      ATH12K_PPT_ADDR_OFFSET(PMM_TQM_CLOCK_OFFSET_HI_US));
 	}
 
 	*value = ((u64)(offset_hi) << 32 | offset_lo);

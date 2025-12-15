@@ -339,6 +339,9 @@ const struct ath12k_hw_regs qcn9074_regs = {
 	.hal_ppe_rel_ring_base = 0x0, //WCSS_UMAC_WBM_R0_SW1_RELEASE_RING_MSI1_BASE_LSB
 	.hal_reo2ppe_ring_base = 0x0, //WCSS_UMAC_REO_R0_REO2PPE_RING_BASE_LSB
 	.hal_tcl_ppe2tcl_ring_base_lsb = 0x0, //WCSS_UMAC_TCL_R0_PPE2TCL1_RING_BASE_LSB
+
+	/* PMM register base address */
+	.hal_pmm_reg_base = 0x00B500FC,
 };
 
 const struct ath12k_hw_hal_params ath12k_wifi6_hw_hal_params_qcn9074 = {

@@ -14,6 +14,9 @@ ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1];
 extern const struct nla_policy
 ath12k_rule_config_policy[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1];
 
+extern const struct nla_policy
+ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1];
+
 #ifndef CPTCFG_QCN_EXTN
 
 static inline int
@@ -82,6 +85,20 @@ static inline void ath12k_vendor_send_event(struct ath12k_base *ab,
 
 }
 
+int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params)
+{
+	return -1;
+}
+
+int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
+					    struct wireless_dev *wdev,
+					    const void *data,
+					    int data_len)
+{
+	return -1;
+}
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -120,6 +137,14 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag);
+
+int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
+					struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
+					    struct wireless_dev *wdev,
+					    const void *data,
+					    int data_len);
 
 #endif /* CPTCFG_QCN_EXTN */
 

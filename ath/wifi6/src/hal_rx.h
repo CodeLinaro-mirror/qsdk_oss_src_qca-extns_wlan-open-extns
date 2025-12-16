@@ -466,6 +466,7 @@ void ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get(void *rx_desc,
 					       struct hal_rx_buf_info *buf_info,
 					       u32 *msdu_cnt);
 void ath12k_wifi6_dp_mon_rx_priv_info_set(u8 *buf, u8 *priv_data, u8 len);
+void ath12k_wifi6_dp_mon_rx_priv_info_get(u8 *buf, u8 *priv_data, u8 len);
 void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,
 					   dma_addr_t paddr, u32 cookie,
 					   u8 manager);

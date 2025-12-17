@@ -18,6 +18,7 @@
 #include "esp_extn.h"
 #include "../ini.h"
 #include "../cmn_defs.h"
+#include "../telemetry_agent_if.h"
 
 
 const struct nla_policy
@@ -503,6 +504,55 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		} else {
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MGMT_TX_POWER to firmware");
 		}
+		break;
+        case QCA_WLAN_VENDOR_GLOBAL_RSSI_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_RSSI_MAX_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MAX_THRESH:
+		if ((int32_t)value > 0 || (int32_t)value < -100) {
+			ath12k_err(NULL, "Invalid RSSI/ACKRSSI threshold value %d. Valid range: -100 to 0 dBm\n",
+				   (int32_t)value);
+			ret = -EINVAL;
+		} else {
+			if (param == QCA_WLAN_VENDOR_GLOBAL_RSSI_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RSSI_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_RSSI_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RSSI_MAX, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_ACKRSSI_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_ACKRSSI_MAX, value);
+
+			if (ret)
+				ath12k_err(NULL, "Failed to set RSSI/ACKRSSI threshold, param: %d\n", param);
+		}
+		break;
+	case QCA_WLAN_VENDOR_GLOBAL_TXRATE_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_TXRATE_MAX_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_RXRATE_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_RXRATE_MAX_THRESH:
+		if ((int32_t)value < 0) {
+			ath12k_err(NULL, "Invalid rate threshold value %d. Rate must be positive\n",
+				   (int32_t)value);
+			ret = -EINVAL;
+		} else {
+			if (param == QCA_WLAN_VENDOR_GLOBAL_TXRATE_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_TXRATE_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_TXRATE_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_TXRATE_MAX, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_RXRATE_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RXRATE_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_RXRATE_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RXRATE_MAX, value);
+
+			if (ret)
+				ath12k_err(NULL, "Failed to set rate threshold, param: %d\n", param);
+		}
+		break;
+	case QCA_WLAN_VENDOR_GLOBAL_RSSI_RATE_BREACH_MASK:
+		ret = ath12k_telemetry_set_breach_mask(value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set RSSI/Rate breach mask\n");
 		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
@@ -1557,6 +1607,11 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCN_TX_POWER:
 		*value = arvif->vap_cfg.bcn_tx_power;
 		ret = 0;
+		break;
+        case QCA_WLAN_VENDOR_GLOBAL_GET_RSSI_RATE_THRESHOLDS:
+		ret = ath12k_telemetry_print_thresholds();
+		if (ret)
+			ath12k_err(NULL, "Failed to print RSSI/Rate thresholds\n");
 		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

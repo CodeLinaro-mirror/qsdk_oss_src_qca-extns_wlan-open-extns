@@ -15,19 +15,38 @@
 #include "../../debug.h"
 #include "../../hif.h"
 #include "../../dp_rx.h" //Require to allocate RX buffers and use RX alloc/free api
+#include "../../dp_peer.h"
 
 //TODO: Enable below inclusion with IPA driver
 #include <linux/ipa.h>
 #include <linux/ipa_wdi3.h>
 #include <linux/pci.h>
 
+struct frag_header {
+	struct {
+		struct {} dummy_struct;
+		u8 reserved[];
+	};
+};
+
+struct ipa_header {
+	struct {
+		struct {} dummy_struct;
+		u8 reserved[];
+	};
+};
+
 #define DEBRUIJIN_MAGIC_IDX 0x077CB531U
 #define DEBRUIJIN_MAGIC_SHIFT 27
 
+#define NL80211_BAND_UNSPECIFIED ((enum nl80211_band)-1)
 
 #define IPA_TCL_SW_RING 0
 
 #define MAX_IPA_IFACE                       7
+#define WLAN_IPA_WLAN_HDR_DES_MAC_OFFSET    0
+#define WLAN_IPA_UC_WLAN_HDR_DES_MAC_OFFSET \
+	(sizeof(struct frag_header) + sizeof(struct ipa_header))
 #define WLAN_IPA_MAX_IFACE                  MAX_IPA_IFACE
 #define WLAN_IPA_MAX_SYSBAM_PIPE            4
 
@@ -208,32 +227,6 @@ struct ipa_mac_addr {
 	u8 bytes[IPA_MAC_ADDR_SIZE];
 };
 
-
-/**
- * enum wlan_ipa_wlan_event - WLAN IPA events
- * @WLAN_IPA_CLIENT_CONNECT: Client Connects
- * @WLAN_IPA_CLIENT_DISCONNECT: Client Disconnects
- * @WLAN_IPA_AP_CONNECT: SoftAP is started
- * @WLAN_IPA_AP_DISCONNECT: SoftAP is stopped
- * @WLAN_IPA_STA_CONNECT: STA associates to AP
- * @WLAN_IPA_STA_DISCONNECT: STA dissociates from AP
- * @WLAN_IPA_CLIENT_CONNECT_EX: Peer associates/re-associates to softap
- * @WLAN_IPA_MLO_CLIENT_CONNECT_EX: MLO Peer Connect
- * @WLAN_IPA_MLO_CLIENT_DISCONNECT: MLO Peer Disconnect
- * @WLAN_IPA_WLAN_EVENT_MAX: Max value for the enum
- */
-enum wlan_ipa_wlan_event {
-	WLAN_IPA_CLIENT_CONNECT,
-	WLAN_IPA_CLIENT_DISCONNECT,
-	WLAN_IPA_AP_CONNECT,
-	WLAN_IPA_AP_DISCONNECT,
-	WLAN_IPA_STA_CONNECT,
-	WLAN_IPA_STA_DISCONNECT,
-	WLAN_IPA_CLIENT_CONNECT_EX,
-	WLAN_IPA_MLO_CLIENT_CONNECT_EX,
-	WLAN_IPA_MLO_CLIENT_DISCONNECT,
-	WLAN_IPA_WLAN_EVENT_MAX
-};
 
 /**
  * enum wlan_ipa_bw_level - IPA bandwidth level
@@ -487,6 +480,7 @@ struct wlan_ipa_iface_context {
 	u8 is_authenticated;
 	bool alt_pipe;
 	struct dp_ipa_net_device_priv net_dev;
+	bool is_mlo_vdev;
 };
 
 /**
@@ -737,4 +731,123 @@ static inline bool dp_ipa_enable(void)
 {
 	return true;
 }
+
+struct wlan_ipa_evt_wq_args {
+	u8 mac_addr[ETH_ALEN];
+	enum ipa_wlan_event event;
+	u32 vdev_id;
+	u8 pdev_idx;
+	u8 device_id;
+	bool is_mlo;
+	struct dp_ipa_net_device_priv dev;
+	enum nl80211_iftype mode;
+	enum nl80211_band band;
+	struct list_head list_elem;
+};
+
+struct ath12k_ipa_event_entry {
+	u8 mac_addr[ETH_ALEN];
+	u32 vdev_id;
+	u8 device_id;
+	u8 pdev_idx;
+	bool is_mlo;
+	struct dp_ipa_net_device_priv dev;
+	struct rhash_head node;
+};
+
+struct ath12k_ipa_global_ctx {
+	struct work_struct work;
+	struct ath12k_dp_hw_group *dp_hw_grp;
+
+	spinlock_t list_lock; /* Protects access to the IPA event list */
+	struct list_head list;
+
+	struct rhashtable *mac_table;
+	struct rhashtable_params mac_table_params;
+};
+
+enum {
+	WMI_AP_RX_DATA_OFFLOAD             = 0x00,
+	WMI_STA_RX_DATA_OFFLOAD            = 0x01,
+};
+
+int ath12k_ipa_global_ctx_alloc(struct ath12k_dp_hw_group *dp_hw_grp);
+
+void ath12k_ipa_global_ctx_free(struct ath12k_ipa_global_ctx *ctx);
+
+void ath12k_wlan_ipa_evt_handler (struct work_struct *work);
+
+int ath12k_ipa_wlan_evt(struct ath12k_wlan_ipa_priv *ipa_ctx,
+			enum ipa_wlan_event event,
+			u32 vdev_id, u8 pdev_idx, const u8 mac[ETH_ALEN],
+			struct dp_ipa_net_device_priv *dev, enum nl80211_iftype mode,
+			enum nl80211_band band, bool is_mlo);
+
+int ath12k_wlan_ipa_send_msg(struct ath12k_wlan_ipa_priv *ipa_ctx,
+			     enum ipa_wlan_event event, const u8 mac[ETH_ALEN],
+			     struct dp_ipa_net_device_priv *dev, bool mlo, u8 id);
+
+int ath12k_wlan_ipa_send_msg_ex(struct ath12k_wlan_ipa_priv *ipa_ctx,
+				enum ipa_wlan_event event, const u8 mac[ETH_ALEN],
+				struct dp_ipa_net_device_priv *dev, bool mlo, u8 id);
+
+bool ath12k_ipa_get_is_tx1_used(struct ath12k_base *ab, u8 pdev_idx);
+
+void ath12k_wlan_ipa_msg_free_fn(void *buff, u32 len, u32 type);
+
+void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *arvif,
+			    const u8 mac[ETH_ALEN], bool is_mlo);
+
+bool ath12k_wlan_ipa_is_sta_only_offload_enabled(void);
+
+bool ath12k_ipa_config_is_enabled(void);
+
+void ath12k_wlan_ipa_intrabss_enable_disable(struct ath12k_wlan_ipa_priv *ipa_ctx,
+					     u32 vdev_id, bool enable);
+
+void ath12k_wlan_ipa_uc_offload_enable(struct ath12k_wlan_ipa_priv *ipa_ctx,
+				       u32 offload_type, u32 vdev_id,
+				       bool enable);
+
+int ath12k_ipa_send_intrabss_enable_disable(struct ath12k_base *ab,
+					    struct ipa_intrabss_control_params *params);
+
+int
+ath12k_ipa_send_uc_offload_enable_disable(struct ath12k_base *ab,
+					  struct ipa_uc_offload_control_params *params);
+
+bool ath12k_wlan_ipa_is_enabled(struct wlan_ipa_config *ipa_cfg);
+
+bool ath12k_wlan_ipa_uc_is_enabled(struct wlan_ipa_config *ipa_cfg);
+
+bool ath12k_wlan_ipa_uc_sta_is_enabled(struct wlan_ipa_config *ipa_cfg);
+
+int ath12k_wlan_ipa_get_ifaceid(struct ath12k_wlan_ipa_priv *ipa_ctx, u8 session_id);
+
+struct wlan_ipa_iface_context *
+ath12k_wlan_ipa_get_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
+			  enum nl80211_iftype mode);
+
+struct wlan_ipa_iface_context *
+ath12k_wlan_ipa_get_iface_by_mode_netdev(struct ath12k_wlan_ipa_priv *ipa_ctx,
+					 enum nl80211_iftype mode,
+					 struct dp_ipa_net_device_priv *net_dev_priv,
+					 u8 session_id);
+
+enum IPA_OPMODE ath12k_ipa_mode(enum nl80211_iftype mode);
+
+void wlan_ipa_cleanup_iface(struct wlan_ipa_iface_context *iface_context,
+			    const u8 *mac_addr, ipa_wdi_hdl_t hdl, uint8_t session_id,
+			    bool mld_enabled);
+
+int wlan_ipa_setup_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
+			 struct dp_ipa_net_device_priv *net_dev_priv,
+			 enum IPA_OPMODE device_mode, u8 session_id,
+			 const u8 *mac_addr,
+			 bool is_2g_iface, bool is_mlo_vdev, bool is_tx1_used);
+
+int wlan_ipa_check_iface_netdev_sessid(struct wlan_ipa_iface_context *iface_ctx,
+				       struct dp_ipa_net_device_priv *net_dev_priv,
+				       u8 session_id);
+
 #endif

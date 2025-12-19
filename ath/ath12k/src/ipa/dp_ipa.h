@@ -87,6 +87,9 @@
 #define WLAN_IPA_IS_CONFIG_ENABLED(ipa_cfg, mask) \
 	(((ipa_cfg)->ipa_config & (mask)) == (mask))
 
+#define WLAN_IPA_AST_META_DATA_MASK htonl(0x000000FF)
+#define DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET	0
+
 
 int ath12k_ipa_plugin_register_ops(struct ath12k_base *ab);
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab);
@@ -100,6 +103,12 @@ struct iommu_domain *ath12k_smmu_get_domain(struct ath12k_base *ab);
 int ath12k_smmu_map(struct ath12k_base *ab, phys_addr_t paddr,
 		    u32 *iova_addr, size_t size);
 int ath12k_smmu_unmap(struct ath12k_base *ab, u32 iova_addr, size_t size);
+
+struct dp_ipa_net_device_priv {
+	char name[IFNAMSIZ];
+	u8 dev_addr[ETH_ALEN];
+	int ifindex;
+};
 
 struct ath12k_ipa_ops {
 	int (*ipa_register_is_ipa_ready)(struct ath12k_base *ab);
@@ -466,7 +475,6 @@ struct wlan_ipa_iface_context {
 	enum ipa_client_type prod_client;
 
 	u8 iface_id;       /* This iface ID */
-	struct net_device *dev;
 	enum IPA_OPMODE device_mode;
 	u8 mac_addr[IPA_MAC_ADDR_SIZE];
 	atomic_t conn_count;
@@ -478,6 +486,7 @@ struct wlan_ipa_iface_context {
 	struct ipa_mac_addr bssid;
 	u8 is_authenticated;
 	bool alt_pipe;
+	struct dp_ipa_net_device_priv net_dev;
 };
 
 /**

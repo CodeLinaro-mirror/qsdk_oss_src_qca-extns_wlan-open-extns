@@ -132,6 +132,7 @@ struct ath12k_skb_tx_param {
  * @tx_params:            Tx params set by user.
  * @transaction_id:       Transaction identifier per request.
  * @num_cmpl_pending:     Number of pending completions.
+ * @req_freq:             Requested freq(if set) for offchan operation.
  * @custom_tx_status:     Tx completion status of queued packets.
  * @home_chan:            True if currently on the home channel.
  */
@@ -144,6 +145,7 @@ struct ath12k_raw_pkt_ctx {
 	struct ath12k_skb_tx_param tx_param;
 	u32 transaction_id;
 	atomic_t num_cmpl_pending;
+	u32 req_freq;
 	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
 	bool home_chan;
 };
@@ -241,6 +243,17 @@ static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar,
 						     void *ptr)
 {
 }
+
+static inline void ath12k_update_offchan_stats_extn(struct ath12k *ar,
+						    u32 freq,
+					            struct wmi_chan_info_event *ch_info)
+{
+}
+
+static inline void ath12k_update_offchan_ts_extn(struct ath12k *ar,
+						 u32 event_type)
+{
+}
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -304,6 +317,55 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr);
  * Return: Void
  */
 void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
+
+/**
+ * ath12k_update_offchan_stats_extn - Update off-channel statistics
+ * @ar: ath12k radio instance
+ * @freq: Frequency in MHz from chan_info event
+ * @ch_info: Channel info event data
+ *
+ * Updates the off-channel statistics if an off-channel operation is in progress
+ * and the frequency matches the current off-channel request.
+ *
+ * Return: Void
+ */
+void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
+				      struct wmi_chan_info_event *ch_info);
+
+/**
+ * ath12k_update_offchan_ts_extn - Update offchan timestamps based on scan events
+ * @ar: ath12k radio instance
+ * @event_type: Scan event type from WMI
+ *
+ * Captures timestamps at key scan event transitions
+ * - WMI_SCAN_EVENT_STARTED: Start of offchan operation
+ * - WMI_SCAN_EVENT_FOREIGN_CHAN: Entry to foreign channel
+ * - WMI_SCAN_EVENT_FOREIGN_CHAN_EXIT: Exit from foreign channel
+ * - WMI_SCAN_EVENT_COMPLETED: Offchan operation finished
+ *
+ * Return: Void
+ */
+void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type);
+
+/**
+ * ath12k_custom_txrx_init - Initialize custom txrx context
+ * @ar: ath12k radio instance
+ *
+ * This function initializes raw pkt context, lock, list and timer
+ *
+ * Return: Void
+ */
+void ath12k_custom_txrx_init(struct ath12k *ar);
+
+/**
+ * ath12k_custom_txrx_deinit - Deinitialize custom txrx context
+ * @ar: ath12k radio instance
+ *
+ * This function destroys the timer and raw pkt list.
+ *
+ * Return: Void
+ */
+void ath12k_custom_txrx_deinit(struct ath12k *ar);
 
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb);

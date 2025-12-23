@@ -1855,6 +1855,45 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         return ret;
 }
 
+int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
+					   struct ath12k_wifi_generic_params *wifi_params)
+{
+	int ret = 0;
+
+	if (!wiphy || !wdev || !wifi_params) {
+		ath12k_err(NULL, "NULL input params received\n");
+		return -EINVAL;
+	}
+
+	if (!wifi_params->data) {
+		ath12k_err(NULL, "Empty mesh params received\n");
+		return -EINVAL;
+	}
+
+	switch (wifi_params->command) {
+	case QCA_NL80211_VENDOR_WIFI_GENERIC_SUBCMD_MESH_PARAMS:
+		if (wdev->vap_submode != QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+			ath12k_err(NULL, "Received command for vap_submode: %d\n"
+				   "Command valid only for mesh vap\n",
+				   wdev->vap_submode);
+			return -EINVAL;
+		}
+
+		ret = ath12k_vendor_mesh_params_config_extn(wiphy, wdev, wifi_params);
+
+		if (ret) {
+			ath12k_err(NULL,"Failed to set mesh params \n");
+			return ret;
+		}
+		break;
+	default:
+		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
+		return -EOPNOTSUPP;
+	}
+
+	return ret;
+}
+
 /* Find the 'ar' radio instance using the radio index of the wiphy
  * to set params
  */

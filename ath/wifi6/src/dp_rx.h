@@ -8,12 +8,19 @@
 #define ATH12K_DP_RX_WIFI6_H
 
 #include "../../dp_rx.h"
+#include "../../dp_mon.h"
 #include "dp.h"
 #include "hal.h"
 
 #define DP_BA_WIN_SZ_MAX_WIFI6 256
 
 #define ATH12K_WIFI6_RX_DESC_COOKIE_POOL_ID_SHIFT	18
+#define ATH12K_RX_DESC_COOKIE_INDEX_SHIFT 		0
+#define ATH12K_RX_DESC_COOKIE_INDEX_MASK 		0x3ffff /* 18 bits */
+
+#define ATH12K_DP_RX_DESC_COOKIE_INDEX_GET(val) \
+	(((val) & ATH12K_RX_DESC_COOKIE_INDEX_MASK) >> \
+			ATH12K_RX_DESC_COOKIE_INDEX_SHIFT)
 
 int ath12k_wifi6_dp_rx_process_wbm_err(struct ath12k_dp *dp,
 				       struct napi_struct *napi, int budget);
@@ -63,6 +70,24 @@ ath12k_wifi6_dp_rx_desc_reset(struct ath12k_dp_wifi6_rx_desc_info *desc)
 	size_t offset = sizeof(desc->list) + sizeof(desc->cookie) + sizeof(desc->pool_id);
 	memset((u8 *)desc + offset, 0, sizeof(*desc) - offset);
 	desc->unmapped = 1;
+}
+
+static inline
+void *ath12k_wifi6_dp_get_rx_desc(struct ath12k_dp *dp, u32 cookie)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	u16 index = ATH12K_DP_RX_DESC_COOKIE_INDEX_GET(cookie);
+
+	if (ath12k_dp_mon_rxdma1_enable(dp))
+		rx_desc_pool = &dp_wifi6->rx_desc_mon;
+	else
+		rx_desc_pool = &dp_wifi6->rx_desc_buf;
+
+	if (unlikely(index > rx_desc_pool->pool_size))
+		return NULL;
+
+	return &rx_desc_pool->mon_desc_pool[index];
 }
 
 void ath12k_wifi6_dp_rx_ring_free(struct ath12k_base *ab);

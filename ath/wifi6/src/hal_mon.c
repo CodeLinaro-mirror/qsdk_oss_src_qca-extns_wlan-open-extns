@@ -1060,6 +1060,26 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 	return HAL_RX_MON_STATUS_PPDU_NOT_DONE;
 }
 
+void
+ath12k_wifi6_dp_mon_rx_next_link_desc_get(struct hal_rx_msdu_link *msdu_link,
+					  struct hal_rx_buf_info *buf_info)
+{
+	struct ath12k_buffer_addr *buf_addr_info;
+
+	buf_addr_info = &msdu_link->buf_addr_info;
+
+	buf_info->paddr = (((u64)le32_get_bits(buf_addr_info->info1,
+					       WIFI6_BUFFER_ADDR_INFO1_ADDR)) << 32) |
+					le32_get_bits(buf_addr_info->info0,
+						      WIFI6_BUFFER_ADDR_INFO0_ADDR);
+
+	buf_info->sw_cookie = le32_get_bits(buf_addr_info->info1,
+					    WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
+	buf_info->rbm = le32_get_bits(buf_addr_info->info1,
+				      WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR);
+}
+
+
 const struct hal_mon_ops hal_qcn9074_mon_ops = {
 	.get_mon_mpdu_start_wmask = NULL,
 	.get_mon_mpdu_end_wmask = NULL,

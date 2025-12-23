@@ -27,7 +27,7 @@ u32 ath12k_wifi6_hal_rx_desc_get_mpdu_start_tag_qcn9074(struct hal_rx_desc *desc
 }
 
 static inline
-u8 ath12k_wifi6_dp_rx_mon_decap_format_get(struct hal_rx_desc *desc)
+u8 ath12k_wifi6_dp_mon_rx_decap_format_get(struct hal_rx_desc *desc)
 {
     return le32_get_bits(desc->u.qcn9074.msdu_start.info2,
                  RX_MSDU_START_INFO2_DECAP_FORMAT);

@@ -5,6 +5,7 @@
 
 #include "../../dp_mon.h"
 #include "dp.h"
+#include "hal_rx.h"
 
 extern const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops;
 extern const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_dual_ring_ops;
@@ -20,10 +21,9 @@ void ath12k_wifi6_dp_mon_ops_register(struct ath12k_dp *dp)
 static inline
 struct ath12k_dp_rx_desc_pool *ath12k_wifi6_dp_rx_get_mon_desc_pool(struct ath12k_dp *dp)
 {
-	struct ath12k_base *ab = dp->ab;
 	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
 
-	if (!ab->hw_params->rxdma1_enable)
+	if (!ath12k_dp_mon_rxdma1_enable(dp))
 		return &dp_wifi6->rx_desc_buf;
 	else
 		return &dp_wifi6->rx_desc_mon;
@@ -99,6 +99,75 @@ ath12k_wifi6_dp_get_rx_status_desc(struct ath12k_dp *dp, u32 cookie)
 		return NULL;
 
 	return &rx_desc_pool->mon_desc_pool[index];
+}
+
+static inline
+u32 ath12k_wifi6_dp_rxdma_get_mon_dst_ring(struct ath12k_pdev_dp *dp_pdev, int mac_id)
+{
+	struct ath12k_dp *dp = dp_pdev->dp;
+
+	if (ath12k_dp_mon_rxdma1_enable(dp))
+		return dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[mac_id].ring_id;
+	else
+		return dp->rxdma_err_dst_ring[mac_id].ring_id;
+}
+
+static inline
+int ath12k_wifi6_dp_rx_mon_alloc_parent_buf(struct sk_buff **head_msdu)
+{
+	u8 align = 4;
+	unsigned long offset;
+
+	*head_msdu = dev_alloc_skb(ATH12K_DP_MON_MAX_RADIO_TAP_HDR + align);
+
+	if (!(*head_msdu))
+		return -ENOMEM;
+
+	skb_reserve(*head_msdu, ATH12K_DP_MON_MAX_RADIO_TAP_HDR);
+	offset = ALIGN((unsigned long)(*head_msdu)->data, align) -
+				(unsigned long)(*head_msdu)->data;
+	/* Reserve extra bytes to align skb->data */
+	skb_reserve(*head_msdu, offset);
+
+	/* Set *head_msdu->next as NULL as all msdus are mapped via nr frags */
+	(*head_msdu)->next = NULL;
+
+	return 0;
+}
+
+static inline
+void *ath12k_wifi6_dp_rx_cookie_to_mon_link_desc(struct ath12k_pdev_dp *dp_pdev,
+						 struct hal_rx_buf_info *buf_info,
+						 struct ath12k_mon_data *pmon)
+{
+	void *link_desc_va = NULL;
+	struct ath12k_dp *dp = dp_pdev->dp;
+	u32 desc_bank = 0;
+
+	desc_bank = u32_get_bits(buf_info->sw_cookie, DP_LINK_DESC_BANK_MASK);
+	if (ath12k_dp_mon_rxdma1_enable(dp)) {
+		link_desc_va =
+			pmon->link_desc_banks[desc_bank].vaddr +
+			(buf_info->paddr - pmon->link_desc_banks[desc_bank].paddr);
+	} else {
+		link_desc_va =
+			dp->link_desc_banks[desc_bank].vaddr +
+			(buf_info->paddr - dp->link_desc_banks[desc_bank].paddr);
+	}
+
+	return link_desc_va;
+}
+
+static inline
+struct dp_srng* ath12k_dp_rxdma_get_mon_buf_ring(struct ath12k_dp *dp)
+{
+	if (!ath12k_dp_mon_rxdma1_enable(dp)) {
+		struct dp_rxdma_ring *rx_ring = &dp->rx_refill_buf_ring;
+		return &rx_ring->refill_buf_ring;
+	} else {
+		struct dp_rxdma_mon_ring *rx_ring = &dp->dp_mon->rxdma_mon_buf_ring;
+		return &rx_ring->refill_buf_ring;
+	}
 }
 
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp);

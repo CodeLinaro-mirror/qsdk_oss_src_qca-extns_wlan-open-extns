@@ -113,8 +113,15 @@ struct hal_tlv_parsed_hdr {
 	u8 *data;
 };
 
+struct hal_mon_rx_msdu_info {
+	u8 is_decap_raw;
+};
+
 enum hal_rx_mon_status
 ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
                                         struct hal_rx_mon_ppdu_info *ppdu_info,
                                         struct hal_tlv_parsed_hdr *tlv_parsed_hdr);
+void
+ath12k_wifi6_dp_mon_rx_next_link_desc_get(struct hal_rx_msdu_link *msdu_link,
+					  struct hal_rx_buf_info *buf_info);
 #endif

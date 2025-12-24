@@ -1402,14 +1402,15 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         }
 
         ar = arvif->ar;
+        rcu_read_unlock();
 
         ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "vif: %p param: %d value: %d if: %d link: %d\n",
                    vif, param, value,
                    params->ifindex, params->link_id);
 
+        /* Call sleepable WMI path outside RCU read-side critical section. */
         ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload);
-        rcu_read_unlock();
 
         if (!ret && reload)
                 ath12k_vendor_event_iface_reload_link(wiphy, wdev, params->link_id);

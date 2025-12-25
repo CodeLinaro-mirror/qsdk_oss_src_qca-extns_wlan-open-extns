@@ -98,6 +98,16 @@ ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE] = { .type = NLA_U8 },
 };
+
+const struct nla_policy
+ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_BAND] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_CTL_RADIO_INDEX] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA] = { .type = NLA_BINARY,
+						.len = QCA_WLAN_MAX_CTL_SIZE },
+};
+
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
 					   u8 *mac_addr)
 {
@@ -2160,4 +2170,114 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 nla_put_failure:
 	kfree_skb(skb);
 	return -EMSGSIZE;
+}
+
+/*
+ * ath12k_get_radio_by_index - Get ath12k instance by radio index
+ * @wiphy: Pointer to wiphy
+ * @tb: Array of parsed attributes
+ *
+ * This function retrieves the ath12k instance corresponding to the
+ * specified radio index from the parsed attributes. It checks if the
+ * radio index attribute is present and valid.
+ * Returns a pointer to the ath12k instance or NULL if not found or invalid.
+ */
+static struct ath12k *ath12k_get_radio_by_index(struct wiphy *wiphy,
+                                                struct nlattr *tb[])
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	u8 radio_id;
+
+	radio_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CTL_RADIO_INDEX]);
+	if (radio_id >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio id %d", radio_id);
+		return NULL;
+	}
+
+	return &ah->radio[radio_id];
+}
+
+/*
+ * ath12k_vendor_ctl_table- Set CTL table
+ * @wiphy: Pointer to wiphy
+ * @wdev: wireless wdev
+ * @data: vendor data
+ * @data_len: length of data
+ * Returns 0 if success.
+ */
+int ath12k_vendor_ctl_table(struct wiphy *wiphy,
+		      	    struct wireless_dev *wdev,
+			    const void *data,
+			    int data_len)
+{
+	struct nlattr *vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1];
+	struct wmi_pdev_set_ctl_table_cmd_fixed_param *cmd;
+	u32 ctl_cmd_len, ctl_tlv_len, band, len;
+	struct ath12k_wmi_pdev *wmi;
+	const uint8_t *ctl_data;
+	uint32_t *ctl_array;
+	struct sk_buff *skb;
+	struct wmi_tlv *tlv;
+	struct ath12k *ar;
+	void *ptr;
+	int ret;
+
+	if (nla_parse(vendor, QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX,
+		      data, data_len,
+		      ath12k_ctl_table_policy,
+		      NULL)) {
+		ath12k_err(NULL, "Failed to parse vendor attributes");
+		return -1;
+	}
+
+	if (!vendor[QCA_WLAN_VENDOR_ATTR_CTL_RADIO_INDEX] ||
+	    !vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH] ||
+	    !vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_BAND] ||
+	    !vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA]) {
+		ath12k_err(NULL, "Invalid input");
+		return -1;
+	}
+
+	ar = ath12k_get_radio_by_index(wiphy, vendor);
+	if (!ar) {
+		ath12k_err(NULL, "ar is NULL in %s", __func__);
+		return -ENODATA;
+	}
+
+	ctl_cmd_len = nla_get_u16(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH]);
+	ctl_tlv_len = TLV_HDR_SIZE + roundup(ctl_cmd_len, sizeof(u32));
+	len = sizeof(*cmd) + ctl_tlv_len;
+	wmi = ar->wmi;
+	skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, len);
+	if (!skb)
+		return -ENOMEM;
+
+	cmd = (struct wmi_pdev_set_ctl_table_cmd_fixed_param*)skb->data;
+	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_PDEV_SET_CTL_TABLE_CMD) |
+			  FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+	cmd->pdev_id = cpu_to_le32(ar->pdev->pdev_id);
+	cmd->ctl_len = cpu_to_le32(ctl_cmd_len);
+
+	ptr = skb->data + sizeof(*cmd);
+	tlv = ptr;
+	tlv->header = ath12k_wmi_tlv_hdr(WMI_TAG_ARRAY_UINT32, ctl_cmd_len);
+	ptr += TLV_HDR_SIZE;
+	ctl_array = (uint32_t *)ptr;
+	band = nla_get_u32(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_BAND]);
+	ctl_data = nla_data(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA]);
+	ctl_array[0] = cpu_to_le32(band);
+	memcpy(&ctl_array[1], ctl_data, ctl_cmd_len - sizeof(band));
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "WMI CTL TABLE: pdev %d ctl len %d\n",
+		   cmd->pdev_id, cmd->ctl_len);
+
+	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PDEV_SET_CTL_TABLE_CMDID);
+	if (ret) {
+		ath12k_warn(ar->ab, "Failed to send WMI_PDEV_SET_CTL_TABLE_CMDID\n");
+		dev_kfree_skb(skb);
+	}
+
+	return 0;
 }

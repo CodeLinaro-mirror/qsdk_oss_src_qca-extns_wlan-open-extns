@@ -29,6 +29,16 @@ ath12k_vendor_home_offchan_tx_rx_pkt_status_policy[
 extern const struct nla_policy
 ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1];
 
+extern const struct nla_policy
+ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1];
+
+#define MAX(x,y) (x > y ? x : y)
+
+/* CTL table size definitions */
+#define QCA_WLAN_CTL_5G_SIZE    1536
+#define QCA_WLAN_CTL_2G_SIZE    684
+#define QCA_WLAN_MAX_CTL_SIZE   MAX(QCA_WLAN_CTL_5G_SIZE, QCA_WLAN_CTL_2G_SIZE)
+
 #ifndef CPTCFG_QCN_EXTN
 
 static inline int
@@ -111,6 +121,14 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 	return -1;
 }
 
+static inline int ath12k_vendor_ctl_table(struct wiphy *wiphy,
+                            		  struct wireless_dev *wdev,
+                            		  const void *data,
+                            		  int data_len)
+{
+	return -1;
+}
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -157,6 +175,11 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 					    struct wireless_dev *wdev,
 					    const void *data,
 					    int data_len);
+
+int ath12k_vendor_ctl_table(struct wiphy *wiphy,
+			    struct wireless_dev *wdev,
+			    const void *data,
+			    int data_len);
 
 #endif /* CPTCFG_QCN_EXTN */
 

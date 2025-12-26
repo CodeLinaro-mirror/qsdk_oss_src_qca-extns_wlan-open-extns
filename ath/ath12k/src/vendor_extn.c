@@ -1972,18 +1972,27 @@ static void ath12k_compute_link_vif_mac(u8 *mac_addr,
 
 	ether_addr_copy(mac_addr, base);
 
+	/* For vif_id 0, return base mac; also set LA bit for cohost mode */
+	if (!vif_id) {
+		if (!use_byte0)
+			mac_addr[0] |= 0x02;
+		return;
+	}
+
 	if (use_byte0) {
 		cur = (mac_addr[0] >> 2) & 0x3F;
 		add = vif_id & 0x3F;
 		new = (cur + add) & 0x3F;
 		mac_addr[0] = (mac_addr[0] & ~0xFC) | (new << 2);
-		mac_addr[0] &= ~0x01;
 	} else {
 		cur = mac_addr[5] & 0xF;
 		add = vif_id & 0xF;
 		new = (cur + add) & 0xF;
 		mac_addr[5] = (mac_addr[5] & ~0xF) | new;
 	}
+
+	/* Ensure locally administered and unicast */
+	mac_addr[0] &= ~0x01;
 	mac_addr[0] |= 0x02;
 }
 
@@ -2099,26 +2108,18 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 
 		vif_id = ((16 + (mac_addr[5] & 0x0F)) - (base_addr[5] & 0x0F)) % 16;
 	} else {
-		/* Return base MAC for first VIF (id 0), derive otherwise */
-		ether_addr_copy(mac_addr, base_addr);
-		if (vif_id) {
-			/* Select byte index to encode VIF ID: 0 or 5 */
-			if (iftype == NL80211_IFTYPE_AP) {
-				if (ar->supports_6ghz)
-					byte0 = false;
-				else {
-					pdev_bitmap = ath12k_cfg_get(ar->ab,
-					     ATH12K_CFG_COHOSTED_BSS_IND_ENABLE);
-					if (pdev_bitmap & (1 << ar->pdev_idx))
-						byte0 = false;
-				}
-			}
+		/* Select byte index to encode VIF ID: 0 or 5 */
+		if (iftype == NL80211_IFTYPE_AP) {
+			pdev_bitmap = ath12k_cfg_get(ar->ab,
+					ATH12K_CFG_COHOSTED_BSS_IND_ENABLE);
+			if (pdev_bitmap & (1 << ar->pdev_idx))
+				byte0 = false;
+		}
 
-			ath12k_compute_link_vif_mac(mac_addr,
+		ath12k_compute_link_vif_mac(mac_addr,
 					    base_addr,
 					    vif_id,
 					    byte0);
-		}
 	}
 
 	/* Check and set the used MAC bit only when ALLOC flag is set */

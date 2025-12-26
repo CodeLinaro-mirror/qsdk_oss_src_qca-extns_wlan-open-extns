@@ -160,6 +160,13 @@ static const struct ath12k_hw_ops qcn9074_ops = {
 #define ATH12K_REO2PPE_RING_MASK_0 0x1
 #define ATH12K_PPE_WBM2SW_RELEASE_RING_MASK_0 0x1
 
+#define ATH12K_RX_MON_STATUS_RING_MASK_0 0x1
+#define ATH12K_RX_MON_STATUS_RING_MASK_1 0x2
+#define ATH12K_RX_MON_STATUS_RING_MASK_2 0x4
+#define ATH12K_RX_MON_DEST_RING_MASK_0 0x1
+#define ATH12K_RX_MON_DEST_RING_MASK_1 0x2
+#define ATH12K_RX_MON_DEST_RING_MASK_2 0x4
+
 /* To support 8 MSI DP grouping */
 static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 	.tx  = {
@@ -172,12 +179,19 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 		0, 0, 0,
 		ATH12K_HOST2RXMON_RING_MASK_0,
 	},
-	.rx_mon_dest = {
+	.rx_mon_status = {
+		0, 0, 0,
+		ATH12K_RX_MON_STATUS_RING_MASK_0,
+		ATH12K_RX_MON_STATUS_RING_MASK_1,
+		ATH12K_RX_MON_STATUS_RING_MASK_2,
 		0, 0,
-		ATH12K_RX_MON_RING_MASK_0,
-		ATH12K_RX_MON_RING_MASK_1,
-		ATH12K_RX_MON_RING_MASK_2,
-		0, 0, 0
+	},
+	.rx_mon_dest = {
+		0, 0, 0,
+		ATH12K_RX_MON_DEST_RING_MASK_0,
+		ATH12K_RX_MON_DEST_RING_MASK_1,
+		ATH12K_RX_MON_DEST_RING_MASK_2,
+		0, 0,
 	},
 	.rx = {
 		0, 0, 0,
@@ -233,10 +247,6 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 	},
 };
 
-#define ATH12K_RX_MON_STATUS_RING_MASK_0 0x1
-#define ATH12K_RX_MON_STATUS_RING_MASK_1 0x2
-#define ATH12K_RX_MON_STATUS_RING_MASK_2 0x4
-
 static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074 = {
 	.tx  = {
 		ATH12K_TX_RING_MASK_0,
@@ -244,10 +254,20 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074 = {
 		ATH12K_TX_RING_MASK_2,
 	},
 	.rx_mon_status = {
-		0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
 		ATH12K_RX_MON_STATUS_RING_MASK_0,
 		ATH12K_RX_MON_STATUS_RING_MASK_1,
 		ATH12K_RX_MON_STATUS_RING_MASK_2,
+		0,
+	},
+	.rx_mon_dest = {
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		ATH12K_RX_MON_DEST_RING_MASK_0,
+		ATH12K_RX_MON_DEST_RING_MASK_1,
+		ATH12K_RX_MON_DEST_RING_MASK_2,
+		0,
 	},
 	.rx = {
 		0, 0, 0, 0,

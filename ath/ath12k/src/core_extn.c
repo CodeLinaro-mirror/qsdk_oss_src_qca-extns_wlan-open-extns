@@ -20,6 +20,7 @@
 #include "../core.h"
 #include "../ce.h"
 #include "../hw.h"
+#include "../debug.h"
 #include "ath12k_cmn_extn.h"
 #include "../net/mac80211/ieee80211_i.h"
 #include "esp_extn.h"
@@ -304,4 +305,106 @@ void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 	ath12k_esp_cleanup_extn(ar);
 	ath12k_custom_txrx_deinit(ar);
+}
+
+int ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
+					       u16 len, const void *ptr,
+					       void *data)
+{
+	const struct wmi_scan_radio_capabilities_ext2 *cap = ptr;
+	struct ath12k_pdev *pdev;
+	u32 phy_id, flags, caps;
+	int i;
+	if (tag != WMI_TAG_SCAN_RADIO_CAPABILITIES_EXT2) {
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "Unexpected Tag 0x%x (Expected 0x%x)\n",
+			   tag, WMI_TAG_SCAN_RADIO_CAPABILITIES_EXT2);
+		return 0;
+	}
+	phy_id = le32_to_cpu(cap->phy_id);
+	flags  = le32_to_cpu(cap->flags);
+	for (i = 0; i < ab->num_radios; i++) {
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "Checking fw_pdev[%d].phy_id=%u\n",
+			   i, ab->fw_pdev[i].phy_id);
+		if (ab->fw_pdev[i].phy_id == phy_id) {
+			pdev = &ab->pdevs[i];
+			caps = 0;
+			if (flags & WMI_SCAN_RADIO_CAP_SCAN_RADIO)
+				caps |= ATH12K_SCAN_RADIO_CAP_SUPPORTED;
+			if (flags & WMI_SCAN_RADIO_CAP_DFS_ENABLED)
+				caps |= ATH12K_SCAN_RADIO_CAP_DFS_ENABLED;
+			if (flags & WMI_SCAN_RADIO_CAP_BLANKING_SUPPORTED)
+				caps |= ATH12K_SCAN_RADIO_CAP_BLANKING;
+
+			pdev->cap.scan_radio_caps = caps;
+			ath12k_info(ab,
+				    "pdev %d scan-radio caps: 0x%x (supported=%d dfs=%d blanking=%d)\n",
+				    pdev->pdev_id,
+				    pdev->cap.scan_radio_caps,
+				    !!(caps & ATH12K_SCAN_RADIO_CAP_SUPPORTED),
+				    !!(caps & ATH12K_SCAN_RADIO_CAP_DFS_ENABLED),
+				    !!(caps & ATH12K_SCAN_RADIO_CAP_BLANKING));
+			break;
+		}
+	}
+	return 0;
+}
+
+int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
+						     struct ath12k_wmi_vdev_create_arg *arg)
+{
+	struct ath12k *ar = arvif->ar;
+	struct ath12k_vif *ahvif = arvif->ahvif;
+
+	/* If the interface is marked as a special vdev, set the corresponding
+	 * VDEV flag that informs firmware to treat this interface as a scan
+	 * radio. Firmware will not expect a VDEV_UP for beaconing
+	 */
+	if (ahvif->vdev_type != WMI_VDEV_TYPE_AP || arvif != &ahvif->deflink)
+		return 0;
+
+	/* Has user requested to configure scan radio? */
+	if (ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_SCAN) {
+		/* Reject request if firmware does not support scan radio */
+		if (!ath12k_scan_radio_supported(ar->pdev)) {
+			ath12k_err(ar->ab,
+				   "Scan Radio not supported on PDEV %d (caps=0x%x)\n",
+				   ar->pdev->pdev_id,
+				   ar->pdev->cap.scan_radio_caps);
+			return -EOPNOTSUPP;
+		}
+
+		ar->pdev->cap.is_scan_radio = true;
+		ath12k_info(ar->ab, "vdev %d: Scan Radio ENABLED on pdev %d (caps=0x%x)\n",
+			    arvif->vdev_id, ar->pdev->pdev_id,
+			    ar->pdev->cap.scan_radio_caps);
+		arg->create_flags |= VDEV_FLAGS_SCAN_MODE_VAP;
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "Scan Radio enabled for vdev %d on deflink (pdev %d, caps=0x%x)\n",
+			   arvif->vdev_id, ar->pdev->pdev_id,
+			   ar->pdev->cap.scan_radio_caps);
+
+	} else if (ath12k_scan_radio_supported(ar->pdev)) {
+		/* Firmware supports scan radio but user didn't configure it as such.
+		 * Current policy: pdev with scan radio capability should be dedicated
+		 * to scan radio operation. This may change in the future if scan radio
+		 * is extended to support other interface types (STA, monitor, etc.).
+		 */
+		ath12k_err(ar->ab,
+			   "pdev %d supports scan radio (caps=0x%x) but vdev %d not configured as scan radio\n",
+			   ar->pdev->pdev_id, ar->pdev->cap.scan_radio_caps,
+			   arvif->vdev_id);
+		return -EINVAL;
+	} else {
+		/* Normal AP operation: pdev does not have scan radio capability,
+		 * proceed with standard VAP configuration.
+		 */
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "pdev %d: Normal VAP Operation (caps=0x%x)\n",
+			   ar->pdev->pdev_id,
+			   ar->pdev->cap.scan_radio_caps);
+	}
+
+	return 0;
 }

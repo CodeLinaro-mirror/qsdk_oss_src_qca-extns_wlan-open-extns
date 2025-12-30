@@ -254,6 +254,21 @@ static inline void ath12k_update_offchan_ts_extn(struct ath12k *ar,
 						 u32 event_type)
 {
 }
+static inline int
+ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
+						 struct ath12k_wmi_vdev_create_arg *arg)
+{
+	return 0;
+}
+
+static inline int
+ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
+				    u16 len, const void *ptr,
+				    void *data)
+{
+	return 0;
+}
+
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -270,6 +285,10 @@ void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif);
 
 int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 			  struct sk_buff *skb);
+
+int ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
+					u16 len, const void *ptr,
+					void *data);
 
 int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 				     u8 *mac,
@@ -374,8 +393,12 @@ void ath12k_mac_setup_extn(struct ath12k *ar);
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
 
+
 void ath12k_sysfs_init_extn(struct ath12k *ar);
 void ath12k_sysfs_cleanup_extn(struct ath12k *ar);
+
+int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
+						     struct ath12k_wmi_vdev_create_arg *arg);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

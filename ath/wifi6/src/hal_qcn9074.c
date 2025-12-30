@@ -284,6 +284,12 @@ const struct ath12k_hw_regs qcn9074_regs = {
 	.pcie_qserdes_sysclk_en_sel = 0x01e0e0a8,
 	.pcie_pcs_osc_dtct_config_base = 0x01e0f45c,
 
+	/*PCIe hot reset reg*/
+	.pcie_gcc_gcc_pcie_hot_rst = 0x1e38338,
+
+	/*PCIe qrtr node id reg*/
+	.pcie_pcie_local_qrtr_ins_reg = 0x1E03164,
+
 	/* REO DEST ring address */
 	.hal_reo2_ring_base = 0x000002f4,
 	.hal_reo1_misc_ctrl_addr = 0x000002ac,

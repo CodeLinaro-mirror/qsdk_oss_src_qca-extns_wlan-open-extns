@@ -1950,8 +1950,8 @@ void ath12k_vendor_send_event(struct ath12k_base *ab,
  * of the last octet. The algorithm supports grouping via grp_id/grp_size
  * and keeps the base MAC for grp_id 0, mbssid_idx 0.
  */
-static void ath12k_compute_6ghz_mbssid_mac(u8 mac[ETH_ALEN], u8 grp_id,
-					   u8 grp_size, u8 mbssid_idx)
+void ath12k_compute_6ghz_mbssid_mac(u8 mac[ETH_ALEN], u8 grp_id,
+				    u8 grp_size, u8 mbssid_idx)
 {
 	u8 mask, base_low, block_start, idx_in_block, new_low;
 
@@ -1974,10 +1974,10 @@ static void ath12k_compute_6ghz_mbssid_mac(u8 mac[ETH_ALEN], u8 grp_id,
 	mac[5] = (mac[5] & 0xF0) | new_low;
 }
 
-static void ath12k_compute_link_vif_mac(u8 *mac_addr,
-					const u8 *base,
-					u8 vif_id,
-					bool use_byte0)
+void ath12k_compute_link_vif_mac(u8 *mac_addr,
+				 const u8 *base,
+				 u8 vif_id,
+				 bool use_byte0)
 {
 	u8 cur, add, new;
 

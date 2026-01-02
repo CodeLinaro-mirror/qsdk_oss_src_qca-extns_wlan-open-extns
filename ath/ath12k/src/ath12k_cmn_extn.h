@@ -16,6 +16,7 @@ struct ieee80211_240mhz_vendor_oper_extn;
 struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
 struct ath12k_vif;
+struct ath12k_vif_sysfs_entry;
 
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
@@ -110,10 +111,18 @@ struct ath12k_raw_pkt_ctx {
  * struct ath12k_extn - ath12k driver private extensions
  * @esp:  esp extensions structure
  * @raw_pkt_ctx:   Pointer to raw packet home/off-channel context.
+ * @radio_kobj:    pointer to radio kernel object.
+ * @vifs_kobj:     Pointer to vifs kernel object.
+ * @vif_entries:   Pointer to 17 sysfs vif entries.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
 	struct ath12k_raw_pkt_ctx  *raw_pkt_ctx;
+
+	/* sysfs entries under ieee80211: radioX */
+	struct kobject *radio_kobj;
+	struct kobject *vifs_kobj;
+	struct ath12k_vif_sysfs_entry *vif_entries[17];
 };
 
 #ifndef CPTCFG_QCN_EXTN
@@ -179,6 +188,15 @@ static inline int ath12k_custom_tx_extn(struct sk_buff *skb)
 static inline void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 {
 }
+
+static inline void ath12k_sysfs_init_extn(struct ath12k *ar)
+{
+}
+
+static inline void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
+{
+}
+
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -239,6 +257,9 @@ void ath12k_mac_setup_radio_iface_comb_extn(
 void ath12k_mac_setup_extn(struct ath12k *ar);
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
+
+void ath12k_sysfs_init_extn(struct ath12k *ar);
+void ath12k_sysfs_cleanup_extn(struct ath12k *ar);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

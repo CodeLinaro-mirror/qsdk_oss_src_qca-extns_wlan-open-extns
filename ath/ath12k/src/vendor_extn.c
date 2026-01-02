@@ -510,6 +510,8 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                                           u32 param, u32 value, bool *reload)
 {
         int ret = -1;
+	u16 rx_ack_timeout = (value & 0xFFFF);
+	u16 pre_rx_ack_timeout = (value >> 16);
 
         switch (param) {
         case QCA_WLAN_VENDOR_RADIO_PARAM_TEST_RELOAD:
@@ -1249,8 +1251,6 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
         case QCA_WLAN_VENDOR_RADIO_PARAM_ACK_TIMEOUT:
 #define MIN_TX_ACK_TIMEOUT 0x40
 #define MAX_TX_ACK_TIMEOUT 0xFF
-                u16 rx_ack_timeout = (value & 0xFFFF);
-                u16 pre_rx_ack_timeout = (value >> 16);
                 if (rx_ack_timeout >= MIN_TX_ACK_TIMEOUT &&
                                 rx_ack_timeout <= (MAX_TX_ACK_TIMEOUT)) {
                         if (pre_rx_ack_timeout < MIN_TX_ACK_TIMEOUT ||

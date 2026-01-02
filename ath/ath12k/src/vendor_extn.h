@@ -129,6 +129,22 @@ static inline int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	return -1;
 }
 
+static inline
+void ath12k_compute_link_vif_mac(u8 *mac_addr,
+				 const u8 *base,
+				 u8 vif_id,
+				 bool use_byte0);
+{
+}
+
+static inline
+void ath12k_compute_6ghz_mbssid_mac(u8 *mac,
+				    u8 grp_id,
+				    u8 grp_size,
+				    u8 mbssid_idx);
+{
+}
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -175,6 +191,16 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 					    struct wireless_dev *wdev,
 					    const void *data,
 					    int data_len);
+
+void ath12k_compute_link_vif_mac(u8 *mac_addr,
+				 const u8 *base,
+				 u8 vif_id,
+				 bool use_byte0);
+
+void ath12k_compute_6ghz_mbssid_mac(u8 mac[ETH_ALEN],
+				    u8 grp_id,
+				    u8 grp_size,
+				    u8 mbssid_idx);
 
 int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 			    struct wireless_dev *wdev,

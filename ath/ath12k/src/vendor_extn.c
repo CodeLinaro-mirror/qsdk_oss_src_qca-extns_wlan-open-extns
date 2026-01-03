@@ -1477,6 +1477,7 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                                           u32 param, u32 *value)
 {
+	struct ath12k *ar = arvif->ar;
         int ret = -1;
 
         switch (param) {
@@ -1522,6 +1523,26 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                 break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_MAX_MTU_SIZE:
                 *value = arvif->vap_cfg.max_mtu_size;
+                ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VDEV_TSF:
+		reinit_completion(&ar->tsf_report_done);
+		ret = ath12k_wmi_vdev_tsf_tstamp_action_cmd(ar, arvif->vdev_id);
+		if (ret) {
+			ath12k_err(ar->ab,
+					"Failed to send WMI_VDEV_TSF_TSTAMP_ACTION_CMDID to firmware: %d\n",
+					ret);
+			break;
+		}
+		ret = wait_for_completion_timeout(&ar->tsf_report_done,
+                                                  msecs_to_jiffies(1000));
+		if (!ret) {
+			ath12k_err(ar->ab, "TSF report event timeout\n");
+			reinit_completion(&ar->tsf_report_done);
+			ret = -ETIMEDOUT;
+			break;
+                }
+                *value = ar->tsf_report.tsf_low;
                 ret = 0;
                 break;
         default:
@@ -1754,12 +1775,11 @@ int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
                 rcu_read_unlock();
                 return -EINVAL;
         }
+	rcu_read_unlock();
         ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "vif: %p param: %d if: %d link: %d\n",
                    vif, param, params->ifindex, params->link_id);
-
         ret = ath12k_vendor_get_arvif_params(arvif, param, value);
-        rcu_read_unlock();
 
         return ret;
 }

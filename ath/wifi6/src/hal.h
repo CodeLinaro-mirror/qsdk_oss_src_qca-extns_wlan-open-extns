@@ -18,6 +18,8 @@ extern const struct ath12k_hw_hal_params ath12k_wifi6_hw_hal_params_qcn9074;
 
 extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 
+#define PCIE_WINDOW_REG_ADDRESS                 0x310c
+
 /* calculate the register address from bar0 of shadow register x */
 #define HAL_SHADOW_BASE_ADDR			0x000008fc
 #define HAL_SHADOW_NUM_REGS			40

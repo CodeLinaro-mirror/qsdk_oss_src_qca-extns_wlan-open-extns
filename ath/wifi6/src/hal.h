@@ -20,6 +20,12 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 
 #define PCIE_WINDOW_REG_ADDRESS                 0x310c
 
+#define WINDOW_VALUE_MASK			GENMASK(24, 19)
+#define WINDOW_STATIC_MASK			GENMASK(31, 6)
+#define WINDOW_DYNAMIC_MASK			GENMASK(5, 0)
+#define CE_WINDOW_SHIFT				6
+#define UMAC_WINDOW_SHIFT			12
+
 /* calculate the register address from bar0 of shadow register x */
 #define HAL_SHADOW_BASE_ADDR			0x000008fc
 #define HAL_SHADOW_NUM_REGS			40

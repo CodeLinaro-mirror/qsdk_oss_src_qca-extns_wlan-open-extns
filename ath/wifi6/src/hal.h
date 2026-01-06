@@ -34,6 +34,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_NUM_TX_MSDUS_PER_LINK_DESC		7
 #define HAL_NUM_RX_MSDUS_PER_LINK_DESC		6
 #define HAL_NUM_MPDU_LINKS_PER_QUEUE_DESC	12
+#define HAL_DSCP_TID_TBL_SIZE                   24
 
 /* WCSS Relative address */
 #define HAL_SEQ_WCSS_CMEM_OFFSET		0x00100000
@@ -509,6 +510,42 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_QCN6432_CMEM_SIZE		0x40000
 #define HAL_QCN6432_CMEM_BASE		0x100000
 
+/**
+ * enum hal_rx_buf_return_buf_manager - manager for returned rx buffers
+ *
+ * @HAL_RX_BUF_RBM_WBM_IDLE_BUF_LIST: Buffer returned to WBM idle buffer list
+ * @HAL_RX_BUF_RBM_WBM_DEV0_IDLE_DESC_LIST: Descriptor returned to WBM idle
+ *	descriptor list, where the device 0 WBM is chosen in case of a multi-device config
+ * @HAL_RX_BUF_RBM_WBM_DEV1_IDLE_DESC_LIST: Descriptor returned to WBM idle
+ *	descriptor list, where the device 1 WBM is chosen in case of a multi-device config
+ * @HAL_RX_BUF_RBM_WBM_DEV2_IDLE_DESC_LIST: Descriptor returned to WBM idle
+ *	descriptor list, where the device 2 WBM is chosen in case of a multi-device config
+ * @HAL_RX_BUF_RBM_FW_BM: Buffer returned to FW
+ * @HAL_RX_BUF_RBM_SW0_BM: For ring 0 -- returned to host
+ * @HAL_RX_BUF_RBM_SW1_BM: For ring 1 -- returned to host
+ * @HAL_RX_BUF_RBM_SW2_BM: For ring 2 -- returned to host
+ * @HAL_RX_BUF_RBM_SW3_BM: For ring 3 -- returned to host
+ * @HAL_RX_BUF_RBM_SW4_BM: For ring 4 -- returned to host
+ * @HAL_RX_BUF_RBM_SW5_BM: For ring 5 -- returned to host
+ * @HAL_RX_BUF_RBM_SW6_BM: For ring 6 -- returned to host
+ */
+
+enum hal_rx_buf_return_buf_manager {
+	HAL_RX_BUF_RBM_WBM_IDLE_BUF_LIST,
+	HAL_RX_BUF_RBM_WBM_DEV0_IDLE_DESC_LIST,
+	HAL_RX_BUF_RBM_WBM_DEV1_IDLE_DESC_LIST,
+	HAL_RX_BUF_RBM_WBM_DEV2_IDLE_DESC_LIST,
+	HAL_RX_BUF_RBM_FW_BM,
+	HAL_RX_BUF_RBM_SW0_BM,
+	HAL_RX_BUF_RBM_SW1_BM,
+	HAL_RX_BUF_RBM_SW2_BM,
+	HAL_RX_BUF_RBM_SW3_BM,
+	HAL_RX_BUF_RBM_SW4_BM,
+	HAL_RX_BUF_RBM_SW5_BM,
+	HAL_RX_BUF_RBM_SW6_BM,
+	HAL_RX_BUF_RBM_WBM_DEV3_IDLE_DESC_LIST,
+};
+
 struct hal_wbm_idle_scatter_list {
 	dma_addr_t paddr;
 	struct hal_wbm_link_desc *vaddr;
@@ -721,8 +758,7 @@ int ath12k_wifi6_hal_srng_get_ring_id(struct ath12k_hal *hal,
 u32 ath12k_wifi6_hal_ce_get_desc_size(enum hal_ce_desc type);
 void ath12k_wifi6_hal_cc_config(struct ath12k_base *ab);
 void ath12k_wifi6_hal_cc_config(struct ath12k_base *ab);
-enum hal_rx_buf_return_buf_manager
-ath12k_wifi6_hal_get_idle_link_rbm(struct ath12k_hal *hal, u8 device_id);
+u8 ath12k_wifi6_hal_get_idle_link_rbm(struct ath12k_hal *hal, u8 device_id);
 void ath12k_wifi6_hal_get_hw_hptp(struct ath12k_base *ab, enum hal_ring_type type,
 				  struct hal_srng *srng, uint32_t *hp, uint32_t *tp);
 void ath12k_wifi6_hal_ce_src_set_desc(struct hal_ce_srng_src_desc *desc,
@@ -733,7 +769,7 @@ void ath12k_wifi6_hal_ce_dst_set_desc(struct hal_ce_srng_dest_desc *desc,
 void
 ath12k_wifi6_hal_set_link_desc_addr(struct hal_wbm_link_desc *desc,
 				    u32 cookie, dma_addr_t paddr,
-				    enum hal_rx_buf_return_buf_manager rbm);
+				    u8 rbm);
 u32
 ath12k_wifi6_hal_ce_dst_status_get_length(struct hal_ce_srng_dst_status_desc *desc);
 void

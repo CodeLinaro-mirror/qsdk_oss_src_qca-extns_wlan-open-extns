@@ -55,6 +55,23 @@ struct sta_240mhz_info {
 /* Checks whether SKB has custom pkt */
 #define ATH12K_IS_CUSTOM_PKT(cb)	(cb->flags & (ATH12K_SKB_CUSTOM_MGMT_TX |\
 						      ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX))
+
+/* Band types used in offchan tx */
+enum band_type {
+	BAND_DEFAULT,
+	BAND_2GHZ,
+	BAND_5GHZ,
+	BAND_6GHZ,
+	BAND_INVALID
+};
+
+/* Preamble types used in offchan tx */
+enum preamble_type {
+	PREAMBLE_OFDM,
+	PREAMBLE_CCK,
+	PREAMBLE_INVALID
+};
+
 /**
  * struct ath12k_offchan_stat - statistics for off-channel activity
  * @noise_floor:        Noise floor in dBm (signed 16-bit).
@@ -84,12 +101,35 @@ struct ath12k_offchan_stat {
 };
 
 /**
+ * struct ath12k_skb_tx_param - TX parameters for offchannel tx
+ * @nss: Number of spatial streams
+ * @preamble: Preamble type
+ * @mcs: MCS value
+ * @retry: Retry count
+ * @power: Power level
+ * @tx_beamforming: Beamforming enable flag
+ * @is_data: Is skb has data packet
+ * @tx_param_configured: Is tx params configured
+ */
+struct ath12k_skb_tx_param {
+	u32 nss;
+	enum preamble_type preamble;
+	u32 mcs;
+	u8 retry;
+	u8 power;
+	u8 tx_beamforming;
+	bool is_data;
+	bool tx_param_configured;
+};
+
+/**
  * struct ath12k_raw_pkt_ctx - context for raw packet off-channel ops
  * @pkt_list:            Queue of pending raw packets.
  * @chan_lock:            Lock protecting @pkt_list and channel state.
  * @offchan_timer:        Timeout timer for off-channel operations.
  * @chan_stat:            Accumulated off-channel statistics.
  * @vif:                  Associated virtual interface.
+ * @tx_params:            Tx params set by user.
  * @transaction_id:       Transaction identifier per request.
  * @num_cmpl_pending:     Number of pending completions.
  * @custom_tx_status:     Tx completion status of queued packets.
@@ -101,6 +141,7 @@ struct ath12k_raw_pkt_ctx {
 	struct timer_list offchan_timer;
 	struct ath12k_offchan_stat chan_stat;
 	struct ieee80211_vif  *vif;
+	struct ath12k_skb_tx_param tx_param;
 	u32 transaction_id;
 	atomic_t num_cmpl_pending;
 	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
@@ -110,14 +151,14 @@ struct ath12k_raw_pkt_ctx {
 /**
  * struct ath12k_extn - ath12k driver private extensions
  * @esp:  esp extensions structure
- * @raw_pkt_ctx:   Pointer to raw packet home/off-channel context.
+ * @raw_pkt_ctx:   raw packet home/off-channel context.
  * @radio_kobj:    pointer to radio kernel object.
  * @vifs_kobj:     Pointer to vifs kernel object.
  * @vif_entries:   Pointer to 17 sysfs vif entries.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
-	struct ath12k_raw_pkt_ctx  *raw_pkt_ctx;
+	struct ath12k_raw_pkt_ctx raw_pkt_ctx;
 
 	/* sysfs entries under ieee80211: radioX */
 	struct kobject *radio_kobj;
@@ -184,7 +225,6 @@ static inline int ath12k_custom_tx_extn(struct sk_buff *skb)
 	return -1;
 }
 
-
 static inline void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 {
 }
@@ -197,6 +237,10 @@ static inline void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 {
 }
 
+static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar,
+						     void *ptr)
+{
+}
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -236,6 +280,16 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
  *         -EBUSY if queue is full or probe response threshold exceeded
  */
 int ath12k_custom_tx_extn(struct sk_buff *skb);
+
+/*
+ * ath12k_wmi_prepare_tx_params_extn() - Prepare tx params for WMI command
+ * @ar: Pointer to the ath12k structure
+ * @ptr: Pointer to the WMI buffer
+ *
+ * This function prepares the tx params for the WMI command by:
+ * Setting the appropriate fields in the tx_param_dword0 and tx_param_dword1 values
+ */
+void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr);
 
 /**
  * ath12k_custom_tx_free_extn() - Free custom management TX skb and

@@ -1475,7 +1475,7 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
 /* Get link-vif level parameters */
 static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
-                                          u32 param, u32 *value)
+                                          u32 param, u64 *value)
 {
 	struct ath12k *ar = arvif->ar;
         int ret = -1;
@@ -1542,7 +1542,7 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 			ret = -ETIMEDOUT;
 			break;
                 }
-                *value = ar->tsf_report.tsf_low;
+                *value = ar->tsf_report.tsf;
                 ret = 0;
                 break;
         default:
@@ -1742,7 +1742,7 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       struct ath12k_wifi_generic_params *params,
-				       u32 *value)
+				       u64 *value)
 
 {
         struct ieee80211_vif *vif = NULL;

@@ -445,7 +445,7 @@ void ath12k_wifi6_hal_ce_dst_set_desc(struct hal_ce_srng_dest_desc *desc,
 
 void ath12k_wifi6_hal_set_link_desc_addr(struct hal_wbm_link_desc *desc,
 					 u32 cookie, dma_addr_t paddr,
-					 enum hal_rx_buf_return_buf_manager rbm)
+					 u8 rbm)
 {
 	desc->buf_addr_info.info0 = le32_encode_bits((paddr & HAL_ADDR_LSB_REG_MASK),
 						     BUFFER_ADDR_INFO0_ADDR);
@@ -620,8 +620,7 @@ void ath12k_wifi6_hal_cc_config(struct ath12k_base *ab)
 {
 }
 
-enum hal_rx_buf_return_buf_manager
-ath12k_wifi6_hal_get_idle_link_rbm(struct ath12k_hal *hal, u8 device_id)
+u8 ath12k_wifi6_hal_get_idle_link_rbm(struct ath12k_hal *hal, u8 device_id)
 {
 	switch (device_id) {
 	case 0:

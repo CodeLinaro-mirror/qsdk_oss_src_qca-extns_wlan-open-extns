@@ -731,16 +731,6 @@ struct rx_msdu_ext_desc {
  *		Set to the link ID of the PMAC that received the frame
  */
 
-enum hal_reo_dest_ring_buffer_type {
-	HAL_REO_DEST_RING_BUFFER_TYPE_MSDU,
-	HAL_REO_DEST_RING_BUFFER_TYPE_LINK_DESC,
-};
-
-enum hal_reo_dest_ring_push_reason {
-	HAL_REO_DEST_RING_PUSH_REASON_ERR_DETECTED,
-	HAL_REO_DEST_RING_PUSH_REASON_ROUTING_INSTRUCTION,
-};
-
 #define HAL_REO_DEST_RING_INFO0_BUFFER_TYPE		BIT(0)
 #define HAL_REO_DEST_RING_INFO0_PUSH_REASON		GENMASK(2, 1)
 #define HAL_REO_DEST_RING_INFO0_ERROR_CODE		GENMASK(7, 3)
@@ -1143,12 +1133,6 @@ struct hal_reo_flush_cache {
 
 #define HAL_TCL_DATA_CMD_INFO5_RING_ID			GENMASK(27, 20)
 #define HAL_TCL_DATA_CMD_INFO5_LOOPING_COUNT		GENMASK(31, 28)
-
-enum hal_tcl_desc_type {
-	HAL_TCL_DESC_TYPE_BUFFER,
-	HAL_TCL_DESC_TYPE_EXT_DESC,
-	HAL_TCL_DESC_TYPE_MAX,
-};
 
 struct hal_tcl_data_cmd {
 	struct ath12k_buffer_addr buf_addr_info;

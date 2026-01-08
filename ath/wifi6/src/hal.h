@@ -800,27 +800,12 @@ void ath12k_wifi6_hal_write_ml_reoq_lut_addr(struct ath12k_base *ab,
 
 void ath12k_wifi6_hal_write_ml_reoq_lut_addr(struct ath12k_base *ab,
 					     dma_addr_t paddr);
-void ath12k_wifi6_hal_reo_init_cmd_ring(struct ath12k_base *ab,
-					struct hal_srng *srng);
-void ath12k_wifi6_hal_reo_hw_setup(struct ath12k_base *ab);
-void
-ath12k_wifi6_hal_rx_msdu_link_info_get(struct hal_rx_msdu_link *link,
-				       u32 *num_msdus, u32 *msdu_cookies,
-				       enum hal_rx_buf_return_buf_manager *rbm);
-u32 ath12k_wifi6_hal_reo_qdesc_size(u32 ba_window_size, u8 tid);
-void ath12k_wifi6_hal_reo_qdesc_setup(struct hal_rx_reo_queue *qdesc,
-				      int tid, u32 ba_window_size,
-				      u32 start_seq, enum hal_pn_type type);
-
 void ath12k_wifi6_hal_ppeds_cfg_ast_override_map_reg(struct ath12k_base *ab, u8 idx,
 						     u32 ppeds_idx_map_val);
 void ath12k_wifi6_hal_srng_hw_disable(struct ath12k_base *ab,
 				      struct hal_srng *srng);
-void ath12k_wifi6_hal_reset_rx_reo_tid_q(void *vaddr,
-					 u32 ba_window_size, u8 tid);
 void *ath12k_wifi6_hal_srng_src_get_cur_desc_n_move_next(struct ath12k_base *ab,
 							  struct hal_srng *srng);
-
 static inline
 void *ath12k_hal_srng_src_begin_get_next_entry_nolock_fast(struct hal_srng *srng)
 {

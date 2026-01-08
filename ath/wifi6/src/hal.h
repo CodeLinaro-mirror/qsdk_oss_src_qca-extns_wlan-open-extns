@@ -40,7 +40,10 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_NUM_TX_MSDUS_PER_LINK_DESC		7
 #define HAL_NUM_RX_MSDUS_PER_LINK_DESC		6
 #define HAL_NUM_MPDU_LINKS_PER_QUEUE_DESC	12
-#define HAL_DSCP_TID_TBL_SIZE                   24
+#define HAL_DSCP_TID_TBL_SIZE			24
+#define HAL_RX_REFILL_RING_SIZE			32
+#define HAL_RX_MON_REFILL_RING_SIZE		4096
+#define HAL_RX_MON_STATUS_RING_SIZE		1024
 
 /* WCSS Relative address */
 #define HAL_SEQ_WCSS_CMEM_OFFSET		0x00100000
@@ -418,7 +421,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_CE_SRC_RING_BASE_MSB_RING_SIZE		0x0000ffff
 #define HAL_CE_DST_RING_BASE_MSB_RING_SIZE		0x0000ffff
 #define HAL_CE_DST_STATUS_RING_BASE_MSB_RING_SIZE	0x0000ffff
-#define HAL_WBM_IDLE_LINK_RING_BASE_MSB_RING_SIZE	0x000fffff
+#define HAL_WBM_IDLE_LINK_RING_BASE_MSB_RING_SIZE	0x0000ffff
 #define HAL_SW2WBM_RELEASE_RING_BASE_MSB_RING_SIZE	0x0000ffff
 #define HAL_WBM2SW_RELEASE_RING_BASE_MSB_RING_SIZE	0x000fffff
 #define HAL_RXDMA_RING_MAX_SIZE				0x0000ffff
@@ -815,6 +818,8 @@ void ath12k_wifi6_hal_srng_hw_disable(struct ath12k_base *ab,
 				      struct hal_srng *srng);
 void ath12k_wifi6_hal_reset_rx_reo_tid_q(void *vaddr,
 					 u32 ba_window_size, u8 tid);
+void *ath12k_wifi6_hal_srng_src_get_cur_desc_n_move_next(struct ath12k_base *ab,
+							  struct hal_srng *srng);
 
 static inline
 void *ath12k_hal_srng_src_begin_get_next_entry_nolock_fast(struct hal_srng *srng)

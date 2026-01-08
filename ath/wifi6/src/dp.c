@@ -253,11 +253,15 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 {
 	struct ath12k_dp *dp;
+	struct ath12k_dp_wifi6 *dp_wifi6;
 	int ret;
 
-	dp = kzalloc(sizeof(*dp), GFP_KERNEL);
+	dp = kzalloc(sizeof(*dp) + sizeof(*dp_wifi6), GFP_KERNEL);
 	if (!dp)
 		return NULL;
+
+	dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	dp_wifi6->dp = dp;
 
 	dp->arch_ops = &ath12k_wifi6_dp_arch_ops;
 

@@ -146,21 +146,11 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 	struct ath12k_base *ab = dp->ab;
 	struct hal_srng *srng = NULL;
 	u32 n_link_desc = 0;
-	int i;
-
-	INIT_LIST_HEAD(&dp->reo_cmd_list);
-	INIT_LIST_HEAD(&dp->reo_cmd_cache_flush_list);
-	INIT_LIST_HEAD(&dp->reo_cmd_update_rx_queue_list);
-	spin_lock_init(&dp->reo_cmd_update_rx_queue_lock);
-	spin_lock_init(&dp->reo_cmd_lock);
-
 
 	ret = ath12k_hif_ext_irq_setup(dp->ab, ath12k_wifi6_dp_service_srng, dp);
 	if (ret)
 		return ret;
 
-
-	dp->reo_cmd_cache_flush_count = 0;
 	dp->idle_link_rbm =
 			ath12k_hal_get_idle_link_rbm(&ab->hal, ab->device_id);
 
@@ -179,105 +169,42 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 		goto fail_irq_cleanup;
 	}
 
-
-/*
- *	ret = ath12k_dp_cc_init(ab);
-
+	ret = ath12k_dp_srng_setup(ab, &dp->wbm_desc_rel_ring,
+				   HAL_SW2WBM_RELEASE, 0, 0,
+				   DP_WBM_RELEASE_RING_SIZE);
 	if (ret) {
-		ath12k_warn(ab, "failed to setup cookie converter %d\n", ret);
+		ath12k_warn(ab, "failed to set up wbm2sw_release ring :%d\n",
+			    ret);
 		goto fail_link_desc_cleanup;
 	}
 
-	ret = ath12k_dp_init_bank_profiles(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup bank profiles %d\n", ret);
-		goto fail_hw_cc_cleanup;
-	}
-
-	ret = ath12k_nss_plugin_register_ops(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to register nss plugin %d\n", ret);
-		goto fail_dp_bank_profiles_cleanup;
-	}
-
-	ret = ath12k_ppeds_attach(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to attach PPE DS %d\n", ret);
-		goto fail_nss_plugin_unregister;
-	}
-	 */
-
-
-	ret = ath12k_dp_srng_common_setup(ab);
-	if (ret)
-		goto fail_ppeds_detach;
-
-
-/*
- *	ret = ath12k_wifi6_dp_tx_ring_setup(ab);
-	if (ret)
-		goto fail_cmn_srng_cleanup;
-
-*/
-/*
- *	ret = ath12k_dp_reoq_lut_setup(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup reoq table %d\n", ret);
-		goto fail_tx_ring_cleanup;
-	}
-
-	for (i = 0; i < ab->hw_params->max_tx_ring; i++)
-		dp->tx_ring[i].tcl_data_ring_id = i;
-	 */
-	for (i = 0; i < HAL_DSCP_TID_MAP_TBL_NUM_ENTRIES_MAX_WIFI6; i++)
-		ath12k_hal_tx_set_dscp_tid_map(ab, ath12k_default_dscp_tid_map, i);
-
-/*
- *	ret = ath12k_wifi6_dp_rx_ring_setup(ab);
+	ret = ath12k_wifi6_dp_rx_ring_setup(ab);
 	if (ret) {
 		ath12k_warn(ab, "rx allod failed ret = %d\n", ret);
 		goto fail_dp_rx_free;
 	}
 
+/*
 	ret = ath12k_dp_mon_rx_alloc(dp);
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rxdma rings ret = %d\n", ret);
 		goto fail_dp_mon_rx_free;
 	}
-	 */
+*/
 	return 0;
 
 /*
  * fail_dp_mon_rx_free:
 	ath12k_dp_mon_rx_free(dp);
+*/
 
 fail_dp_rx_free:
 	ath12k_wifi6_dp_rx_ring_free(ab);
-	ath12k_dp_reoq_lut_cleanup(ab);
-
-fail_tx_ring_cleanup:
-	ath12k_wifi6_dp_tx_ring_cleanup(ab);
-	 */
-//fail_cmn_srng_cleanup:
-//	ath12k_dp_srng_common_cleanup(ab);
-
-fail_ppeds_detach:
-/*
- *	ath12k_ppeds_detach(ab);
-
-fail_nss_plugin_unregister:
-	ath12k_nss_plugin_unregister_ops(ab);
-
-fail_dp_bank_profiles_cleanup:
-	ath12k_dp_deinit_bank_profiles(ab);
-
-fail_hw_cc_cleanup:
-	ath12k_dp_cc_cleanup(ab);
+	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
 
 fail_link_desc_cleanup:
 	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
-	 */
 fail_irq_cleanup:
 	ath12k_hif_ext_irq_cleanup(dp->ab);
 
@@ -294,22 +221,13 @@ static void ath12k_wifi6_dp_op_device_deinit(struct ath12k_dp *dp)
 
 	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
-
-	ath12k_ppeds_detach(ab);
-	ath12k_dp_cc_cleanup(ab);
-	ath12k_dp_reoq_lut_cleanup(ab);
-	ath12k_dp_deinit_bank_profiles(ab);
-	ath12k_dp_srng_common_cleanup(ab);
-
+	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
 /*
- *	ath12k_dp_rx_reo_cmd_list_cleanup(ab);
-
 	ath12k_dp_mon_rx_free(dp);
-	ath12k_nss_plugin_unregister_ops(ab);
+*/
 	ath12k_wifi6_dp_rx_ring_free(ab);
 
 	ath12k_hif_ext_irq_cleanup(dp->ab);
-	 */
 }
 
 static struct ath12k_dp_hw_group *ath12k_wifi6_dp_hw_group_alloc(void)

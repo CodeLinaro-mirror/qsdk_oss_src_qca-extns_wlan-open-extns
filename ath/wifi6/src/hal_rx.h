@@ -445,8 +445,6 @@ ath12k_wifi6_hal_rx_msdu_link_desc_set(struct ath12k_base *ab,
 int ath12k_wifi6_hal_desc_reo_parse_err(struct ath12k_dp *dp,
 					struct hal_reo_dest_ring *desc,
 					dma_addr_t *paddr, u32 *desc_bank);
-int ath12k_wifi6_hal_wbm_desc_parse_err(struct ath12k_dp *dp, void *desc,
-					struct hal_rx_wbm_rel_info *rel_info);
 void ath12k_wifi6_hal_rx_reo_ent_paddr_get(struct ath12k_base *ab,
 					   struct ath12k_buffer_addr *buff_addr,
 					   dma_addr_t *paddr, u32 *cookie);

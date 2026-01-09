@@ -306,3 +306,195 @@ free_skb:
 	dev_kfree_skb_any(skb);
 	return ret;
 }
+
+void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
+				      struct wmi_chan_info_event *ch_info)
+{
+	struct ath12k_raw_pkt_ctx *raw_ctx;
+	struct ath12k_offchan_stat *stats;
+
+	if (!ar) {
+		ath12k_dbg(NULL, ATH12K_DBG_WMI,
+			   "failed to update offchan stats, ar is NULL");
+		return;
+	}
+	raw_ctx = &ar->ar_extn.raw_pkt_ctx;
+
+	spin_lock_bh(&raw_ctx->chan_lock);
+
+	/* Check if offchan operation is active:
+	 * 1. Timer is pending (indicates offchan operation in progress)
+	 * 2. Not on home channel
+	 * 3. Frequency matches the current offchan frequency
+	 */
+	if (timer_pending(&raw_ctx->offchan_timer) &&
+	    !raw_ctx->home_chan &&
+	    raw_ctx->req_freq == freq) {
+		stats = &raw_ctx->chan_stat;
+
+		stats->noise_floor = (s16)le32_to_cpu(ch_info->noise_floor);
+		stats->tx_frame_count = le32_to_cpu(ch_info->tx_frame_cnt);
+		stats->rx_clear_count = le32_to_cpu(ch_info->rx_clear_count);
+		stats->rx_frame_count = le32_to_cpu(ch_info->rx_frame_count);
+		stats->cycle_count = le32_to_cpu(ch_info->cycle_count);
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan stats updated: freq=%u nf=%d tx=%u rx=%u "
+			   "rx_clear=%u cycle=%u\n",
+			   freq, stats->noise_floor, stats->tx_frame_count,
+			   stats->rx_frame_count, stats->rx_clear_count,
+			   stats->cycle_count);
+	} else {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "Disgarding offchan stats update [%u, %u, %u, %u]",
+			    timer_pending(&raw_ctx->offchan_timer),
+			    raw_ctx->home_chan, raw_ctx->req_freq,
+			    freq);
+	}
+	spin_unlock_bh(&raw_ctx->chan_lock);
+}
+
+/**
+ * ath12k_compute_offchan_timing_stats - Compute offchan timing stats
+ *                                       from timestamps
+ * @stats: Offchan statistics structure to update
+ * @ts_scan_start: offchan operation start time
+ * @ts_foreign_entry: foreign channel entry time
+ * @ts_foreign_exit: foreign channel exit time
+ * @ts_scan_done: offchan operation end time
+ *
+ * Computes timing statistics:
+ * - dwell_time: Time spent on foreign channel (foreign_exit - foreign_entry)
+ * - chanswitch_time_htof: Time to switch from home to foreign
+ *                         (foreign_entry - scan_start)
+ * - chanswitch_time_ftoh: Time to switch from foreign to home
+ *                         (scan_done - foreign_exit)
+ */
+static void ath12k_compute_offchan_timing_stats(struct ath12k_offchan_stat *stats,
+						ktime_t ts_scan_start,
+						ktime_t ts_foreign_entry,
+						ktime_t ts_foreign_exit,
+						ktime_t ts_scan_done)
+{
+	s64 dwell_us, htof_us, ftoh_us;
+
+	if (!ktime_to_ns(ts_scan_start))
+		return;
+
+	/* Compute dwell time if we have both entry and exit timestamps */
+	if (ktime_to_ns(ts_foreign_entry) && ktime_to_ns(ts_foreign_exit)) {
+		dwell_us = ktime_us_delta(ts_foreign_exit, ts_foreign_entry);
+		if (dwell_us > 0)
+			stats->dwell_time = (u32)dwell_us;
+	}
+
+	/* Compute home-to-foreign channel switch time */
+	htof_us = ktime_us_delta(ts_foreign_entry, ts_scan_start);
+	if (htof_us > 0)
+		stats->chanswitch_time_htof = (u32)htof_us;
+
+	/* Compute foreign-to-home channel switch time */
+	if (ktime_to_ns(ts_foreign_exit) && ktime_to_ns(ts_scan_done)) {
+		ftoh_us = ktime_us_delta(ts_scan_done, ts_foreign_exit);
+		if (ftoh_us > 0)
+			stats->chanswitch_time_ftoh = (u32)ftoh_us;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_WMI,
+		   "offchan timing: dwell=%u us, htof=%u us, ftoh=%u us",
+		   stats->dwell_time, stats->chanswitch_time_htof,
+		   stats->chanswitch_time_ftoh);
+}
+
+void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
+{
+	struct ath12k_raw_pkt_ctx *raw_ctx;
+	ktime_t ts_scan_start = 0;
+	ktime_t ts_scan_done = 0;
+	ktime_t ts_foreign_entry = 0;
+	ktime_t ts_foreign_exit = 0;
+
+	if (!ar)
+		return;
+
+	raw_ctx = &ar->ar_extn.raw_pkt_ctx;
+
+	/* Only update timestamps if offchan operation is active */
+	spin_lock_bh(&raw_ctx->chan_lock);
+	if (!timer_pending(&raw_ctx->offchan_timer)) {
+		spin_unlock_bh(&raw_ctx->chan_lock);
+		return;
+	}
+
+	switch (event_type) {
+	case WMI_SCAN_EVENT_STARTED:
+		ts_scan_start = ktime_get();
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan: captured scan_start timestamp\n");
+		break;
+	case WMI_SCAN_EVENT_FOREIGN_CHAN:
+		ts_foreign_entry = ktime_get();
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan: captured foreign_entry timestamp\n");
+		break;
+	case WMI_SCAN_EVENT_FOREIGN_CHAN_EXIT:
+		ts_foreign_exit = ktime_get();
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan: captured foreign_exit timestamp\n");
+		break;
+	case WMI_SCAN_EVENT_COMPLETED:
+		ts_scan_done = ktime_get();
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan: captured scan done timestamp\n");
+		break;
+	case WMI_SCAN_EVENT_START_FAILED:
+	case WMI_SCAN_EVENT_DEQUEUED:
+	case WMI_SCAN_EVENT_PREEMPTED:
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan: event %u\n",
+			   event_type);
+		break;
+	default:
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "offchan: event %u not handler\n", event_type);
+		spin_unlock_bh(&raw_ctx->chan_lock);
+		return;
+	}
+	ath12k_compute_offchan_timing_stats(&raw_ctx->chan_stat,
+					    ts_scan_start,
+					    ts_foreign_entry,
+					    ts_foreign_exit,
+					    ts_scan_done);
+	spin_unlock_bh(&raw_ctx->chan_lock);
+}
+
+/**
+ * ath12k_custom_txrx_timeout_handler - Timer callback for custom txrx timeout
+ * @t: timer_list structure
+ *
+ * Offchan timeout handler, To be implemented.
+ */
+static void ath12k_custom_txrx_timeout_handler(struct timer_list *t)
+{
+	/* timeout handling to be implemented */
+}
+
+void ath12k_custom_txrx_init(struct ath12k *ar)
+{
+	struct ath12k_raw_pkt_ctx *raw_ctx = &ar->ar_extn.raw_pkt_ctx;
+
+	spin_lock_init(&raw_ctx->chan_lock);
+	timer_setup(&raw_ctx->offchan_timer,
+		    ath12k_custom_txrx_timeout_handler, 0);
+	skb_queue_head_init(&raw_ctx->pkt_list);
+}
+
+void ath12k_custom_txrx_deinit(struct ath12k *ar)
+{
+	struct ath12k_raw_pkt_ctx *raw_ctx = &ar->ar_extn.raw_pkt_ctx;
+
+	del_timer_sync(&raw_ctx->offchan_timer);
+
+	spin_lock_bh(&raw_ctx->chan_lock);
+	skb_queue_purge(&raw_ctx->pkt_list);
+	spin_unlock_bh(&raw_ctx->chan_lock);
+}

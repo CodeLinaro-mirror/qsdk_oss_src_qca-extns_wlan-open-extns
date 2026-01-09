@@ -297,9 +297,11 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 void ath12k_mac_setup_extn(struct ath12k *ar)
 {
 	ath12k_esp_init_extn(ar);
+	ath12k_custom_txrx_init(ar);
 }
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 	ath12k_esp_cleanup_extn(ar);
+	ath12k_custom_txrx_deinit(ar);
 }

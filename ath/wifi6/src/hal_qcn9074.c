@@ -11,8 +11,8 @@
 #include "hal_tx.h"
 #include <linux/cacheflush.h>
 
-extern void ath12k_wifi6_hal_mon_ops_init(struct ath12k_hal *hal,
-					  u8 hw_version);
+void ath12k_wifi6_hal_mon_ops_init(struct ath12k_hal *hal,
+				   u8 hw_version);
 
 static const struct hal_srng_config hw_srng_config_template[] = {
 	/* TODO: max_rings can populated by querying HW capabilities */
@@ -525,7 +525,7 @@ const struct hal_ops hal_qcn9074_ops = {
 	.setup_link_idle_list = ath12k_wifi6_hal_setup_link_idle_list,
 	.cc_config = ath12k_wifi6_hal_cc_config,
 	.get_idle_link_rbm = ath12k_wifi6_hal_get_idle_link_rbm,
-	.hal_mon_ops_init = NULL,
+	.hal_mon_ops_init = ath12k_wifi6_hal_mon_ops_init,
 	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
 
 	.rx_reo_ent_buf_paddr_get = ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get,

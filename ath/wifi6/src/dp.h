@@ -66,4 +66,10 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab);
 void ath12k_wifi6_dp_deinit(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_pdev_alloc(struct ath12k_base *ab);
 void ath12k_wifi6_dp_pdev_free(struct ath12k_base *ab);
+int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
+				struct ath12k_dp_peer_create_params *params,
+				struct ieee80211_vif *vif);
+void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 *addr,
+				 struct ieee80211_sta *sta, u8 hw_link_id);
+int ath12k_wifi6_dp_link_peer_create(struct ath12k_base *ab, u32 vdev_id, u8 *addr);
 #endif

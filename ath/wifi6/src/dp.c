@@ -8,6 +8,7 @@
 #include "../../dp_rx.h"
 #include "../../hif.h"
 #include "../../dp_cmn.h"
+#include "../../telemetry_agent_if.h"
 #include "dp_rx.h"
 #include "dp.h"
 #include "hal.h"
@@ -240,6 +241,116 @@ static struct ath12k_dp_hw_group *ath12k_wifi6_dp_hw_group_alloc(void)
 	return dp_hw_grp;
 }
 
+int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
+				struct ath12k_dp_peer_create_params *params,
+				struct ieee80211_vif *vif)
+{
+	struct ath12k_dp_peer *dp_peer;
+	struct wireless_dev *wdev;
+	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
+
+	spin_lock_bh(&dp_hw->peer_lock);
+
+	if (!params->is_vdev_peer) {
+		ath12k_err(NULL, "Peer is not vdev peer for scan radio\n");
+		spin_unlock_bh(&dp_hw->peer_lock);
+		return -EINVAL;
+	}
+
+	dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, params->hw_link_id);
+
+	if (dp_peer) {
+		spin_unlock_bh(&dp_hw->peer_lock);
+		return -EEXIST;
+	}
+
+	spin_unlock_bh(&dp_hw->peer_lock);
+
+	dp_peer = kzalloc(sizeof(*dp_peer), GFP_KERNEL);
+	if (!dp_peer)
+		return -ENOMEM;
+
+	dp_peer->link_peer_delete_stats = ath12k_dp_alloc_preserved_stats();
+	if (!dp_peer->link_peer_delete_stats) {
+		ath12k_err(NULL, "Failed to allocate link peer delete stats");
+		kfree(dp_peer);
+		return -ENOMEM;
+	}
+	ether_addr_copy(dp_peer->addr, addr);
+	dp_peer->sta = params->sta;
+	dp_peer->is_mlo = params->is_mlo;
+	dp_peer->peer_id = params->is_mlo ? params->peer_id : ATH12K_DP_PEER_ID_INVALID;
+	dp_peer->is_vdev_peer = params->is_vdev_peer;
+	/* Update hw_link_id for self bss peer */
+	if (dp_peer->is_vdev_peer)
+		dp_peer->hw_link_id = params->hw_link_id;
+	dp_peer->sec_type = HAL_ENCRYPT_TYPE_OPEN;
+	dp_peer->sec_type_grp = HAL_ENCRYPT_TYPE_OPEN;
+
+	/* cache net dev here and reuse it during process rx */
+	wdev = ieee80211_vif_to_wdev(vif);
+	if (wdev)
+		dp_peer->dev = wdev->netdev;
+
+	spin_lock_bh(&dp_hw->peer_lock);
+
+	list_add(&dp_peer->list, &dp_hw->peers);
+
+	if (dp_peer->is_mlo && dp_peer->peer_id < MAX_DP_PEER_LIST_SIZE)
+		rcu_assign_pointer(dp_hw->dp_peer_list[dp_peer->peer_id], dp_peer);
+
+	spin_unlock_bh(&dp_hw->peer_lock);
+
+	params->peer_id = ATH12K_DP_PEER_ID_INVALID;
+
+	return 0;
+}
+
+void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 *addr,
+				 struct ieee80211_sta *sta, u8 hw_link_id)
+{
+	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
+	u16 peerid_index;
+
+	spin_lock_bh(&dp_hw->peer_lock);
+
+	if (sta)
+		dp_peer = ath12k_dp_peer_find_by_addr_and_sta(dp_hw, addr, sta);
+	else
+		dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, hw_link_id);
+
+	if (!dp_peer) {
+		spin_unlock_bh(&dp_hw->peer_lock);
+		return;
+	}
+
+	if (dp_peer->is_mlo) {
+		peerid_index = dp_peer->peer_id;
+		rcu_assign_pointer(dp_hw->dp_peer_list[peerid_index], NULL);
+	}
+
+	list_del(&dp_peer->list);
+
+	spin_unlock_bh(&dp_hw->peer_lock);
+
+	synchronize_rcu();
+
+	if (dp_peer->qos && dp_peer->qos->telemetry_peer_ctx)
+		ath12k_telemetry_peer_ctx_free(dp_peer->qos->telemetry_peer_ctx);
+
+	if (dp_peer->qos)
+		kfree(dp_peer->qos);
+
+	ath12k_dp_free_preserved_stats(dp_peer->link_peer_delete_stats);
+	kfree(dp_peer);
+}
+
+int ath12k_wifi6_dp_link_peer_create(struct ath12k_base *ab, u32 vdev_id, u8 *addr)
+{
+	return 0;
+}
+
 static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_op_device_init = ath12k_wifi6_dp_op_device_init,
 	.dp_op_device_deinit = ath12k_wifi6_dp_op_device_deinit,
@@ -247,6 +358,9 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_hw_group_alloc = ath12k_wifi6_dp_hw_group_alloc,
 	.dp_pdev_alloc = ath12k_wifi6_dp_pdev_alloc,
 	.dp_pdev_free = ath12k_wifi6_dp_pdev_free,
+	.dp_peer_create = ath12k_wifi6_dp_peer_create,
+	.dp_peer_delete = ath12k_wifi6_dp_peer_delete,
+	.dp_link_peer_create = ath12k_wifi6_dp_link_peer_create,
 };
 
 /* TODO: remove export once this file is built with wifi6 ko */
@@ -269,6 +383,7 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 	dp->dev = ab->dev;
 	dp->hw_params = ab->hw_params;
 	dp->hal = &ab->hal;
+	dp->global_peer_id_supported = false;
 
 	ret = ath12k_dp_mon_init(dp);
 	if (ret) {

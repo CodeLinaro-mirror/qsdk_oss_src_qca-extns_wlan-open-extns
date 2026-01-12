@@ -82,6 +82,12 @@ static int ath12k_fill_tx_param(struct sk_buff *skb,
 	struct ieee80211_hdr *hdr;
 	u8 rate_idx;
 	__le16 fc;
+	/* CCK bit positions: 3, 2, 1, 0 for rates 1, 2, 5.5, 11 Mbps */
+	const u8 cck_bit_pos[] = {3, 2, 1, 0};
+	/* OFDM bit positions: 10, 8, 6, 4, 11, 9, 7, 5 for
+	 * rates 6, 9, 12, 18, 24, 36, 48, 54 Mbps
+	 */
+	const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
 
 	skb_cb = ATH12K_SKB_CB(skb);
 	ar = skb_cb->u.ar;
@@ -112,14 +118,20 @@ static int ath12k_fill_tx_param(struct sk_buff *skb,
 		goto fill_tx_param;
 	}
 
+	if (!skb_cb->vif->bss_conf.basic_rates) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "Basic rate not configured! skipping basic rate check");
+		goto fill_tx_param;
+	}
+
 	if (preamble == PREAMBLE_CCK) {
 		if (mcs > OFFCHAN_MAX_CCK_MCS) {
 			ath12k_err(ar->ab, "Invalid rate for mgmt\n");
 			return -EINVAL;
 		}
-		rate_idx = mcs;
+		rate_idx = cck_bit_pos[mcs];
 	} else
-		rate_idx = mcs + 4;
+		rate_idx = ofdm_bit_pos[mcs];
 
 	if (!(skb_cb->vif->bss_conf.basic_rates & BIT(rate_idx))) {
 		ath12k_err(ar->ab, "Basic rate expected for mgmt packets\n");
@@ -151,11 +163,11 @@ static void ath12k_process_rate_params(u32 *mcs, u32 *nss,
 				       enum preamble_type preamble)
 {
 	/* CCK bit positions: 3, 2, 1, 0 for rates 1, 2, 5.5, 11 Mbps */
-	static const u8 cck_bit_pos[] = {3, 2, 1, 0};
+	const u8 cck_bit_pos[] = {3, 2, 1, 0};
 	/* OFDM bit positions: 10, 8, 6, 4, 11, 9, 7, 5 for
 	 * rates 6, 9, 12, 18, 24, 36, 48, 54 Mbps
 	 */
-	static const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
+	const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
 
 	if (preamble == PREAMBLE_CCK) {
 		if (*mcs < ARRAY_SIZE(cck_bit_pos))
@@ -184,40 +196,36 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
 	u32 nss = tx_param->nss;
 	u32 preamble = tx_param->preamble;
 
-	/* Initialize the output values */
-	*tx_param_dword0 = 0;
-	*tx_param_dword1 = 0;
-
 	if (!tx_param->tx_param_configured)
 		return;
 
 	ath12k_process_rate_params(&mcs, &nss, preamble);
 
 	/* Set power in dword0 [7:0] */
-	*tx_param_dword0 = le32_encode_bits(tx_param->power,
-					    WMI_TX_PARAMS_DWORD0_POWER) |
-			   /* Set MCS in dword0 [19:8] */
-			   le32_encode_bits(mcs,
-					    WMI_TX_PARAMS_DWORD0_MCS_MASK) |
-			   /* Set NSS in dword0 [27:20] */
-			   le32_encode_bits((nss ? (1 << (nss - 1)) : 0),
-					    WMI_TX_PARAMS_DWORD0_NSS_MASK) |
-			   /* Set retry limit in dword0 [31:28] */
-			   le32_encode_bits((tx_param->retry ? (tx_param->retry & 0xF) : 1),
-					    WMI_TX_PARAMS_DWORD0_RETRY_LIMIT);
+	*tx_param_dword0 |= le32_encode_bits(tx_param->power,
+					     WMI_TX_PARAMS_DWORD0_POWER) |
+			    /* Set MCS in dword0 [19:8] */
+			    le32_encode_bits(mcs,
+					     WMI_TX_PARAMS_DWORD0_MCS_MASK) |
+			    /* Set NSS in dword0 [27:20] */
+			    le32_encode_bits((nss ? (1 << (nss - 1)) : 0),
+					     WMI_TX_PARAMS_DWORD0_NSS_MASK) |
+			    /* Set retry limit in dword0 [31:28] */
+			    le32_encode_bits((tx_param->retry ? (tx_param->retry & 0xF) : 1),
+					     WMI_TX_PARAMS_DWORD0_RETRY_LIMIT);
 
 	/* Set preamble type in dword1 [19:15] */
-	*tx_param_dword1 = le32_encode_bits((1 << preamble),
-					    WMI_TX_PARAMS_DWORD1_PREAMBLE_TYPE) |
-			   /* Set frame type in dword1 [20] */
-			   le32_encode_bits(tx_param->is_data,
-					    WMI_TX_PARAMS_DWORD1_FRAME_TYPE) |
-			   /* Set beamforming in dword1 [22] */
-			   le32_encode_bits(tx_param->tx_beamforming,
-					    WMI_TX_PARAMS_DWORD1_BEAMFORM) |
-			   /* Set retry limit ext in dword1 [25:23] */
-			   le32_encode_bits((tx_param->retry ? ((tx_param->retry & 0x70) >> 4) : 0),
-					    WMI_TX_PARAMS_DWORD1_RETRY_LIMIT_EXT);
+	*tx_param_dword1 |= le32_encode_bits((1 << preamble),
+					     WMI_TX_PARAMS_DWORD1_PREAMBLE_TYPE) |
+			    /* Set frame type in dword1 [20] */
+			    le32_encode_bits(tx_param->is_data,
+					     WMI_TX_PARAMS_DWORD1_FRAME_TYPE) |
+			    /* Set beamforming in dword1 [22] */
+			    le32_encode_bits(tx_param->tx_beamforming,
+					     WMI_TX_PARAMS_DWORD1_BEAMFORM) |
+			    /* Set retry limit ext in dword1 [25:23] */
+			    le32_encode_bits((tx_param->retry ? ((tx_param->retry & 0x70) >> 4) : 0),
+					     WMI_TX_PARAMS_DWORD1_RETRY_LIMIT_EXT);
 }
 
 int ath12k_custom_tx_extn(struct sk_buff *skb)
@@ -296,7 +304,9 @@ int ath12k_custom_tx_extn(struct sk_buff *skb)
 		goto free_skb;
 	}
 	skb_queue_tail(q, skb);
-	atomic_inc(&ar->num_pending_mgmt_tx);
+
+	if (!(info->flags & IEEE80211_TX_CTL_TX_OFFCHAN))
+		atomic_inc(&ar->num_pending_mgmt_tx);
 
 	ath12k_mgmt_over_wmi_tx_work(hw->wiphy, &ar->wmi_mgmt_tx_work);
 

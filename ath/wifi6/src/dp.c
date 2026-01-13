@@ -351,6 +351,13 @@ int ath12k_wifi6_dp_link_peer_create(struct ath12k_base *ab, u32 vdev_id, u8 *ad
 	return 0;
 }
 
+int ath12k_wifi6_dp_peer_assoc(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+			       struct ath12k_dp_vif *dp_vif, u8 *addr)
+{
+	return 0;
+}
+
+
 static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_op_device_init = ath12k_wifi6_dp_op_device_init,
 	.dp_op_device_deinit = ath12k_wifi6_dp_op_device_deinit,
@@ -361,6 +368,7 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_peer_create = ath12k_wifi6_dp_peer_create,
 	.dp_peer_delete = ath12k_wifi6_dp_peer_delete,
 	.dp_link_peer_create = ath12k_wifi6_dp_link_peer_create,
+	.dp_peer_assoc = ath12k_wifi6_dp_peer_assoc,
 };
 
 /* TODO: remove export once this file is built with wifi6 ko */

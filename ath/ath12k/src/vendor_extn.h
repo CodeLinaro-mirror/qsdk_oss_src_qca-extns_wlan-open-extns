@@ -32,7 +32,9 @@ ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1];
 extern const struct nla_policy
 ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1];
 
+#if LINUX_VERSION_IS_LESS(6,6,116)
 #define MAX(x,y) (x > y ? x : y)
+#endif
 
 /* CTL table size definitions */
 #define QCA_WLAN_CTL_5G_SIZE    1536

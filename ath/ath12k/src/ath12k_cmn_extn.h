@@ -135,6 +135,8 @@ struct ath12k_skb_tx_param {
  * @req_freq:             Requested freq(if set) for offchan operation.
  * @custom_tx_status:     Tx completion status of queued packets.
  * @home_chan:            True if currently on the home channel.
+ * @func_type:            Function type for the operation.
+ * @num_frames:           Number of frames sent from userspace.
  */
 struct ath12k_raw_pkt_ctx {
 	struct sk_buff_head  pkt_list;
@@ -148,6 +150,8 @@ struct ath12k_raw_pkt_ctx {
 	u32 req_freq;
 	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
 	bool home_chan;
+	u8 func_type;
+	u8 num_frames;
 };
 
 /**
@@ -166,6 +170,45 @@ struct ath12k_extn {
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
+};
+
+/**
+ * struct offchan_event_work_with_txn - Work structure for off-channel event
+ * @work: Work structure for scheduling the event
+ * @wdev: Pointer to the wireless device
+ * @transaction_id: Transaction ID for correlation with user-space request
+ * @raw_pkt_ctx: Pointer to raw packet context for per-packet status
+ *
+ * This structure is used to schedule off-channel statistics events to user space
+ * with transaction ID support for request-response correlation.
+ */
+struct offchan_event_work_with_txn {
+	struct work_struct work;
+	struct wireless_dev *wdev;
+	u32 transaction_id;
+	struct ath12k_raw_pkt_ctx *raw_pkt_ctx;
+};
+
+/**
+ * struct ath12k_home_offchan_params - Parameters for home/off-channel operation
+ * @wdev: Pointer to the wireless device
+ * @offchan_frame: Netlink attribute containing the frame data and parameters
+ * @band: Operating band (e.g., 2.4GHz, 5GHz, 6GHz)
+ * @freq: Channel frequency in MHz
+ * @transaction_id: Transaction ID for correlation with user-space request
+ * @scan_dur: Scan duration in milliseconds for off-channel operation
+ * @num_frames: Number of frames to transmit
+ * @func: Function type (TX_MGMT, TX_DATA, or RX)
+ */
+struct ath12k_home_offchan_params {
+	struct wireless_dev *wdev;
+	struct nlattr *offchan_frame;
+	int band;
+	int freq;
+	u32 transaction_id;
+	u16 scan_dur;
+	u8 num_frames;
+	u8 func;
 };
 
 #ifndef CPTCFG_QCN_EXTN
@@ -254,6 +297,35 @@ static inline void ath12k_update_offchan_ts_extn(struct ath12k *ar,
 						 u32 event_type)
 {
 }
+
+static inline int schedule_home_offchan_stats_event_ext(struct wireless_dev *wdev,
+                                                         u32 transaction_id,
+							 struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
+{
+	return -1;
+}
+
+static int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
+						    struct wireless_dev *wdev,
+						    const void *data,
+						    int data_len)
+{
+	return -1;
+}
+
+static void ath12k_home_offchan_tx_drain(struct ath12k_raw_pkt_ctx *raw_pkt_ctx) {
+	return;
+}
+
+static void ath12k_home_offchan_cleanup(struct ath12k *ar) {
+	return;
+}
+
+static void ath12k_custom_tx_send(struct ieee80211_vif *vif,
+				  struct ath12k_raw_pkt_ctx *raw_pkt_ctx) {
+	return;
+}
+
 static inline int
 ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						 struct ath12k_wmi_vdev_create_arg *arg)
@@ -397,7 +469,73 @@ void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
 void ath12k_sysfs_init_extn(struct ath12k *ar);
 void ath12k_sysfs_cleanup_extn(struct ath12k *ar);
 
-int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
+/**
+ * schedule_home_offchan_stats_event_ext - Schedule home/off-channel statistics event
+ * @wdev: Pointer to the wireless device
+ * @transaction_id: Transaction ID for correlation with user-space request
+ * @raw_pkt_ctx: Pointer to raw packet context for per-packet TX status
+ *
+ * This function schedules a work item to send home/off-channel statistics as a vendor
+ * event to user space. The transaction ID is used to correlate the event with the
+ * original request from user space. The raw_pkt_ctx provides per-packet TX status.
+ *
+ * Return: 0 on success
+ */
+int schedule_home_offchan_stats_event_ext(struct wireless_dev *wdev,
+					   u32 transaction_id,
+					   struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
+
+/**
+ * ath12k_vendor_home_offchan_tx_rx_handler - Vendor command handler for home/off-channel TX/RX
+ * @wiphy: Pointer to the wireless hardware
+ * @wdev: Pointer to the wireless device
+ * @data: Pointer to the vendor command data
+ * @data_len: Length of the vendor command data
+ *
+ * This function handles the vendor command for transmitting and receiving frames
+ * on home channel or off-channel. It parses the netlink attributes, prepares the
+ * frame for transmission, and schedules the transmission based on whether it's
+ * home channel or off-channel operation.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
+					     struct wireless_dev *wdev,
+					     const void *data,
+					     int data_len);
+
+/**
+ * ath12k_home_offchan_tx_drain - Drain all packets from home/off-channel transmission queue
+ * @raw_pkt_ctx: Pointer to the raw packet context structure
+ *
+ * This function removes and frees all packets from the home/off-channel transmission
+ * queue. It should be called during cleanup or when a home/off-channel operation
+ * times out or is cancelled.
+ */
+void ath12k_home_offchan_tx_drain(struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
+
+/**
+ * ath12k_home_offchan_cleanup - Cleanup home/off-channel resources
+ * @ar: Pointer to the ath12k radio structure
+ *
+ * This function cleans up all home/off-channel related resources including stopping
+ * the timer, draining the packet queue, and clearing the vif pointer. Should be
+ * called during driver cleanup or detach.
+ */
+void ath12k_home_offchan_cleanup(struct ath12k *ar);
+
+/**
+ * ath12k_custom_tx_send - Send packet from queue on home offchan
+ * @vif: Pointer to the virtual interface
+ * @raw_pkt_ctx: Pointer to the raw packet context structure
+ *
+ * This function dequeues and transmits a packet from the home offchan queue.
+ * It handles the transmission of custom management frames on the home offchan.
+ */
+void ath12k_custom_tx_send(struct ieee80211_vif *vif,
+			   struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
+
+                   int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);
 
 #endif /* CPTCFG_QCN_EXTN */

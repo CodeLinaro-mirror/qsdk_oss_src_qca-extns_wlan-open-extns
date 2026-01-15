@@ -172,6 +172,7 @@ struct ath12k_raw_pkt_ctx {
  * @radio_kobj:    pointer to radio kernel object.
  * @vifs_kobj:     Pointer to vifs kernel object.
  * @vif_entries:   Pointer to 17 sysfs vif entries.
+ * @dcs_config_bitmap: Bitmap of DCS enablement mode.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -181,6 +182,7 @@ struct ath12k_extn {
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
+	u16 dcs_config_bitmap;
 };
 
 /**
@@ -600,6 +602,7 @@ void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 
                    int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);
+struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

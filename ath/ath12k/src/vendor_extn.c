@@ -19,6 +19,7 @@
 #include "../ini.h"
 #include "../cmn_defs.h"
 #include "../telemetry_agent_if.h"
+#include "dcs_extn.h"
 
 
 const struct nla_policy
@@ -107,6 +108,21 @@ ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH] = { .type = NLA_U32 },
 	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA] = { .type = NLA_BINARY,
 						.len = QCA_WLAN_MAX_CTL_SIZE },
+};
+
+const struct nla_policy
+ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_ENABLE] = {.type = NLA_U16},
+	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_PENALTY] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_RADAR_ERR_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_TX_ERR_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU] = {.type = NLA_U8},
 };
 
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
@@ -2599,5 +2615,57 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 		dev_kfree_skb(skb);
 	}
 
+	return 0;
+}
+
+int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	int ret, link_id = 0, cmd_type, dcs_enable;
+	struct ath12k *ar;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_DCS_MAX, data, data_len,
+			ath12k_vendor_dcs_config_policy, NULL);
+
+	if (ret) {
+		ath12k_err(NULL, "Invalid attribute in dcs_handler %d\n", ret);
+		return ret;
+	}
+
+	if (wdev->valid_links) { /* MLO case */
+		if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID])
+			return -EINVAL;
+		link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID]);
+		if (!(wdev->valid_links & BIT(link_id)))
+			return -ENOLINK;
+	} else { /* NON-MLO case */
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID])
+			return -EINVAL;
+		link_id = 0;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE])
+		return -EINVAL;
+
+	cmd_type = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE]);
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_ENABLE])
+		return -EINVAL;
+
+	dcs_enable = nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_DCS_ENABLE]);
+
+	if (dcs_enable & ~ATH12K_DCS_VALID_INTF_BITMAP) {
+		ath12k_err(NULL, "Invalid DCS enable bitmap: 0x%x\n", dcs_enable);
+		return -EINVAL;
+	}
+
+	ar = ath12k_get_ar_from_wdev(wdev, link_id);
+	if (!ar)
+		return -ENODATA;
+
+	ath12k_mac_set_intf_detect(ar, dcs_enable);
 	return 0;
 }

@@ -137,6 +137,13 @@ ath12k_rrop_info_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX] = {.type = NLA_U8 },
 };
 
+const struct nla_policy
+ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_TYPE] = {.type = NLA_U16},
+	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP] = {.type = NLA_U32},
+};
+
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
 					   u8 *mac_addr)
 {
@@ -3031,4 +3038,64 @@ int ath12k_fill_rx_scan_radio_stats(
 	nla_nest_end(vendor_event, attr);
 
 	return 0;
+}
+
+int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len)
+{
+	u16 intf_type_bitmap;
+	u32 intf_bitmap = 0;
+	int ret, link_id = 0;
+	struct ath12k *ar;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
+
+	ath12k_err(NULL, "Inside ath12k_vendor_dcs_sim_handler");
+
+	if (!wdev)
+		return -EINVAL;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX, data, data_len,
+			ath12k_vendor_dcs_sim_policy, NULL);
+
+	if (ret) {
+		ath12k_err(NULL, "Invalid attribute in dcs_sim handler %d\n", ret);
+		return ret;
+	}
+
+	if (wdev->valid_links) { /* MLO case */
+		if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID])
+			return -EINVAL;
+		link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID]);
+		if (!(wdev->valid_links & BIT(link_id)))
+			return -ENOLINK;
+	} else { /* NON-MLO case */
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID])
+			return -EINVAL;
+		link_id = 0;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_TYPE])
+		return -EINVAL;
+
+	intf_type_bitmap = nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_TYPE]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP])
+		intf_bitmap = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP]);
+
+	rcu_read_lock();
+	ar = ath12k_get_ar_from_wdev(wdev, link_id);
+
+	if (!ar) {
+		ath12k_err(NULL, "Invalid ar from wdev\n");
+		goto exit;
+	}
+
+	ath12k_vendor_send_intf_notify_extn(ar, intf_type_bitmap, intf_bitmap);
+	rcu_read_unlock();
+	return 0;
+exit:
+	rcu_read_unlock();
+	return -1;
 }

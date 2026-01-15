@@ -38,6 +38,9 @@ ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
 extern const struct nla_policy
 ath12k_rrop_info_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
 
+extern const struct nla_policy
+ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
+
 #if LINUX_VERSION_IS_LESS(6,6,116)
 #define MAX(x,y) (x > y ? x : y)
 #endif
@@ -171,6 +174,15 @@ static int ath12k_fill_rx_scan_radio_stats(struct sk_buff *vendor_event,
 {
 	return 0;
 }
+
+int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len)
+{
+	return -1;
+}
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -249,6 +261,10 @@ int ath12k_fill_rx_scan_radio_stats(
 		struct sk_buff *vendor_event,
 		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats);
 
+int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len);
 #endif /* CPTCFG_QCN_EXTN */
 
 typedef enum _CLI_DPD_STATUS {

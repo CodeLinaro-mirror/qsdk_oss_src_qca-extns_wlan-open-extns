@@ -68,9 +68,8 @@ int ath12k_mac_nlwidth_to_chwidth(enum nl80211_chan_width ch_width)
 	}
 }
 
-	static u32
-ath12k_transform_intf_bitmap(int input_bitmap,
-		struct cfg80211_chan_def *chandef)
+static u32 ath12k_transform_intf_bitmap(int input_bitmap,
+					struct cfg80211_chan_def *chandef)
 {
 	u16 input_bits[ATH12K_MAX_20MHZ_SEGMENTS] = {0};
 	u16 output_bits[ATH12K_MAX_20MHZ_SEGMENTS] = {0};
@@ -330,7 +329,7 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 	modified_host_bitmap = ath12k_transform_intf_bitmap(intf_bitmap, &chanctx_conf->def);
 
 	if (modified_host_bitmap == 0 && intf_bitmap != 0) {
-		ath12k_err(ab, "Bitmap transformation failed, using original bitmap\n");
+		ath12k_err(ab, "Bitmap transformation failed\n");
 	}
 
 	ath12k_vendor_send_intf_notify_extn(ar, WMI_DCS_OBSS_INTF, modified_host_bitmap);

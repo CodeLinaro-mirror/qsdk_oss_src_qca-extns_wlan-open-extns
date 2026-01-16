@@ -2097,7 +2097,7 @@ int ath12k_pci_init_smmu(struct ath12k_pci *pci_priv)
 	pci_priv->ath12k_pci_extn.smmu_iova_ipa_start = of_read_number(prop, 2); //First 2 cells i.e address
 	pci_priv->ath12k_pci_extn.smmu_iova_ipa_current = pci_priv->ath12k_pci_extn.smmu_iova_ipa_start;
 	pci_priv->ath12k_pci_extn.smmu_iova_ipa_len = of_read_number(prop + 2, 2); //Next 2 celss i.e size
-	ath12k_dbg(pci_priv->ab, ATH12K_DBG_PCI, "smmu_iova_ipa_start: %pa smmu_iova_ipa_len: 0x%zx\n",
+	ath12k_dbg(pci_priv->ab, ATH12K_DBG_PCI, "smmu_iova_ipa_start: %llu smmu_iova_ipa_len: 0x%zx\n",
 		    pci_priv->ath12k_pci_extn.smmu_iova_ipa_start,
 		    pci_priv->ath12k_pci_extn.smmu_iova_ipa_len);
 

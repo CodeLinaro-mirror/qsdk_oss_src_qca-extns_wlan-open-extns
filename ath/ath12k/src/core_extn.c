@@ -316,10 +316,10 @@ int ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
 	u32 phy_id, flags, caps;
 	int i;
 	if (tag != WMI_TAG_SCAN_RADIO_CAPABILITIES_EXT2) {
-		ath12k_dbg(ab, ATH12K_DBG_WMI,
+		ath12k_err(ab,
 			   "Unexpected Tag 0x%x (Expected 0x%x)\n",
 			   tag, WMI_TAG_SCAN_RADIO_CAPABILITIES_EXT2);
-		return 0;
+		return -EPROTO;
 	}
 	phy_id = le32_to_cpu(cap->phy_id);
 	flags  = le32_to_cpu(cap->flags);
@@ -375,15 +375,10 @@ int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arv
 			return -EOPNOTSUPP;
 		}
 
-		ar->pdev->cap.is_scan_radio = true;
+		arg->create_flags |= VDEV_FLAGS_SCAN_MODE_VAP;
 		ath12k_info(ar->ab, "vdev %d: Scan Radio ENABLED on pdev %d (caps=0x%x)\n",
 			    arvif->vdev_id, ar->pdev->pdev_id,
 			    ar->pdev->cap.scan_radio_caps);
-		arg->create_flags |= VDEV_FLAGS_SCAN_MODE_VAP;
-		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-			   "Scan Radio enabled for vdev %d on deflink (pdev %d, caps=0x%x)\n",
-			   arvif->vdev_id, ar->pdev->pdev_id,
-			   ar->pdev->cap.scan_radio_caps);
 
 	} else if (ath12k_scan_radio_supported(ar->pdev)) {
 		/* Firmware supports scan radio but user didn't configure it as such.

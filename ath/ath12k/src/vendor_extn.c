@@ -21,6 +21,7 @@
 #include "../telemetry_agent_if.h"
 #include "dcs_extn.h"
 #include "rropinfo.h"
+#include "dp_stats_extn.h"
 
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
@@ -2934,5 +2935,100 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 		return -ENODATA;
 
 	ath12k_mac_set_intf_detect(ar, dcs_enable);
+	return 0;
+}
+
+int ath12k_get_dp_rx_scan_radio_stats_len(void)
+{
+	struct ath12k_dp_rx_scan_radio_stats stats;
+	int total_size = 0;
+
+	total_size += nla_total_size(sizeof(stats.rx_ok_bytes));
+	total_size += nla_total_size(sizeof(stats.rx_err_bytes));
+	total_size += nla_total_size(sizeof(stats.rx_ok_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_err_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_mgmt_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_ctrl_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_data_pkts));
+	total_size = nla_total_size_nested(total_size);
+	return total_size;
+}
+
+int ath12k_fill_rx_scan_radio_stats(
+		struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats)
+{
+	struct nlattr *attr;
+
+	if (!rx_scan_radio_stats)
+		return -EINVAL;
+
+	attr = nla_nest_start(vendor_event,
+			      QCA_VENDOR_ATTR_WLAN_TELEMETRY_RX_MON_SCAN_STATS);
+	if (!attr) {
+		ath12k_err(NULL, "nla nest failure: Device reo error");
+		return -EINVAL;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_PKTS,
+			rx_scan_radio_stats->rx_ok_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_BYTES,
+			      rx_scan_radio_stats->rx_ok_bytes, NL80211_ATTR_PAD)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_BYTES);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_PKTS,
+			rx_scan_radio_stats->rx_err_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_BYTES,
+			      rx_scan_radio_stats->rx_err_bytes, NL80211_ATTR_PAD)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_BYTES);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_MGMT_PKTS,
+			rx_scan_radio_stats->rx_mgmt_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_MGMT_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_CTRL_PKTS,
+			rx_scan_radio_stats->rx_ctrl_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_CTRL_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_DATA_PKTS,
+			rx_scan_radio_stats->rx_data_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_DATA_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	nla_nest_end(vendor_event, attr);
+
 	return 0;
 }

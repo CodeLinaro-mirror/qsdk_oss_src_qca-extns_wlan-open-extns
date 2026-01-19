@@ -281,6 +281,20 @@ struct hal_mon_ppdu_info_extn {
 	struct hal_rx_frm_type_info frm_type_info;
 };
 
+struct ath12k_dp_rx_scan_radio_stats {
+	u64 rx_ok_bytes;
+	u64 rx_err_bytes;
+	u32 rx_ok_pkts;
+	u32 rx_err_pkts;
+	u32 rx_mgmt_pkts;
+	u32 rx_ctrl_pkts;
+	u32 rx_data_pkts;
+};
+
+struct ath12k_pdev_mon_dp_extn {
+	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
+};
+
 #ifndef CPTCFG_QCN_EXTN
 
 static inline void

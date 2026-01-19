@@ -14,6 +14,7 @@
 #include "dp_rx.h"
 #include "../../dp_mon_filter.h"
 #include "hal_qcn9074.h"
+#include "../ath12k_cmn_extn.h"
 
 const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_srng_setup = ath12k_wifi6_dp_mon_rx_srng_setup,
@@ -1652,6 +1653,41 @@ void ath12k_wifi6_dp_mon_rx_dest_process(struct ath12k_pdev_dp *dp_pdev, int mac
 	}
 }
 
+static inline void
+ath12k_wifi6_dp_mon_update_scan_radio_stats(struct ath12k_pdev_dp *pdev_dp,
+					    struct hal_rx_mon_ppdu_info *ppdu_info)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev;
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
+	struct ath12k_dp_rx_scan_radio_stats *stats;
+	u32 num_users, user;
+
+	dp_mon_pdev = pdev_dp->dp_mon_pdev;
+	if (!dp_mon_pdev || !ppdu_info)
+		return;
+
+	mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
+	stats = &mon_dp_extn->rx_scan_radio_stats;
+
+	num_users = ppdu_info->num_users;
+	for (user = 0; user < num_users; user++) {
+		struct hal_rx_user_status *rx_user_status =
+			&ppdu_info->userstats[user];
+
+		stats->rx_ok_pkts += rx_user_status->mpdu_cnt_fcs_ok;
+		stats->rx_ok_bytes += rx_user_status->mpdu_ok_byte_count;
+		stats->rx_err_pkts += rx_user_status->mpdu_cnt_fcs_err;
+		stats->rx_err_bytes += rx_user_status->mpdu_err_byte_count;
+	}
+
+	stats->rx_mgmt_pkts +=
+		ppdu_info->ppdu_info_extn.frm_type_info.rx_mgmt_cnt;
+	stats->rx_ctrl_pkts +=
+		ppdu_info->ppdu_info_extn.frm_type_info.rx_ctrl_cnt;
+	stats->rx_data_pkts +=
+		ppdu_info->ppdu_info_extn.frm_type_info.rx_data_cnt;
+}
+
 int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp, int mac_id,
 					     struct napi_struct *napi, int *budget)
 {
@@ -1676,6 +1712,8 @@ int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp, int
 		ppdu_info->peer_id = HAL_INVALID_PEERID;
 
 		hal_status = ath12k_wifi6_dp_mon_rx_parse_dest(pdev_dp, skb);
+
+		ath12k_wifi6_dp_mon_update_scan_radio_stats(pdev_dp, ppdu_info);
 
 		if (ar->monitor_started &&
 		    pmon->mon_ppdu_status == DP_PPDU_STATUS_START &&

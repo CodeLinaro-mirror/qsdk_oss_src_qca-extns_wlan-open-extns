@@ -59,4 +59,5 @@ void ath12k_wifi6_wmi_init_qcn9074(struct ath12k_base *ab,
 	config->ema_max_vap_cnt = ab->num_radios;
 	config->ema_max_profile_period = WIFI6_TARGET_EMA_MAX_PROFILE_PERIOD;
 	config->beacon_tx_offload_max_vdev += config->ema_max_vap_cnt;
+	config->max_num_group_keys = ATH12K_GROUP_KEYS_NUM_MAX;
 }

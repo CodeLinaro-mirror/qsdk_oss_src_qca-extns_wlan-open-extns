@@ -23,6 +23,7 @@
 
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
+#define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -634,6 +635,23 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			} else {
 				ath12k_err(NULL,
 						"Failed to send WMI_VDEV_CUSTOM_AGGR_TYPE_AMSDU to firmware");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
+		if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
+			ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
+			ret = -EINVAL;
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_BA_MODE,
+					value);
+			if (!ret) {
+				arvif->vap_cfg.ba_bufsize = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
 			}
 		}
 		break;
@@ -1908,6 +1926,11 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMSDU:
 		*value = arvif->vap_cfg.amsdu_aggr_size;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
+		*value = arvif->vap_cfg.ba_bufsize;
 		ret = 0;
 		break;
 

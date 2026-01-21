@@ -18,7 +18,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	/* TODO: max_rings can populated by querying HW capabilities */
 	[HAL_REO_DST] = {
 		.start_ring_id = HAL_SRNG_RING_ID_REO2SW1,
-		.max_rings = 8,
+		.max_rings = 4,
 		.entry_size = sizeof(struct hal_reo_dest_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_DST,
@@ -49,7 +49,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	[HAL_REO_CMD] = {
 		.start_ring_id = HAL_SRNG_RING_ID_REO_CMD,
 		.max_rings = 1,
-		.entry_size = (sizeof(struct hal_tlv_64_hdr) +
+		.entry_size = (sizeof(struct hal_tlv_hdr) +
 			sizeof(struct hal_reo_get_queue_stats)) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_SRC,
@@ -59,7 +59,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	[HAL_REO_STATUS] = {
 		.start_ring_id = HAL_SRNG_RING_ID_REO_STATUS,
 		.max_rings = 1,
-		.entry_size = (sizeof(struct hal_tlv_64_hdr) +
+		.entry_size = (sizeof(struct hal_tlv_hdr) +
 			sizeof(struct hal_reo_get_queue_stats_status)) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_DST,
@@ -135,7 +135,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	},
 	[HAL_SW2WBM_RELEASE] = {
 		.start_ring_id = HAL_SRNG_RING_ID_WBM_SW0_RELEASE,
-		.max_rings = 2,
+		.max_rings = 1,
 		.entry_size = sizeof(struct hal_wbm_release_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_SRC,
@@ -144,7 +144,7 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	},
 	[HAL_WBM2SW_RELEASE] = {
 		.start_ring_id = HAL_SRNG_RING_ID_WBM2SW0_RELEASE,
-		.max_rings = 8,
+		.max_rings = 5,
 		.entry_size = sizeof(struct hal_wbm_release_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_UMAC,
 		.ring_dir = HAL_SRNG_DIR_DST,
@@ -153,40 +153,56 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	},
 	[HAL_RXDMA_BUF] = {
 		.start_ring_id = HAL_SRNG_SW2RXDMA_BUF0,
-		.max_rings = 1,
+		.max_rings = 2,
 		.entry_size = sizeof(struct hal_wbm_buffer_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_DMAC,
 		.ring_dir = HAL_SRNG_DIR_SRC,
-		.max_size = HAL_RXDMA_RING_MAX_SIZE_BE,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
 		.name = "Rxdma_buf",
 	},
 	[HAL_RXDMA_DST] = {
 		.start_ring_id = HAL_SRNG_RING_ID_WMAC1_RXDMA2SW0,
-		.max_rings = 0,
-		.entry_size = 0,
+		.max_rings = 1,
+		.entry_size = sizeof(struct hal_reo_entrance_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_PMAC,
 		.ring_dir = HAL_SRNG_DIR_DST,
-		.max_size = HAL_RXDMA_RING_MAX_SIZE_BE,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
 		.name = "Rxdma_dst",
 	},
 	[HAL_RXDMA_MONITOR_BUF] = {
 		.start_ring_id = HAL_SRNG_SW2RXMON_BUF0,
 		.max_rings = 1,
-		.entry_size = sizeof(struct hal_mon_buf_ring) >> 2,
+		.entry_size = sizeof(struct hal_wbm_buffer_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_PMAC,
 		.ring_dir = HAL_SRNG_DIR_SRC,
-		.max_size = HAL_RXDMA_RING_MAX_SIZE_BE,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
 		.name = "Rxdma_monitor_buf",
 	},
-	[HAL_RXDMA_MONITOR_STATUS] = { 0, },
-	[HAL_RXDMA_MONITOR_DESC] = { 0, },
+	[HAL_RXDMA_MONITOR_STATUS] = {
+		.start_ring_id = HAL_SRNG_RING_ID_WMAC1_SW2RXDMA1_STATBUF,
+		.max_rings = 1,
+		.entry_size = sizeof(struct hal_wbm_buffer_ring) >> 2,
+		.mac_type = ATH12K_HAL_SRNG_PMAC,
+		.ring_dir = HAL_SRNG_DIR_SRC,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
+		.name = "Rxdma_monitor_status",
+	},
+	[HAL_RXDMA_MONITOR_DESC] = {
+		.start_ring_id = HAL_SRNG_RING_ID_WMAC1_SW2RXDMA1_DESC,
+		.max_rings = 1,
+		.entry_size = sizeof(struct hal_wbm_buffer_ring) >> 2,
+		.mac_type = ATH12K_HAL_SRNG_PMAC,
+		.ring_dir = HAL_SRNG_DIR_SRC,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
+		.name = "Rxdma_monitor_desc",
+	},
 	[HAL_RXDMA_DIR_BUF] = {
 		.start_ring_id = HAL_SRNG_RING_ID_RXDMA_DIR_BUF,
 		.max_rings = 2,
 		.entry_size = 8 >> 2, /* TODO: Define the struct */
 		.mac_type = ATH12K_HAL_SRNG_PMAC,
 		.ring_dir = HAL_SRNG_DIR_SRC,
-		.max_size = HAL_RXDMA_RING_MAX_SIZE_BE,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
 	},
 	[HAL_PPE2TCL] = {
 		.start_ring_id = HAL_SRNG_RING_ID_PPE2TCL1,
@@ -215,10 +231,10 @@ static const struct hal_srng_config hw_srng_config_template[] = {
 	[HAL_RXDMA_MONITOR_DST] = {
 		.start_ring_id = HAL_SRNG_RING_ID_WMAC1_SW2RXMON_BUF0,
 		.max_rings = 1,
-		.entry_size = sizeof(struct hal_mon_dest_desc) >> 2,
+		.entry_size = sizeof(struct hal_reo_entrance_ring) >> 2,
 		.mac_type = ATH12K_HAL_SRNG_PMAC,
 		.ring_dir = HAL_SRNG_DIR_DST,
-		.max_size = HAL_RXDMA_RING_MAX_SIZE_BE,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
 		.name = "Rxdma_monitor_dst",
 	},
 	[HAL_TX_MONITOR_DST] = {
@@ -366,162 +382,6 @@ const struct ath12k_hw_hal_params ath12k_wifi6_hw_hal_params_qcn9074 = {
 	.num_mpdu_links_per_queue_desc = HAL_NUM_MPDU_LINKS_PER_QUEUE_DESC,
 };
 
-u32 ath12k_wifi6_hal_rx_h_mpdu_err_qcn9274(struct hal_rx_desc *desc)
-{
-	u32 info = __le32_to_cpu(desc->u.qcn9274_compact.msdu_end.info13);
-	u32 errmap = 0;
-
-	if (info & RX_MSDU_END_INFO13_FCS_ERR)
-		errmap |= HAL_RX_MPDU_ERR_FCS;
-
-	if (info & RX_MSDU_END_INFO13_DECRYPT_ERR)
-		errmap |= HAL_RX_MPDU_ERR_DECRYPT;
-
-	if (info & RX_MSDU_END_INFO13_TKIP_MIC_ERR)
-		errmap |= HAL_RX_MPDU_ERR_TKIP_MIC;
-
-	if (info & RX_MSDU_END_INFO13_A_MSDU_ERROR)
-		errmap |= HAL_RX_MPDU_ERR_AMSDU_ERR;
-
-	if (info & RX_MSDU_END_INFO13_OVERFLOW_ERR)
-		errmap |= HAL_RX_MPDU_ERR_OVERFLOW;
-
-	if (info & RX_MSDU_END_INFO13_MSDU_LEN_ERR)
-		errmap |= HAL_RX_MPDU_ERR_MSDU_LEN;
-
-	if (info & RX_MSDU_END_INFO13_MPDU_LEN_ERR)
-		errmap |= HAL_RX_MPDU_ERR_MPDU_LEN;
-
-	return errmap;
-}
-
-void
-ath12k_wifi6_hal_rx_desc_get_crypto_header_qcn9274(struct hal_rx_desc *desc,
-						   u8 *crypto_hdr,
-						   enum hal_encrypt_type encype)
-{
-	unsigned int key_id;
-
-	switch (encype) {
-	case HAL_ENCRYPT_TYPE_OPEN:
-		return;
-	case HAL_ENCRYPT_TYPE_TKIP_NO_MIC:
-	case HAL_ENCRYPT_TYPE_TKIP_MIC:
-		crypto_hdr[0] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE2(desc->u.qcn9274_compact.mpdu_start.pn[0]);
-		crypto_hdr[1] = 0;
-		crypto_hdr[2] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE1(desc->u.qcn9274_compact.mpdu_start.pn[0]);
-		break;
-	case HAL_ENCRYPT_TYPE_CCMP_128:
-	case HAL_ENCRYPT_TYPE_CCMP_256:
-	case HAL_ENCRYPT_TYPE_GCMP_128:
-	case HAL_ENCRYPT_TYPE_AES_GCMP_256:
-		crypto_hdr[0] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE1(desc->u.qcn9274_compact.mpdu_start.pn[0]);
-		crypto_hdr[1] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE2(desc->u.qcn9274_compact.mpdu_start.pn[0]);
-		crypto_hdr[2] = 0;
-		break;
-	case HAL_ENCRYPT_TYPE_WEP_40:
-	case HAL_ENCRYPT_TYPE_WEP_104:
-	case HAL_ENCRYPT_TYPE_WEP_128:
-	case HAL_ENCRYPT_TYPE_WAPI_GCM_SM4:
-	case HAL_ENCRYPT_TYPE_WAPI:
-		return;
-	}
-	key_id = le32_get_bits(desc->u.qcn9274_compact.mpdu_start.info5,
-			       RX_MPDU_START_INFO5_KEY_ID);
-	crypto_hdr[3] = 0x20 | (key_id << 6);
-	crypto_hdr[4] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE3(desc->u.qcn9274_compact.mpdu_start.pn[0]);
-	crypto_hdr[5] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE4(desc->u.qcn9274_compact.mpdu_start.pn[0]);
-	crypto_hdr[6] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE1(desc->u.qcn9274_compact.mpdu_start.pn[1]);
-	crypto_hdr[7] =
-		HAL_RX_MPDU_INFO_PN_GET_BYTE2(desc->u.qcn9274_compact.mpdu_start.pn[1]);
-}
-
-void
-ath12k_wifi6_hal_rx_desc_get_dot11_hdr_qcn9274(struct hal_rx_desc *desc,
-					       struct ieee80211_hdr *hdr)
-{
-	hdr->frame_control = desc->u.qcn9274_compact.mpdu_start.frame_ctrl;
-	hdr->duration_id = desc->u.qcn9274_compact.mpdu_start.duration;
-	ether_addr_copy(hdr->addr1, desc->u.qcn9274_compact.mpdu_start.addr1);
-	ether_addr_copy(hdr->addr2, desc->u.qcn9274_compact.mpdu_start.addr2);
-	ether_addr_copy(hdr->addr3, desc->u.qcn9274_compact.mpdu_start.addr3);
-	if (__le32_to_cpu(desc->u.qcn9274_compact.mpdu_start.info4) &
-			RX_MPDU_START_INFO4_MAC_ADDR4_VALID) {
-		ether_addr_copy(hdr->addr4, desc->u.qcn9274_compact.mpdu_start.addr4);
-	}
-	hdr->seq_ctrl = desc->u.qcn9274_compact.mpdu_start.seq_ctrl;
-}
-
-void ath12k_wifi6_hal_extract_rx_desc_data_qcn9274(struct hal_rx_desc_data *rx_desc_data,
-						   struct hal_rx_desc *rx_desc,
-						   struct hal_rx_desc *ldesc)
-{
-	rx_desc_data->msdu_done = ath12k_wifi6_hal_rx_h_msdu_done_qcn9274(ldesc);
-	rx_desc_data->msdu_len = ath12k_wifi6_hal_rx_h_msdu_len_qcn9274(ldesc);
-	rx_desc_data->l3_pad_bytes = ath12k_wifi6_hal_rx_h_l3pad_qcn9274(ldesc);
-	rx_desc_data->is_first_msdu =
-		ath12k_wifi6_hal_rx_h_first_msdu_qcn9274(ldesc);
-	rx_desc_data->is_last_msdu =
-		ath12k_wifi6_hal_rx_h_last_msdu_qcn9274(ldesc);
-	rx_desc_data->freq = ath12k_wifi6_hal_rx_h_freq_qcn9274(rx_desc);
-	rx_desc_data->pkt_type = ath12k_wifi6_hal_rx_h_pkt_type_qcn9274(rx_desc);
-	rx_desc_data->bw = ath12k_wifi6_hal_rx_h_rx_bw_qcn9274(rx_desc);
-	rx_desc_data->rate_mcs = ath12k_wifi6_hal_rx_h_rate_mcs_qcn9274(rx_desc);
-	rx_desc_data->nss = hweight8(ath12k_wifi6_hal_rx_h_nss_qcn9274(rx_desc));
-	rx_desc_data->sgi = ath12k_wifi6_hal_rx_h_sgi_qcn9274(rx_desc);
-	rx_desc_data->is_mcbc =
-		ath12k_wifi6_hal_rx_h_is_da_mcbc_qcn9274(rx_desc);
-	rx_desc_data->seq_no =
-		ath12k_wifi6_hal_rx_h_seq_no_qcn9274(rx_desc);
-	rx_desc_data->peer_id = ath12k_wifi6_hal_rx_h_peer_id_qcn9274(rx_desc);
-	rx_desc_data->err_bitmap =
-		ath12k_wifi6_hal_rx_h_mpdu_err_qcn9274(rx_desc);
-	rx_desc_data->is_decrypted =
-		ath12k_wifi6_hal_rx_h_is_decrypted_qcn9274(rx_desc);
-	rx_desc_data->decap = ath12k_wifi6_hal_rx_h_decap_type_qcn9274(rx_desc);
-	rx_desc_data->ip_csum_fail =
-		ath12k_wifi6_hal_rx_h_ip_cksum_fail_qcn9274(rx_desc);
-	rx_desc_data->l4_csum_fail =
-		ath12k_wifi6_hal_rx_h_l4_cksum_fail_qcn9274(rx_desc);
-	rx_desc_data->tid = ath12k_wifi6_hal_rx_h_tid_qcn9274(rx_desc);
-	rx_desc_data->mesh_ctrl_present =
-		ath12k_wifi6_hal_rx_h_mesh_ctl_present_qcn9274(rx_desc);
-	rx_desc_data->seq_ctl_valid =
-			ath12k_wifi6_hal_rx_h_seq_ctrl_valid_qcn9274(rx_desc);
-	rx_desc_data->fc_valid = ath12k_wifi6_hal_rx_h_fc_valid_qcn9274(rx_desc);
-	rx_desc_data->is_ip_valid = ath12k_wifi6_hal_rx_h_is_ip_valid_qcn9274(rx_desc);
-	rx_desc_data->is_from_ds = ath12k_wifi6_hal_rx_h_from_ds_qcn9274(rx_desc);
-	rx_desc_data->is_to_ds = ath12k_wifi6_hal_rx_h_to_ds_qcn9274(rx_desc);
-}
-
-void ath12k_wifi6_hal_extract_rx_spd_data_qcn9274(struct hal_rx_spd_data *rx_info,
-						  struct hal_rx_desc *rx_desc, int set)
-{
-	if (set == 0) {
-		rx_info->tlv_info.decap =
-				ath12k_wifi6_hal_rx_h_decap_type_qcn9274(rx_desc);
-		rx_info->tlv_info.mesh_ctrl_present =
-			ath12k_wifi6_hal_rx_h_mesh_ctl_present_qcn9274(rx_desc);
-	} else if (set == 1) {
-		rx_info->tlv_info.freq = ath12k_wifi6_hal_rx_h_freq_qcn9274(rx_desc);
-			rx_info->tlv_info.pkt_type =
-				ath12k_wifi6_hal_rx_h_pkt_type_qcn9274(rx_desc);
-		rx_info->tlv_info.bw = ath12k_wifi6_hal_rx_h_rx_bw_qcn9274(rx_desc);
-			rx_info->tlv_info.rate_mcs =
-				ath12k_wifi6_hal_rx_h_rate_mcs_qcn9274(rx_desc);
-			rx_info->tlv_info.nss =
-				hweight8(ath12k_wifi6_hal_rx_h_nss_qcn9274(rx_desc));
-		rx_info->tlv_info.sgi = ath12k_wifi6_hal_rx_h_sgi_qcn9274(rx_desc);
-	}
-}
-
 static int ath12k_wifi6_hal_srng_create_config_qcn9074(struct ath12k_hal *hal)
 {
 
@@ -640,7 +500,7 @@ static int ath12k_wifi6_hal_init_qcn9074(struct ath12k_hal *hal, u8 hw_version)
 	hal->regs = ath12k_wifi6_hw_ver_map[hw_version].hw_regs;
 	hal->tcl_to_cmp_rbm_map = ath12k_wifi6_hal_tcl_to_cmp_rbm_map_qcn9274;
 	hal->hal_ops = &hal_qcn9074_ops;
-	hal->hal_desc_sz = ath12k_wifi6_hal_get_rx_desc_size_qcn9274();
+	hal->hal_desc_sz = ath12k_wifi6_hal_get_rx_desc_size_qcn9074();
 	hal->hal_params = ath12k_wifi6_hw_ver_map[hw_version].hal_params;
 
 	return 0;
@@ -649,57 +509,47 @@ static int ath12k_wifi6_hal_init_qcn9074(struct ath12k_hal *hal, u8 hw_version)
 const struct hal_ops hal_qcn9074_ops = {
 	.hal_init = ath12k_wifi6_hal_init_qcn9074,
 	.create_srng_config = ath12k_wifi6_hal_srng_create_config_qcn9074,
-	.rx_desc_set_msdu_len = ath12k_wifi6_hal_rxdesc_set_msdu_len_qcn9274,
-	.rx_desc_get_dot11_hdr = ath12k_wifi6_hal_rx_desc_get_dot11_hdr_qcn9274,
-	.rx_desc_get_mpdu_frame_ctl =
-		ath12k_wifi6_hal_rxdesc_get_mpdu_frame_ctrl_qcn9274,
-	.rx_desc_get_crypto_header =
-			ath12k_wifi6_hal_rx_desc_get_crypto_header_qcn9274,
-	.rx_desc_copy_end_tlv = ath12k_wifi6_hal_rx_desc_end_tlv_copy_qcn9274,
-	.rx_desc_get_msdu_src_link_id =
-			ath12k_wifi6_hal_rx_get_msdu_src_link_qcn9274,
-	.extract_rx_desc_data =
-			ath12k_wifi6_hal_extract_rx_desc_data_qcn9274,
-	.extract_rx_spd_data =
-		ath12k_wifi6_hal_extract_rx_spd_data_qcn9274,
-	.ce_dst_setup = ath12k_wifi6_hal_ce_dst_setup,
 	.srng_src_hw_init = ath12k_wifi6_hal_srng_src_hw_init,
 	.srng_dst_hw_init = ath12k_wifi6_hal_srng_dst_hw_init,
 	.set_umac_srng_ptr_addr = ath12k_wifi6_hal_set_umac_srng_ptr_addr,
 	.srng_update_shadow_config = ath12k_wifi6_hal_srng_update_shadow_config,
 	.srng_get_ring_id = ath12k_wifi6_hal_srng_get_ring_id,
+	.srng_hw_disable = ath12k_wifi6_hal_srng_hw_disable,
+
+	.ce_dst_setup = ath12k_wifi6_hal_ce_dst_setup,
 	.ce_get_desc_size = ath12k_wifi6_hal_ce_get_desc_size,
 	.ce_src_set_desc = ath12k_wifi6_hal_ce_src_set_desc,
 	.ce_dst_set_desc = ath12k_wifi6_hal_ce_dst_set_desc,
 	.ce_dst_status_get_length = ath12k_wifi6_hal_ce_dst_status_get_length,
 	.set_link_desc_addr = ath12k_wifi6_hal_set_link_desc_addr,
+	.setup_link_idle_list = ath12k_wifi6_hal_setup_link_idle_list,
+	.cc_config = ath12k_wifi6_hal_cc_config,
+	.get_idle_link_rbm = ath12k_wifi6_hal_get_idle_link_rbm,
+	.hal_mon_ops_init = NULL,
+	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
 
 	/*
-	 *.tx_set_dscp_tid_map = ath12k_wifi6_hal_tx_set_dscp_tid_map,
-
-	 .tx_update_dscp_tid_map = ath12k_wifi6_hal_tx_update_dscp_tid_map,
-	 .tx_configure_bank_register =
+	.tx_set_dscp_tid_map = ath12k_wifi6_hal_tx_set_dscp_tid_map,
+	.tx_update_dscp_tid_map = ath12k_wifi6_hal_tx_update_dscp_tid_map,
+	.tx_configure_bank_register =
 				ath12k_wifi6_hal_tx_configure_bank_register,
-	*/
 	.write_reoq_lut_addr = ath12k_wifi6_hal_write_reoq_lut_addr,
 	.write_ml_reoq_lut_addr = ath12k_wifi6_hal_write_ml_reoq_lut_addr,
 	.reoq_lut_addr_read_enable = ath12k_wifi6_hal_reoq_lut_addr_read_enable,
 	.reoq_lut_set_max_peerid = ath12k_wifi6_hal_reoq_lut_set_max_peerid,
-	.setup_link_idle_list = ath12k_wifi6_hal_setup_link_idle_list,
 	.reo_qdesc_setup = ath12k_wifi6_hal_reo_qdesc_setup,
 	.reo_init_cmd_ring = ath12k_wifi6_hal_reo_init_cmd_ring,
 	.reo_hw_setup = ath12k_wifi6_hal_reo_hw_setup,
-	.cc_config = ath12k_wifi6_hal_cc_config,
-	.srng_hw_disable = ath12k_wifi6_hal_srng_hw_disable,
 	.reset_rx_reo_tid_q = ath12k_wifi6_hal_reset_rx_reo_tid_q,
-	.get_idle_link_rbm = ath12k_wifi6_hal_get_idle_link_rbm,
 	.reo_shared_qaddr_cache_clear = ath12k_wifi6_hal_reo_shared_qaddr_cache_clear,
 	.hal_get_tsf2_scratch_reg = ath12k_hal_qcn9274_get_tsf2_scratch_reg,
 	.hal_get_tqm_scratch_reg = ath12k_hal_qcn9274_get_tqm_scratch_reg,
-	.rxdesc_get_mpdu_start_addr2 =
-			ath12k_wifi6_hal_rxdesc_get_mpdu_start_addr2_qcn9274,
-	.rx_h_is_decrypted = ath12k_wifi6_hal_rx_h_is_decrypted_qcn9274,
-	.hal_mon_ops_init = NULL,
-	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
-	.rx_desc_get_fse_info = ath12k_wifi6_hal_rx_desc_get_fse_info_qcn9274,
+	.rxdesc_get_mpdu_start_addr2 = NULL,
+	.rx_h_is_decrypted = NULL,
+	.rx_desc_get_fse_info = NULL,
+	*/
+
+	.rx_reo_ent_buf_paddr_get = ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get,
+	.rx_msdu_list_get = ath12k_wifi6_hal_rx_msdu_list_get,
+	.rx_desc_get_mpdu_start_tag = ath12k_wifi6_hal_rx_desc_get_mpdu_start_tag_qcn9074,
 };

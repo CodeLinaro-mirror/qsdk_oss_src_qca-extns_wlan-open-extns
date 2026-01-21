@@ -487,6 +487,11 @@ enum hal_tlv_tag {
 	HAL_TLV_BASE						= 511 /* 0x1ff */,
 };
 
+#define WIFI6_BUFFER_ADDR_INFO0_ADDR			GENMASK(31, 0)
+#define WIFI6_BUFFER_ADDR_INFO1_ADDR			GENMASK(7, 0)
+#define WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR		GENMASK(10, 8)
+#define WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE		GENMASK(31, 11)
+
 #define HAL_TLV_HDR_TAG		GENMASK(9, 1)
 #define HAL_TLV_HDR_LEN		GENMASK(25, 10)
 #define HAL_TLV_USR_ID          GENMASK(31, 26)
@@ -499,16 +504,19 @@ enum hal_tlv_tag {
 #define HAL_TLV_64_ALIGN		8
 
 #define RX_MPDU_DESC_INFO0_MSDU_COUNT		GENMASK(7, 0)
-#define RX_MPDU_DESC_INFO0_FRAG_FLAG		BIT(8)
-#define RX_MPDU_DESC_INFO0_MPDU_RETRY		BIT(9)
-#define RX_MPDU_DESC_INFO0_AMPDU_FLAG		BIT(10)
-#define RX_MPDU_DESC_INFO0_BAR_FRAME		BIT(11)
-#define RX_MPDU_DESC_INFO0_VALID_PN		BIT(12)
-#define RX_MPDU_DESC_INFO0_RAW_MPDU		BIT(13)
-#define RX_MPDU_DESC_INFO0_MORE_FRAG_FLAG	BIT(14)
-#define RX_MPDU_DESC_INFO0_SRC_INFO		GENMASK(26, 15)
-#define RX_MPDU_DESC_INFO0_MPDU_QOS_CTRL_VALID	BIT(27)
-#define RX_MPDU_DESC_INFO0_TID			GENMASK(31, 28)
+#define RX_MPDU_DESC_INFO0_SEQ_NUM		GENMASK(19, 8)
+#define RX_MPDU_DESC_INFO0_FRAG_FLAG		BIT(20)
+#define RX_MPDU_DESC_INFO0_MPDU_RETRY		BIT(21)
+#define RX_MPDU_DESC_INFO0_AMPDU_FLAG		BIT(22)
+#define RX_MPDU_DESC_INFO0_BAR_FRAME		BIT(23)
+#define RX_MPDU_DESC_INFO0_VALID_PN		BIT(24)
+#define RX_MPDU_DESC_INFO0_VALID_SA		BIT(25)
+#define RX_MPDU_DESC_INFO0_SA_IDX_TIMEOUT	BIT(26)
+#define RX_MPDU_DESC_INFO0_VALID_DA		BIT(27)
+#define RX_MPDU_DESC_INFO0_DA_MCBC		BIT(28)
+#define RX_MPDU_DESC_INFO0_DA_IDX_TIMEOUT	BIT(29)
+#define RX_MPDU_DESC_INFO0_RAW_MPDU		BIT(30)
+#define RX_MPDU_DESC_INFO0_MORE_FRAG_FLAG	BIT(31)
 
 /* Peer Metadata classification */
 
@@ -604,33 +612,29 @@ enum hal_rx_msdu_desc_reo_dest_ind {
 #define RX_MSDU_DESC_INFO0_LAST_MSDU_IN_MPDU	BIT(1)
 #define RX_MSDU_DESC_INFO0_MSDU_CONTINUATION	BIT(2)
 #define RX_MSDU_DESC_INFO0_MSDU_LENGTH		GENMASK(16, 3)
-#define RX_MSDU_DESC_INFO0_MSDU_DROP		BIT(17)
-#define RX_MSDU_DESC_INFO0_VALID_SA		BIT(18)
-#define RX_MSDU_DESC_INFO0_VALID_DA		BIT(19)
-#define RX_MSDU_DESC_INFO0_DA_MCBC		BIT(20)
-#define RX_MSDU_DESC_INFO0_L3_HDR_PAD_MSB	BIT(21)
-#define RX_MSDU_DESC_INFO0_TCP_UDP_CHKSUM_FAIL	BIT(22)
-#define RX_MSDU_DESC_INFO0_IP_CHKSUM_FAIL	BIT(23)
-#define RX_MSDU_DESC_INFO0_FROM_DS		BIT(24)
-#define RX_MSDU_DESC_INFO0_TO_DS		BIT(25)
-#define RX_MSDU_DESC_INFO0_INTRA_BSS		BIT(26)
-#define RX_MSDU_DESC_INFO0_DST_CHIP_ID		GENMASK(28, 27)
-#define RX_MSDU_DESC_INFO0_DECAP_FORMAT		GENMASK(30, 29)
+#define RX_MSDU_DESC_INFO0_REO_DEST_IND	GENMASK(21, 17)
+#define RX_MSDU_DESC_INFO0_MSDU_DROP		BIT(22)
+#define RX_MSDU_DESC_INFO0_VALID_SA		BIT(23)
+#define RX_MSDU_DESC_INFO0_SA_IDX_TIMEOUT	BIT(24)
+#define RX_MSDU_DESC_INFO0_VALID_DA		BIT(25)
+#define RX_MSDU_DESC_INFO0_DA_MCBC		BIT(26)
+#define RX_MSDU_DESC_INFO0_DA_IDX_TIMEOUT	BIT(27)
 
 #define HAL_RX_MSDU_PKT_LENGTH_GET(val)		\
 	(le32_get_bits((val), RX_MSDU_DESC_INFO0_MSDU_LENGTH))
 
 struct rx_msdu_desc {
 	__le32 info0;
+	__le32 rsvd0;
 } __packed;
 
 /* rx_msdu_desc
  *
  * first_msdu_in_mpdu
- *		Indicates first msdu in mpdu.
+ * 		Indicates first msdu in mpdu.
  *
  * last_msdu_in_mpdu
- *		Indicates last msdu in mpdu. This flag can be true only when
+ * 		Indicates last msdu in mpdu. This flag can be true only when
  *		'Msdu_continuation' set to 0. This implies that when an msdu
  *		is spread out over multiple buffers and thus msdu_continuation
  *		is set, only for the very last buffer of the msdu, can the
@@ -652,12 +656,21 @@ struct rx_msdu_desc {
  *		MPDUs, it indicates the length of the entire MPDU (without FCS
  *		field).
  *
+ * reo_destination_indication
+ *		The id of the reo exit ring where the msdu frame shall push
+ *		after (MPDU level) reordering has finished. Values are defined
+ *		in enum %HAL_RX_MSDU_DESC_REO_DEST_IND_.
+ *
  * msdu_drop
  *		Indicates that REO shall drop this MSDU and not forward it to
  *		any other ring.
  *
  * valid_sa
  *		Indicates OLE found a valid SA entry for this MSDU.
+ *
+ * sa_idx_timeout
+ *		Indicates, an unsuccessful MAC source address search due to
+ *		the expiration of search timer for this MSDU.
  *
  * valid_da
  *		When set, OLE found a valid DA entry for this MSDU.
@@ -666,39 +679,9 @@ struct rx_msdu_desc {
  *		Field Only valid if valid_da is set. Indicates the DA address
  *		is a Multicast or Broadcast address for this MSDU.
  *
- * l3_header_padding_msb
- *		Passed on from 'RX_MSDU_END' TLV (only the MSB is reported as
- *		the LSB is always zero). Number of bytes padded to make sure
- *		that the L3 header will always start of a Dword boundary
- *
- * tcp_udp_checksum_fail
- *		Passed on from 'RX_ATTENTION' TLV
- *		Indicates that the computed checksum did not match the checksum
- *		in the TCP/UDP header.
- *
- * ip_checksum_fail
- *		Passed on from 'RX_ATTENTION' TLV
- *		Indicates that the computed checksum did not match the checksum
- *		in the IP header.
- *
- * from_DS
- *		Set if the 'from DS' bit is set in the frame control.
- *
- * to_DS
- *		Set if the 'to DS' bit is set in the frame control.
- *
- * intra_bss
- *		This packet needs intra-BSS routing by SW as the 'vdev_id'
- *		for the destination is the same as the 'vdev_id' that this
- *		MSDU was got in.
- *
- * dest_chip_id
- *		If intra_bss is set, copied by RXOLE/RXDMA from 'ADDR_SEARCH_ENTRY'
- *		to support intra-BSS routing with multi-chip multi-link operation.
- *		This indicates into which chip's TCL the packet should be queued.
- *
- * decap_format
- *		Indicates the format after decapsulation:
+ * da_idx_timeout
+ *		Indicates, an unsuccessful MAC destination address search due
+ *		to the expiration of search timer for this MSDU.
  */
 
 #define RX_MSDU_EXT_DESC_INFO0_REO_DEST_IND	GENMASK(4, 0)
@@ -730,16 +713,6 @@ struct rx_msdu_ext_desc {
  * src_link_id
  *		Set to the link ID of the PMAC that received the frame
  */
-
-enum hal_reo_dest_ring_buffer_type {
-	HAL_REO_DEST_RING_BUFFER_TYPE_MSDU,
-	HAL_REO_DEST_RING_BUFFER_TYPE_LINK_DESC,
-};
-
-enum hal_reo_dest_ring_push_reason {
-	HAL_REO_DEST_RING_PUSH_REASON_ERR_DETECTED,
-	HAL_REO_DEST_RING_PUSH_REASON_ROUTING_INSTRUCTION,
-};
 
 #define HAL_REO_DEST_RING_INFO0_BUFFER_TYPE		BIT(0)
 #define HAL_REO_DEST_RING_INFO0_PUSH_REASON		GENMASK(2, 1)
@@ -916,10 +889,8 @@ enum hal_rx_reo_dest_ring {
 #define HAL_REO_ENTR_RING_INFO1_SW_EXCEPT_MPDU_DELINK	BIT(12)
 #define HAL_REO_ENTR_RING_INFO1_SW_EXCEPTION_RING_VLD	BIT(13)
 #define HAL_REO_ENTR_RING_INFO1_SW_EXCEPTION_RING	GENMASK(18, 14)
-#define HAL_REO_ENTR_RING_INFO1_MPDU_SEQ_NUM		GENMASK(30, 19)
 
 #define HAL_REO_ENTR_RING_INFO2_PHY_PPDU_ID		GENMASK(15, 0)
-#define HAL_REO_ENTR_RING_INFO2_SRC_LINK_ID		GENMASK(18, 16)
 #define HAL_REO_ENTR_RING_INFO2_RING_ID			GENMASK(27, 20)
 #define HAL_REO_ENTR_RING_INFO2_LOOPING_COUNT		GENMASK(31, 28)
 
@@ -1143,12 +1114,6 @@ struct hal_reo_flush_cache {
 
 #define HAL_TCL_DATA_CMD_INFO5_RING_ID			GENMASK(27, 20)
 #define HAL_TCL_DATA_CMD_INFO5_LOOPING_COUNT		GENMASK(31, 28)
-
-enum hal_tcl_desc_type {
-	HAL_TCL_DESC_TYPE_BUFFER,
-	HAL_TCL_DESC_TYPE_EXT_DESC,
-	HAL_TCL_DESC_TYPE_MAX,
-};
 
 struct hal_tcl_data_cmd {
 	struct ath12k_buffer_addr buf_addr_info;
@@ -1780,15 +1745,34 @@ struct hal_wbm_release_ring_cc_rx {
 #define HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE		GENMASK(2, 0)
 #define HAL_WBM_RELEASE_INFO0_BM_ACTION			GENMASK(5, 3)
 #define HAL_WBM_RELEASE_INFO0_DESC_TYPE			GENMASK(8, 6)
+#define HAL_WBM_RELEASE_INFO0_FIRST_MSDU_IDX		GENMASK(12, 9)
+#define HAL_WBM_RELEASE_INFO0_TQM_RELEASE_REASON	GENMASK(16, 13)
 #define HAL_WBM_RELEASE_INFO0_RXDMA_PUSH_REASON		GENMASK(18, 17)
 #define HAL_WBM_RELEASE_INFO0_RXDMA_ERROR_CODE		GENMASK(23, 19)
 #define HAL_WBM_RELEASE_INFO0_REO_PUSH_REASON		GENMASK(25, 24)
 #define HAL_WBM_RELEASE_INFO0_REO_ERROR_CODE		GENMASK(30, 26)
 #define HAL_WBM_RELEASE_INFO0_WBM_INTERNAL_ERROR	BIT(31)
 
-#define HAL_WBM_RELEASE_INFO3_FIRST_MSDU		BIT(0)
-#define HAL_WBM_RELEASE_INFO3_LAST_MSDU			BIT(1)
-#define HAL_WBM_RELEASE_INFO3_CONTINUATION		BIT(2)
+#define HAL_WBM_RELEASE_INFO1_TQM_STATUS_NUMBER		GENMASK(23, 0)
+#define HAL_WBM_RELEASE_INFO1_TRANSMIT_COUNT		GENMASK(30, 24)
+
+#define HAL_WBM_RELEASE_INFO2_ACK_FRAME_RSSI		GENMASK(7, 0)
+#define HAL_WBM_RELEASE_INFO2_SW_REL_DETAILS_VALID	BIT(8)
+#define HAL_WBM_RELEASE_INFO2_FIRST_MSDU		BIT(9)
+#define HAL_WBM_RELEASE_INFO2_LAST_MSDU			BIT(10)
+#define HAL_WBM_RELEASE_INFO2_MSDU_IN_AMSDU		BIT(11)
+#define HAL_WBM_RELEASE_INFO2_FW_TX_NOTIF_FRAME		BIT(12)
+#define HAL_WBM_RELEASE_INFO2_BUFFER_TIMESTAMP		GENMASK(31, 13)
+
+#define HAL_WBM_RELEASE_INFO3_PEER_ID			GENMASK(15, 0)
+#define HAL_WBM_RELEASE_INFO3_TID			GENMASK(19, 16)
+#define HAL_WBM_RELEASE_INFO3_RING_ID			GENMASK(27, 20)
+#define HAL_WBM_RELEASE_INFO3_LOOPING_COUNT		GENMASK(31, 28)
+
+#define HAL_WBM_REL_HTT_TX_COMP_INFO0_STATUS		GENMASK(12, 9)
+#define HAL_WBM_REL_HTT_TX_COMP_INFO0_REINJ_REASON	GENMASK(16, 13)
+#define HAL_WBM_REL_HTT_TX_COMP_INFO0_EXP_FRAME		BIT(17)
+
 
 #define HAL_WBM_RELEASE_INFO5_LOOPING_COUNT		GENMASK(31, 28)
 
@@ -1797,6 +1781,7 @@ struct hal_wbm_release_ring {
 	__le32 info0;
 	__le32 info1;
 	__le32 info2;
+	struct hal_tx_rate_stats rate_stats;
 	__le32 info3;
 	__le32 info4;
 	__le32 info5;
@@ -1817,16 +1802,122 @@ struct hal_wbm_release_ring {
  *	Indicates which module initiated the release of this buffer/descriptor.
  *	Values are defined in enum %HAL_WBM_REL_SRC_MODULE_.
  *
+ * bm_actio
+ *	Field only valid when the field return_buffer_manager in
+ *	Released_buff_or_desc_addr_info indicates:
+ *	WBM_IDLE_BUF_LIST / WBM_IDLE_DESC_LIST
+ *	Values are defined in enum %HAL_WBM_REL_BM_ACT_.
+ *
  * buffer_or_desc_type
  *	Field only valid when WBM is marked as the return_buffer_manager in
  *	the Released_Buffer_address_info. Indicates that type of buffer or
  *	descriptor is being released. Values are in enum %HAL_WBM_REL_DESC_TYPE.
+ *
+ * first_msdu_index
+ *  Field only valid for the bm_action release_msdu_list. The index of the
+ *  first MSDU in an MSDU link descriptor all belonging to the same MPDU.
+ *
+ * tqm_release_reason
+ *	Field only valid when Release_source_module is set to release_source_TQM
+ *	Release reasons are defined in enum %HAL_WBM_TQM_REL_REASON_.
+ *
+ * rxdma_push_reason
+ * reo_push_reason
+ *	Indicates why rxdma/reo pushed the frame to this ring and values are
+ *	defined in enum %HAL_REO_DEST_RING_PUSH_REASON_.
+ *
+ * rxdma_error_code
+ *	Field only valid when 'rxdma_push_reason' set to 'error_detected'.
+ *	Values are defined in enum %HAL_REO_ENTR_RING_RXDMA_ECODE_.
+ *
+ * reo_error_code
+ *	Field only valid when 'reo_push_reason' set to 'error_detected'. Values
+ *	are defined in enum %HAL_REO_DEST_RING_ERROR_CODE_.
  *
  * wbm_internal_error
  *	Is set when WBM got a buffer pointer but the action was to push it to
  *	the idle link descriptor ring or do link related activity OR
  *	Is set when WBM got a link buffer pointer but the action was to push it
  *	to the buffer descriptor ring.
+ *
+ * tqm_status_number
+ *	The value in this field is equal to tqm_cmd_number in TQM command. It is
+ *	used to correlate the statu with TQM commands. Only valid when
+ *	release_source_module is TQM.
+ *
+ * transmit_count
+ *	The number of times the frame has been transmitted, valid only when
+ *	release source in TQM.
+ *
+ * ack_frame_rssi
+ *	This field is only valid when the source is TQM. If this frame is
+ *	removed as the result of the reception of an ACK or BA, this field
+ *	indicates the RSSI of the received ACK or BA frame.
+ *
+ * sw_release_details_valid
+ *	This is set when WMB got a 'release_msdu_list' command from TQM and
+ *	return buffer manager is not WMB. WBM will then de-aggregate all MSDUs
+ *	and pass them one at a time on to the 'buffer owner'.
+ *
+ * first_msdu
+ *	Field only valid when SW_release_details_valid is set.
+ *	When set, this MSDU is the first MSDU pointed to in the
+ *	'release_msdu_list' command.
+ *
+ * last_msdu
+ *	Field only valid when SW_release_details_valid is set.
+ *	When set, this MSDU is the last MSDU pointed to in the
+ *	'release_msdu_list' command.
+ *
+ * msdu_part_of_amsdu
+ *	Field only valid when SW_release_details_valid is set.
+ *	When set, this MSDU was part of an A-MSDU in MPDU
+ *
+ * fw_tx_notify_frame
+ *	Field only valid when SW_release_details_valid is set.
+ *
+ * buffer_timestamp
+ *	Field only valid when SW_release_details_valid is set.
+ *	This is the Buffer_timestamp field from the
+ *	Timestamp in units of 1024 us
+ *
+ * struct hal_tx_rate_stats rate_stats
+ *	Details for command execution tracking purposes.
+ *
+ * sw_peer_id
+ * tid
+ *	Field only valid when Release_source_module is set to
+ *	release_source_TQM
+ *
+ *	1) Release of msdu buffer due to drop_frame = 1. Flow is
+ *	not fetched and hence sw_peer_id and tid = 0
+ *
+ *	buffer_or_desc_type = e_num 0
+ *	MSDU_rel_buffertqm_release_reason = e_num 1
+ *	tqm_rr_rem_cmd_rem
+ *
+ *	2) Release of msdu buffer due to Flow is not fetched and
+ *	hence sw_peer_id and tid = 0
+ *
+ *	buffer_or_desc_type = e_num 0
+ *	MSDU_rel_buffertqm_release_reason = e_num 1
+ *	tqm_rr_rem_cmd_rem
+ *
+ *	3) Release of msdu link due to remove_mpdu or acked_mpdu
+ *	command.
+ *
+ *	buffer_or_desc_type = e_num1
+ *	msdu_link_descriptortqm_release_reason can be:e_num 1
+ *	tqm_rr_rem_cmd_reme_num 2 tqm_rr_rem_cmd_tx
+ *	e_num 3 tqm_rr_rem_cmd_notxe_num 4 tqm_rr_rem_cmd_aged
+ *
+ *	This field represents the TID from the TX_MSDU_FLOW
+ *	descriptor or TX_MPDU_QUEUE descriptor
+ *
+ * rind_id
+ *	For debugging.
+ *	This field is filled in by the SRNG module.
+ *	It help to identify the ring that is being looked
  *
  * looping_count
  *	A count value that indicates the number of times the

@@ -495,6 +495,15 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			}
 		}
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BCN_TX_POWER:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_MGMT_TX_POWER, value);
+		if (!ret) {
+			arvif->vap_cfg.bcn_tx_power = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MGMT_TX_POWER to firmware");
+		}
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -1475,7 +1484,7 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
 /* Get link-vif level parameters */
 static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
-                                          u32 param, u32 *value)
+                                          u32 param, u64 *value)
 {
 	struct ath12k *ar = arvif->ar;
         int ret = -1;
@@ -1542,9 +1551,13 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 			ret = -ETIMEDOUT;
 			break;
                 }
-                *value = ar->tsf_report.tsf_low;
+                *value = ar->tsf_report.tsf;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BCN_TX_POWER:
+		*value = arvif->vap_cfg.bcn_tx_power;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -1742,7 +1755,7 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       struct ath12k_wifi_generic_params *params,
-				       u32 *value)
+				       u64 *value)
 
 {
         struct ieee80211_vif *vif = NULL;

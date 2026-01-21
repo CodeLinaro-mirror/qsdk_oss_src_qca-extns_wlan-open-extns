@@ -74,7 +74,7 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       struct ath12k_wifi_generic_params *params,
-				       u32 *value)
+				       u64 *value)
 {
     return -1;
 }
@@ -167,7 +167,7 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       struct ath12k_wifi_generic_params *params,
-				       u32 *value);
+				       u64 *value);
 
 int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 					struct ath12k_wifi_generic_params *params,

@@ -6,13 +6,11 @@
 #include "../../core.h"
 #include "../../debug.h"
 #include "../../dp_rx.h"
-#include "../../dp_tx.h"
 #include "../../hif.h"
 #include "../../dp_cmn.h"
+#include "../../telemetry_agent_if.h"
 #include "dp_rx.h"
 #include "dp.h"
-#include "dp_tx.h"
-#include "dp_rx.h"
 #include "hal.h"
 
 static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
@@ -24,20 +22,9 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 	int work_done = 0;
 	int i = 0;
 	int tot_work_done = 0;
-	u8 rx_mask, tx_mask;
+	u8 rx_mask;
 
 	rx_mask = dp->hw_params->ring_mask->rx[grp_id];
-	tx_mask = dp->hw_params->ring_mask->tx[grp_id];
-
-	while (tx_mask) {
-		i = fls(tx_mask) - 1;
-		tx_mask ^= 1 << i;
-		work_done = ath12k_wifi6_dp_tx_completion_handler(dp, i, budget);
-		budget -= work_done;
-		tot_work_done += work_done;
-		if (budget <= 0)
-			goto done;
-	}
 
 	if (dp->hw_params->ring_mask->rx_err[grp_id]) {
 		work_done = ath12k_wifi6_dp_rx_process_err(dp, napi, budget);
@@ -129,8 +116,9 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		}
 	}
 	 */
-	if (dp->hw_params->ring_mask->reo_status[grp_id])
+	if (dp->hw_params->ring_mask->reo_status[grp_id]) {
 		ath12k_wifi6_dp_rx_process_reo_status(dp);
+	}
 
 	if (dp->hw_params->ring_mask->host2rxdma[grp_id]) {
 		struct dp_rxdma_ring *rx_ring = &dp->rx_refill_buf_ring;
@@ -159,21 +147,11 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 	struct ath12k_base *ab = dp->ab;
 	struct hal_srng *srng = NULL;
 	u32 n_link_desc = 0;
-	int i;
-
-	INIT_LIST_HEAD(&dp->reo_cmd_list);
-	INIT_LIST_HEAD(&dp->reo_cmd_cache_flush_list);
-	INIT_LIST_HEAD(&dp->reo_cmd_update_rx_queue_list);
-	spin_lock_init(&dp->reo_cmd_update_rx_queue_lock);
-	spin_lock_init(&dp->reo_cmd_lock);
-
 
 	ret = ath12k_hif_ext_irq_setup(dp->ab, ath12k_wifi6_dp_service_srng, dp);
 	if (ret)
 		return ret;
 
-
-	dp->reo_cmd_cache_flush_count = 0;
 	dp->idle_link_rbm =
 			ath12k_hal_get_idle_link_rbm(&ab->hal, ab->device_id);
 
@@ -192,105 +170,42 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 		goto fail_irq_cleanup;
 	}
 
-
-/*
- *	ret = ath12k_dp_cc_init(ab);
-
+	ret = ath12k_dp_srng_setup(ab, &dp->wbm_desc_rel_ring,
+				   HAL_SW2WBM_RELEASE, 0, 0,
+				   DP_WBM_RELEASE_RING_SIZE);
 	if (ret) {
-		ath12k_warn(ab, "failed to setup cookie converter %d\n", ret);
+		ath12k_warn(ab, "failed to set up wbm2sw_release ring :%d\n",
+			    ret);
 		goto fail_link_desc_cleanup;
 	}
 
-	ret = ath12k_dp_init_bank_profiles(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup bank profiles %d\n", ret);
-		goto fail_hw_cc_cleanup;
-	}
-
-	ret = ath12k_nss_plugin_register_ops(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to register nss plugin %d\n", ret);
-		goto fail_dp_bank_profiles_cleanup;
-	}
-
-	ret = ath12k_ppeds_attach(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to attach PPE DS %d\n", ret);
-		goto fail_nss_plugin_unregister;
-	}
-	 */
-
-
-	ret = ath12k_dp_srng_common_setup(ab);
-	if (ret)
-		goto fail_ppeds_detach;
-
-
-/*
- *	ret = ath12k_wifi6_dp_tx_ring_setup(ab);
-	if (ret)
-		goto fail_cmn_srng_cleanup;
-
-*/
-/*
- *	ret = ath12k_dp_reoq_lut_setup(ab);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup reoq table %d\n", ret);
-		goto fail_tx_ring_cleanup;
-	}
-
-	for (i = 0; i < ab->hw_params->max_tx_ring; i++)
-		dp->tx_ring[i].tcl_data_ring_id = i;
-	 */
-	for (i = 0; i < HAL_DSCP_TID_MAP_TBL_NUM_ENTRIES_MAX_WIFI6; i++)
-		ath12k_hal_tx_set_dscp_tid_map(ab, ath12k_default_dscp_tid_map, i);
-
-/*
- *	ret = ath12k_wifi6_dp_rx_ring_setup(ab);
+	ret = ath12k_wifi6_dp_rx_ring_setup(ab);
 	if (ret) {
 		ath12k_warn(ab, "rx allod failed ret = %d\n", ret);
 		goto fail_dp_rx_free;
 	}
 
+/*
 	ret = ath12k_dp_mon_rx_alloc(dp);
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rxdma rings ret = %d\n", ret);
 		goto fail_dp_mon_rx_free;
 	}
-	 */
+*/
 	return 0;
 
 /*
  * fail_dp_mon_rx_free:
 	ath12k_dp_mon_rx_free(dp);
+*/
 
 fail_dp_rx_free:
 	ath12k_wifi6_dp_rx_ring_free(ab);
-	ath12k_dp_reoq_lut_cleanup(ab);
-
-fail_tx_ring_cleanup:
-	ath12k_wifi6_dp_tx_ring_cleanup(ab);
-	 */
-//fail_cmn_srng_cleanup:
-//	ath12k_dp_srng_common_cleanup(ab);
-
-fail_ppeds_detach:
-/*
- *	ath12k_ppeds_detach(ab);
-
-fail_nss_plugin_unregister:
-	ath12k_nss_plugin_unregister_ops(ab);
-
-fail_dp_bank_profiles_cleanup:
-	ath12k_dp_deinit_bank_profiles(ab);
-
-fail_hw_cc_cleanup:
-	ath12k_dp_cc_cleanup(ab);
+	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
 
 fail_link_desc_cleanup:
 	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
-	 */
 fail_irq_cleanup:
 	ath12k_hif_ext_irq_cleanup(dp->ab);
 
@@ -307,23 +222,13 @@ static void ath12k_wifi6_dp_op_device_deinit(struct ath12k_dp *dp)
 
 	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
-
-	ath12k_ppeds_detach(ab);
-	ath12k_dp_cc_cleanup(ab);
-	ath12k_dp_reoq_lut_cleanup(ab);
-	ath12k_dp_deinit_bank_profiles(ab);
-	ath12k_wifi6_dp_tx_ring_cleanup(ab);
-	ath12k_dp_srng_common_cleanup(ab);
-
+	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
 /*
- *	ath12k_dp_rx_reo_cmd_list_cleanup(ab);
-
 	ath12k_dp_mon_rx_free(dp);
-	ath12k_nss_plugin_unregister_ops(ab);
+*/
 	ath12k_wifi6_dp_rx_ring_free(ab);
 
 	ath12k_hif_ext_irq_cleanup(dp->ab);
-	 */
 }
 
 static struct ath12k_dp_hw_group *ath12k_wifi6_dp_hw_group_alloc(void)
@@ -336,41 +241,141 @@ static struct ath12k_dp_hw_group *ath12k_wifi6_dp_hw_group_alloc(void)
 	return dp_hw_grp;
 }
 
+int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
+				struct ath12k_dp_peer_create_params *params,
+				struct ieee80211_vif *vif)
+{
+	struct ath12k_dp_peer *dp_peer;
+	struct wireless_dev *wdev;
+	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
+
+	spin_lock_bh(&dp_hw->peer_lock);
+
+	if (!params->is_vdev_peer) {
+		ath12k_err(NULL, "Peer is not vdev peer for scan radio\n");
+		spin_unlock_bh(&dp_hw->peer_lock);
+		return -EINVAL;
+	}
+
+	dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, params->hw_link_id);
+
+	if (dp_peer) {
+		spin_unlock_bh(&dp_hw->peer_lock);
+		return -EEXIST;
+	}
+
+	spin_unlock_bh(&dp_hw->peer_lock);
+
+	dp_peer = kzalloc(sizeof(*dp_peer), GFP_KERNEL);
+	if (!dp_peer)
+		return -ENOMEM;
+
+	dp_peer->link_peer_delete_stats = ath12k_dp_alloc_preserved_stats();
+	if (!dp_peer->link_peer_delete_stats) {
+		ath12k_err(NULL, "Failed to allocate link peer delete stats");
+		kfree(dp_peer);
+		return -ENOMEM;
+	}
+	ether_addr_copy(dp_peer->addr, addr);
+	dp_peer->sta = params->sta;
+	dp_peer->is_mlo = params->is_mlo;
+	dp_peer->peer_id = params->is_mlo ? params->peer_id : ATH12K_DP_PEER_ID_INVALID;
+	dp_peer->is_vdev_peer = params->is_vdev_peer;
+	/* Update hw_link_id for self bss peer */
+	if (dp_peer->is_vdev_peer)
+		dp_peer->hw_link_id = params->hw_link_id;
+	dp_peer->sec_type = HAL_ENCRYPT_TYPE_OPEN;
+	dp_peer->sec_type_grp = HAL_ENCRYPT_TYPE_OPEN;
+
+	/* cache net dev here and reuse it during process rx */
+	wdev = ieee80211_vif_to_wdev(vif);
+	if (wdev)
+		dp_peer->dev = wdev->netdev;
+
+	spin_lock_bh(&dp_hw->peer_lock);
+
+	list_add(&dp_peer->list, &dp_hw->peers);
+
+	if (dp_peer->is_mlo && dp_peer->peer_id < MAX_DP_PEER_LIST_SIZE)
+		rcu_assign_pointer(dp_hw->dp_peer_list[dp_peer->peer_id], dp_peer);
+
+	spin_unlock_bh(&dp_hw->peer_lock);
+
+	params->peer_id = ATH12K_DP_PEER_ID_INVALID;
+
+	return 0;
+}
+
+void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 *addr,
+				 struct ieee80211_sta *sta, u8 hw_link_id)
+{
+	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
+	u16 peerid_index;
+
+	spin_lock_bh(&dp_hw->peer_lock);
+
+	if (sta)
+		dp_peer = ath12k_dp_peer_find_by_addr_and_sta(dp_hw, addr, sta);
+	else
+		dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, hw_link_id);
+
+	if (!dp_peer) {
+		spin_unlock_bh(&dp_hw->peer_lock);
+		return;
+	}
+
+	if (dp_peer->is_mlo) {
+		peerid_index = dp_peer->peer_id;
+		rcu_assign_pointer(dp_hw->dp_peer_list[peerid_index], NULL);
+	}
+
+	list_del(&dp_peer->list);
+
+	spin_unlock_bh(&dp_hw->peer_lock);
+
+	synchronize_rcu();
+
+	if (dp_peer->qos && dp_peer->qos->telemetry_peer_ctx)
+		ath12k_telemetry_peer_ctx_free(dp_peer->qos->telemetry_peer_ctx);
+
+	if (dp_peer->qos)
+		kfree(dp_peer->qos);
+
+	ath12k_dp_free_preserved_stats(dp_peer->link_peer_delete_stats);
+	kfree(dp_peer);
+}
+
+int ath12k_wifi6_dp_link_peer_create(struct ath12k_base *ab, u32 vdev_id, u8 *addr)
+{
+	return 0;
+}
+
 static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_op_device_init = ath12k_wifi6_dp_op_device_init,
 	.dp_op_device_deinit = ath12k_wifi6_dp_op_device_deinit,
-	.dp_tx_get_vdev_bank_config = ath12k_wifi6_dp_tx_get_vdev_bank_config,
-	.dp_reo_cmd_send = ath12k_wifi6_dp_reo_cmd_send,
-	.setup_pn_check_reo_cmd = ath12k_wifi6_dp_setup_pn_check_reo_cmd,
-	.rx_peer_tid_delete = ath12k_wifi6_dp_rx_peer_tid_delete,
-	.reo_cache_flush = ath12k_wifi6_dp_reo_cache_flush,
 	.rx_link_desc_return = ath12k_wifi6_dp_rx_link_desc_return,
-	.peer_rx_tid_reo_update = ath12k_wifi6_peer_rx_tid_reo_update,
-	.alloc_reo_qdesc = ath12k_wifi6_dp_alloc_reo_qdesc,
-	.peer_rx_tid_qref_setup = ath12k_wifi6_peer_rx_tid_qref_setup,
+	.dp_hw_group_alloc = ath12k_wifi6_dp_hw_group_alloc,
 	.dp_pdev_alloc = ath12k_wifi6_dp_pdev_alloc,
 	.dp_pdev_free = ath12k_wifi6_dp_pdev_free,
-	.rx_fst_attach = ath12k_wifi6_dp_rx_fst_attach,
-	.rx_fst_detach = ath12k_wifi6_dp_rx_fst_detach,
-	.rx_flow_dump_entry = ath12k_wifi6_dp_rx_flow_dump_entry,
-	.rx_flow_add_entry = ath12k_wifi6_dp_rx_flow_add_entry,
-	.rx_flow_delete_entry = ath12k_wifi6_dp_rx_flow_delete_entry,
-	.rx_flow_delete_all_entries = ath12k_wifi6_dp_rx_flow_delete_all_entries,
-	.dump_fst_table = ath12k_wifi6_dp_dump_fst_table,
-	.dp_hw_group_alloc = ath12k_wifi6_dp_hw_group_alloc,
-	.peer_migrate_reo_cmd = ath12k_wifi6_dp_peer_migrate_reo_cmd,
-	.sdwf_reinject_handler = ath12k_wifi6_sdwf_reinject_handler,
+	.dp_peer_create = ath12k_wifi6_dp_peer_create,
+	.dp_peer_delete = ath12k_wifi6_dp_peer_delete,
+	.dp_link_peer_create = ath12k_wifi6_dp_link_peer_create,
 };
 
 /* TODO: remove export once this file is built with wifi6 ko */
 struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 {
 	struct ath12k_dp *dp;
+	struct ath12k_dp_wifi6 *dp_wifi6;
 	int ret;
 
-	dp = kzalloc(sizeof(*dp), GFP_KERNEL);
+	dp = kzalloc(sizeof(*dp) + sizeof(*dp_wifi6), GFP_KERNEL);
 	if (!dp)
 		return NULL;
+
+	dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	dp_wifi6->dp = dp;
 
 	dp->arch_ops = &ath12k_wifi6_dp_arch_ops;
 
@@ -378,6 +383,7 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 	dp->dev = ab->dev;
 	dp->hw_params = ab->hw_params;
 	dp->hal = &ab->hal;
+	dp->global_peer_id_supported = false;
 
 	ret = ath12k_dp_mon_init(dp);
 	if (ret) {

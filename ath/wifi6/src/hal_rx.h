@@ -10,23 +10,6 @@
 #include "hal_desc.h"
 #include "hal.h"
 
-struct ath12k_dp;
-
-struct hal_reo_status;
-
-struct hal_rx_wbm_rel_info {
-	u32 cookie;
-	enum hal_wbm_rel_src_module err_rel_src;
-	enum hal_reo_dest_ring_push_reason push_reason;
-	u32 err_code;
-	bool first_msdu;
-	bool last_msdu;
-	bool continuation;
-	void *rx_desc;
-	bool hw_cc_done;
-	__le32 peer_metadata;
-};
-
 #define HAL_INVALID_PEERID	0x3fff
 #define VHT_SIG_SU_NSS_MASK 0x7
 
@@ -69,10 +52,6 @@ enum hal_rx_ul_reception_type {
 	HAL_RECEPTION_TYPE_FRAMELESS
 };
 
-struct hal_rx_rxpcu_classification_overview {
-	u32 rsvd0;
-} __packed;
-
 struct hal_rx_msdu_desc_info {
 	u32 msdu_flags;
 	u16 msdu_len; /* 14 bits for length */
@@ -85,11 +64,6 @@ struct hal_rx_msdu_list {
 	u32 sw_cookie[HAL_RX_NUM_MSDU_DESC];
 	u8 rbm[HAL_RX_NUM_MSDU_DESC];
 };
-
-#define REO_QUEUE_DESC_MAGIC_DEBUG_PATTERN_0 0xDDBEEF
-#define REO_QUEUE_DESC_MAGIC_DEBUG_PATTERN_1 0xADBEEF
-#define REO_QUEUE_DESC_MAGIC_DEBUG_PATTERN_2 0xBDBEEF
-#define REO_QUEUE_DESC_MAGIC_DEBUG_PATTERN_3 0xCDBEEF
 
 /* HE Radiotap data1 Mask */
 #define HE_SU_FORMAT_TYPE 0x0000
@@ -406,32 +380,36 @@ struct hal_rx_flow {
 	   drop         :1;
 };
 
+struct hal_rx_rxpcu_classification_overview {
+	u32 rsvd0;
+} __packed;
+
 int ath12k_wifi6_hal_reo_cmd_send(struct ath12k_base *ab, struct hal_srng *srng,
 				  enum hal_reo_cmd_type type,
 				  struct ath12k_hal_reo_cmd *cmd);
 void ath12k_wifi6_hal_reo_status_queue_stats(struct ath12k_base *ab,
-					     struct hal_tlv_64_hdr *tlv,
+					     struct hal_tlv_hdr *tlv,
 					     struct hal_reo_status *status);
 void ath12k_wifi6_hal_reo_flush_queue_status(struct ath12k_base *ab,
-					     struct hal_tlv_64_hdr *tlv,
+					     struct hal_tlv_hdr *tlv,
 					     struct hal_reo_status *status);
 void ath12k_wifi6_hal_reo_flush_cache_status(struct ath12k_base *ab,
-					     struct hal_tlv_64_hdr *tlv,
+					     struct hal_tlv_hdr *tlv,
 					     struct hal_reo_status *status);
 void ath12k_wifi6_hal_reo_unblk_cache_status(struct ath12k_base *ab,
-					     struct hal_tlv_64_hdr *tlv,
+					     struct hal_tlv_hdr *tlv,
 					     struct hal_reo_status *status);
 void
 ath12k_wifi6_hal_reo_flush_timeout_list_status(struct ath12k_base *ab,
-					       struct hal_tlv_64_hdr *tlv,
+					       struct hal_tlv_hdr *tlv,
 					       struct hal_reo_status *status);
 void
 ath12k_wifi6_hal_reo_desc_thresh_reached_status(struct ath12k_base *ab,
-						struct hal_tlv_64_hdr *tlv,
+						struct hal_tlv_hdr *tlv,
 						struct hal_reo_status *status);
 void
 ath12k_wifi6_hal_reo_update_rx_reo_queue_status(struct ath12k_base *ab,
-						struct hal_tlv_64_hdr *tlv,
+						struct hal_tlv_hdr *tlv,
 						struct hal_reo_status *status);
 void
 ath12k_wifi6_hal_rx_msdu_link_info_get(struct hal_rx_msdu_link *link,
@@ -445,8 +423,6 @@ ath12k_wifi6_hal_rx_msdu_link_desc_set(struct ath12k_base *ab,
 int ath12k_wifi6_hal_desc_reo_parse_err(struct ath12k_dp *dp,
 					struct hal_reo_dest_ring *desc,
 					dma_addr_t *paddr, u32 *desc_bank);
-int ath12k_wifi6_hal_wbm_desc_parse_err(struct ath12k_dp *dp, void *desc,
-					struct hal_rx_wbm_rel_info *rel_info);
 void ath12k_wifi6_hal_rx_reo_ent_paddr_get(struct ath12k_base *ab,
 					   struct ath12k_buffer_addr *buff_addr,
 					   dma_addr_t *paddr, u32 *cookie);
@@ -488,11 +464,12 @@ void ath12k_wifi6_hal_reo_shared_qaddr_cache_clear(struct ath12k_base *ab);
 void ath12k_hal_qcn9274_get_tsf2_scratch_reg(struct ath12k_base *ab,
 					     u8 mac_id, u64 *value);
 void ath12k_hal_qcn9274_get_tqm_scratch_reg(struct ath12k_base *ab, u64 *value);
-void ath12k_wifi6_hal_rx_msdu_list_get(void *desc,
-				       void *list,
-				       u16 *num_msdus);
+void ath12k_wifi6_hal_rx_msdu_list_get(void *desc, void *list, u16 *num_msdus);
 void ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get(void *rx_desc, dma_addr_t *paddr,
 					       u32 *sw_cookie,
 					       struct ath12k_buffer_addr **pp_buf_addr,
 					       u8 *rbm, u32 *msdu_cnt);
+void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,
+					   dma_addr_t paddr, u32 cookie,
+					   u8 manager);
 #endif

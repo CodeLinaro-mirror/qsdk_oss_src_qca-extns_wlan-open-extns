@@ -2019,7 +2019,7 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
         }
         case QCA_WLAN_VENDOR_RADIO_PARAM_GET_TEMPERATURE:
                 /* Return cached temperature value */
-                *value = ar->radio_cfg.temperature;
+                *value = ar->thermal.temperature;
                 ret = 0;
 
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

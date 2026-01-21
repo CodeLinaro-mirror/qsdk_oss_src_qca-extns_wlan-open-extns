@@ -24,6 +24,8 @@
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
 #define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
+#define ATH12K_CONFIG_MAX_TX_ENCAP_TYPE 2
+#define ATH12K_CONFIG_MAX_RX_DECAP_TYPE 2
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -652,6 +654,40 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			} else {
 				ath12k_err(NULL,
 						"Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_ENCAP_TYPE:
+		if (value > ATH12K_CONFIG_MAX_TX_ENCAP_TYPE) {
+			ath12k_err(NULL, "Value out of range\n");
+			ret = -EINVAL;
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_TX_ENCAP_TYPE,
+					value);
+			if (!ret) {
+				arvif->vap_cfg.tx_encap_type = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_PARAM_TX_ENCAP_TYPE to firmware\n");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_DECAP_TYPE:
+		if (value > ATH12K_CONFIG_MAX_RX_DECAP_TYPE) {
+			ath12k_err(NULL, "Value out of range\n");
+			ret = -EINVAL;
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_RX_DECAP_TYPE,
+					value);
+			if (!ret) {
+				arvif->vap_cfg.rx_decap_type = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_PARAM_RX_DECAP_TYPE to firmware\n");
 			}
 		}
 		break;
@@ -1931,6 +1967,16 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
 		*value = arvif->vap_cfg.ba_bufsize;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_ENCAP_TYPE:
+		*value = arvif->vap_cfg.tx_encap_type;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_DECAP_TYPE:
+		*value = arvif->vap_cfg.rx_decap_type;
 		ret = 0;
 		break;
 

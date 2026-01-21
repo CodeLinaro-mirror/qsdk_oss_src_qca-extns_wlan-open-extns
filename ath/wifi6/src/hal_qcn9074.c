@@ -528,27 +528,6 @@ const struct hal_ops hal_qcn9074_ops = {
 	.hal_mon_ops_init = NULL,
 	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
 
-	/*
-	.tx_set_dscp_tid_map = ath12k_wifi6_hal_tx_set_dscp_tid_map,
-	.tx_update_dscp_tid_map = ath12k_wifi6_hal_tx_update_dscp_tid_map,
-	.tx_configure_bank_register =
-				ath12k_wifi6_hal_tx_configure_bank_register,
-	.write_reoq_lut_addr = ath12k_wifi6_hal_write_reoq_lut_addr,
-	.write_ml_reoq_lut_addr = ath12k_wifi6_hal_write_ml_reoq_lut_addr,
-	.reoq_lut_addr_read_enable = ath12k_wifi6_hal_reoq_lut_addr_read_enable,
-	.reoq_lut_set_max_peerid = ath12k_wifi6_hal_reoq_lut_set_max_peerid,
-	.reo_qdesc_setup = ath12k_wifi6_hal_reo_qdesc_setup,
-	.reo_init_cmd_ring = ath12k_wifi6_hal_reo_init_cmd_ring,
-	.reo_hw_setup = ath12k_wifi6_hal_reo_hw_setup,
-	.reset_rx_reo_tid_q = ath12k_wifi6_hal_reset_rx_reo_tid_q,
-	.reo_shared_qaddr_cache_clear = ath12k_wifi6_hal_reo_shared_qaddr_cache_clear,
-	.hal_get_tsf2_scratch_reg = ath12k_hal_qcn9274_get_tsf2_scratch_reg,
-	.hal_get_tqm_scratch_reg = ath12k_hal_qcn9274_get_tqm_scratch_reg,
-	.rxdesc_get_mpdu_start_addr2 = NULL,
-	.rx_h_is_decrypted = NULL,
-	.rx_desc_get_fse_info = NULL,
-	*/
-
 	.rx_reo_ent_buf_paddr_get = ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get,
 	.rx_msdu_list_get = ath12k_wifi6_hal_rx_msdu_list_get,
 	.rx_desc_get_mpdu_start_tag = ath12k_wifi6_hal_rx_desc_get_mpdu_start_tag_qcn9074,

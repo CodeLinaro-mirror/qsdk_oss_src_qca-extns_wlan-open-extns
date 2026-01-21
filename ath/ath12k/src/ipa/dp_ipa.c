@@ -16,6 +16,7 @@ atomic_t g_instances_added;
 
 static bool g_ipa_is_ready;
 static struct wlan_ipa_config *g_ipa_config;
+static DEFINE_MUTEX(g_ipa_config_lock);
 
 /* DE Bruijn Sequence to fetch the instance id */
 static const int deBruijnIdx[32] = {
@@ -47,27 +48,35 @@ void ath12k_dp_ipa_component_config_update(void)
 /* IPA attach/detach */
 void ath12k_dp_ipa_config_alloc(void)
 {
-	if (g_ipa_config)
+	mutex_lock(&g_ipa_config_lock);
+	if (g_ipa_config) {
+		mutex_unlock(&g_ipa_config_lock);
 		return;
+	}
 
 	g_ipa_config = kmalloc(sizeof(struct wlan_ipa_config), GFP_KERNEL);
 	if (!g_ipa_config) {
 		/*TODO: handle it properly you can not bug on here*/
+		mutex_unlock(&g_ipa_config_lock);
 		BUG_ON(1);
 	} else {
 		printk("G_IPA_CONFIG is allocated");
 		ath12k_dp_ipa_component_config_update();
 	}
+	mutex_unlock(&g_ipa_config_lock);
 }
 
 static int dp_ipa_setup_rx_refill_buf_ring(struct ath12k_base *ab);
 void ath12k_dp_ipa_config_free(void)
 {
 	if (!atomic_read(&g_instances_added)) {
+		mutex_lock(&g_ipa_config_lock);
 		if (!g_ipa_config) {
+			mutex_unlock(&g_ipa_config_lock);
 			return;
 		} else {
 			kfree(g_ipa_config);
+			mutex_unlock(&g_ipa_config_lock);
 		}
 	}
 }

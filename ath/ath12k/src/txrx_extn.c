@@ -261,6 +261,7 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
 			    /* Set retry limit ext in dword1 [25:23] */
 			    le32_encode_bits((tx_param->retry ? ((tx_param->retry & 0x70) >> 4) : 0),
 					     WMI_TX_PARAMS_DWORD1_RETRY_LIMIT_EXT);
+	tx_param->tx_param_configured = false;
 }
 
 int ath12k_custom_tx_extn(struct sk_buff *skb)
@@ -396,11 +397,8 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
 /**
  * ath12k_compute_offchan_timing_stats - Compute offchan timing stats
  *                                       from timestamps
- * @stats: Offchan statistics structure to update
- * @ts_scan_start: offchan operation start time
- * @ts_foreign_entry: foreign channel entry time
- * @ts_foreign_exit: foreign channel exit time
- * @ts_scan_done: offchan operation end time
+ *
+ * @raw_ctx: Pointer to raw packet context
  *
  * Computes timing statistics:
  * - dwell_time: Time spent on foreign channel (foreign_exit - foreign_entry)
@@ -409,32 +407,32 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
  * - chanswitch_time_ftoh: Time to switch from foreign to home
  *                         (scan_done - foreign_exit)
  */
-static void ath12k_compute_offchan_timing_stats(struct ath12k_offchan_stat *stats,
-						ktime_t ts_scan_start,
-						ktime_t ts_foreign_entry,
-						ktime_t ts_foreign_exit,
-						ktime_t ts_scan_done)
+static void ath12k_compute_offchan_timing_stats(struct ath12k_raw_pkt_ctx *raw_ctx)
 {
+	struct ath12k_offchan_stat *stats = &raw_ctx->chan_stat;
 	s64 dwell_us, htof_us, ftoh_us;
 
-	if (!ktime_to_ns(ts_scan_start))
+	if (!raw_ctx->ts_scan_start)
 		return;
 
 	/* Compute dwell time if we have both entry and exit timestamps */
-	if (ktime_to_ns(ts_foreign_entry) && ktime_to_ns(ts_foreign_exit)) {
-		dwell_us = ktime_us_delta(ts_foreign_exit, ts_foreign_entry);
+	if (raw_ctx->ts_foreign_entry && raw_ctx->ts_foreign_exit) {
+		dwell_us = ktime_us_delta(raw_ctx->ts_foreign_exit,
+					  raw_ctx->ts_foreign_entry);
 		if (dwell_us > 0)
 			stats->dwell_time = (u32)dwell_us;
 	}
 
 	/* Compute home-to-foreign channel switch time */
-	htof_us = ktime_us_delta(ts_foreign_entry, ts_scan_start);
+	htof_us = ktime_us_delta(raw_ctx->ts_foreign_entry,
+				 raw_ctx->ts_scan_start);
 	if (htof_us > 0)
 		stats->chanswitch_time_htof = (u32)htof_us;
 
 	/* Compute foreign-to-home channel switch time */
-	if (ktime_to_ns(ts_foreign_exit) && ktime_to_ns(ts_scan_done)) {
-		ftoh_us = ktime_us_delta(ts_scan_done, ts_foreign_exit);
+	if (raw_ctx->ts_foreign_exit && raw_ctx->ts_scan_done) {
+		ftoh_us = ktime_us_delta(raw_ctx->ts_scan_done,
+					 raw_ctx->ts_foreign_exit);
 		if (ftoh_us > 0)
 			stats->chanswitch_time_ftoh = (u32)ftoh_us;
 	}
@@ -448,10 +446,6 @@ static void ath12k_compute_offchan_timing_stats(struct ath12k_offchan_stat *stat
 void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 {
 	struct ath12k_raw_pkt_ctx *raw_ctx;
-	ktime_t ts_scan_start = 0;
-	ktime_t ts_scan_done = 0;
-	ktime_t ts_foreign_entry = 0;
-	ktime_t ts_foreign_exit = 0;
 
 	if (!ar)
 		return;
@@ -467,22 +461,22 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 
 	switch (event_type) {
 	case WMI_SCAN_EVENT_STARTED:
-		ts_scan_start = ktime_get();
+		raw_ctx->ts_scan_start = ktime_get();
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "offchan: captured scan_start timestamp\n");
 		break;
 	case WMI_SCAN_EVENT_FOREIGN_CHAN:
-		ts_foreign_entry = ktime_get();
+		raw_ctx->ts_foreign_entry = ktime_get();
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "offchan: captured foreign_entry timestamp\n");
 		break;
 	case WMI_SCAN_EVENT_FOREIGN_CHAN_EXIT:
-		ts_foreign_exit = ktime_get();
+		raw_ctx->ts_foreign_exit = ktime_get();
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "offchan: captured foreign_exit timestamp\n");
 		break;
 	case WMI_SCAN_EVENT_COMPLETED:
-		ts_scan_done = ktime_get();
+		raw_ctx->ts_scan_done = ktime_get();
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "offchan: captured scan done timestamp\n");
 		break;
@@ -499,11 +493,7 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 		spin_unlock_bh(&raw_ctx->chan_lock);
 		return;
 	}
-	ath12k_compute_offchan_timing_stats(&raw_ctx->chan_stat,
-					    ts_scan_start,
-					    ts_foreign_entry,
-					    ts_foreign_exit,
-					    ts_scan_done);
+	ath12k_compute_offchan_timing_stats(raw_ctx);
 	spin_unlock_bh(&raw_ctx->chan_lock);
 }
 

@@ -341,6 +341,12 @@ ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
 	return 0;
 }
 
+static inline void
+ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
+						struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -534,6 +540,19 @@ void ath12k_home_offchan_cleanup(struct ath12k *ar);
  */
 void ath12k_custom_tx_send(struct ieee80211_vif *vif,
 			   struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
+
+/**
+ * ath12k_wmi_offchan_txrx_update_scan_params_extn - Update scan params required
+ *                                                    for custom txrx
+ * @ar: Pointer to the ath12k radio structure
+ * @arg: Pointer to the scan parameter
+ *
+ * This function sets priority and chan stats flags in scan parameter for
+ * custom txrx.
+ */
+void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
+						     struct ath12k_wmi_scan_req_arg *arg);
+
 
                    int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);

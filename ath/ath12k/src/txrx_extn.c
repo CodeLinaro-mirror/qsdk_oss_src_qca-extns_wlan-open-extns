@@ -507,6 +507,23 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 	spin_unlock_bh(&raw_ctx->chan_lock);
 }
 
+void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
+						     struct ath12k_wmi_scan_req_arg *arg)
+{
+	struct ath12k_raw_pkt_ctx *raw_ctx = &ar->ar_extn.raw_pkt_ctx;
+
+	if (!timer_pending(&raw_ctx->offchan_timer))
+		return;
+
+	arg->scan_ev_foreign_chn_exit = 1;
+	arg->scan_ev_preempted = 1;
+	arg->scan_priority = WMI_SCAN_PRIORITY_HIGH;
+	if (raw_ctx->func_type == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX)
+		arg->scan_f_chan_stat_evnt = 1;
+	else
+		arg->scan_f_chan_stat_evnt = 0;
+}
+
 /**
  * ath12k_custom_txrx_timeout_handler - Timeout handler for home off-channel operations
  * @t: Timer structure

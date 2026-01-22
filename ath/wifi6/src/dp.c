@@ -155,7 +155,12 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 	dp->idle_link_rbm =
 			ath12k_hal_get_idle_link_rbm(&ab->hal, ab->device_id);
 
-	ret = ath12k_wbm_idle_ring_setup(ab, &n_link_desc);
+	/* For QCN9074, monitor link desc ring will be used,
+	 * setting n_link_desc to minimum value */
+	n_link_desc = HAL_LINK_DESC_SIZE;
+
+	ret = ath12k_dp_srng_setup(ab, &dp->wbm_idle_ring,
+                                    HAL_WBM_IDLE_LINK, 0, 0, n_link_desc);
 	if (ret) {
 		ath12k_warn(ab, "failed to setup wbm_idle_ring: %d\n", ret);
 		goto fail_irq_cleanup;

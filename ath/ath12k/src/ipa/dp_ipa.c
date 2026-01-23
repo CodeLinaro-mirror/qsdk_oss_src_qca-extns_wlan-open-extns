@@ -76,6 +76,7 @@ void ath12k_dp_ipa_config_free(void)
 			return;
 		} else {
 			kfree(g_ipa_config);
+			g_ipa_config = NULL;
 			mutex_unlock(&g_ipa_config_lock);
 		}
 	}

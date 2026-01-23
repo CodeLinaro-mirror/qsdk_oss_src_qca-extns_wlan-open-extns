@@ -9,6 +9,7 @@
 #include <linux/mhi.h>
 #include <linux/uuid.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
+#include "rropinfo.h"
 
 
 struct ath12k_base;
@@ -18,6 +19,10 @@ struct ieee80211_iface_combination;
 struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
 struct ath12k_skb_cb;
+
+#ifndef ATH12K_NUM_CHANS
+#define ATH12K_NUM_CHANS 102
+#endif
 
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
@@ -184,6 +189,7 @@ struct ath12k_raw_pkt_ctx {
  * @vifs_kobj:     Pointer to vifs kernel object.
  * @vif_entries:   Pointer to 17 sysfs vif entries.
  * @dcs_config_bitmap: Bitmap of DCS enablement mode.
+ * @rtplinst:      Representative tx power list instances for ATH12K_NUM_CHANS
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -194,6 +200,7 @@ struct ath12k_extn {
 	struct kobject *vifs_kobj;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;
+	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
 };
 
 /**
@@ -347,7 +354,8 @@ static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_c
 static inline void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 						    struct sk_buff *skb,
 						    u32 freq,
-						    struct wmi_chan_info_event *ch_info)
+						    struct wmi_chan_info_event *ch_info,
+						    int channel_idx)
 {
 }
 
@@ -488,7 +496,8 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
 void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 				      struct sk_buff *skb,
 				      u32 freq,
-				      struct wmi_chan_info_event *ch_info);
+				      struct wmi_chan_info_event *ch_info,
+				      int channel_idx);
 
 /**
  * ath12k_update_offchan_ts_extn - Update offchan timestamps based on scan events

@@ -20,6 +20,7 @@
 #include "../cmn_defs.h"
 #include "../telemetry_agent_if.h"
 #include "dcs_extn.h"
+#include "rropinfo.h"
 
 
 const struct nla_policy
@@ -123,6 +124,11 @@ ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW] = { .type = NLA_U32 },
 	[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD] = {.type = NLA_U8},
 	[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU] = {.type = NLA_U8},
+};
+
+const struct nla_policy
+ath12k_rrop_info_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX] = {.type = NLA_U8 },
 };
 
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
@@ -2132,6 +2138,103 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	return 0;
 }
 
+int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data, int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	u8 radio_id;
+	struct ath12k *ar = NULL;
+	struct sk_buff *skb;
+	struct nlattr *nla_attr;
+	struct nlattr *rtplinst_attr;
+	bool info_available = false;
+	int i;
+	int count = 0;
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_CONFIG_MAX, data,
+		      data_len, ath12k_rrop_info_policy, NULL)) {
+		ath12k_err(NULL,
+			   "QCA_WLAN_VENDOR_ATTR_CONFIG_MAX parsing failed");
+		return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX])
+		return -EINVAL;
+
+	radio_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+	if (radio_id >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio id %d", radio_id);
+		return -EINVAL;
+	}
+
+	ar = ath12k_ah_to_ar(ah, radio_id);
+
+	if (!ar) {
+		ath12k_err(NULL, "RROPINFO: failed to resolve ar from wdev\n");
+		return -EINVAL;
+	}
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
+	if (!skb) {
+		ath12k_err(NULL, "RROPINFO: Reply skb alloc failed\n");
+		return -ENOMEM;
+	}
+
+	nla_attr = nla_nest_start(skb, QCA_WLAN_VENDOR_ATTR_RROP_INFO_RTPL);
+	if (!nla_attr) {
+		ath12k_err(NULL, "RROPINFO: nla nest start failed for RTPL info\n");
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < ATH12K_NUM_CHANS; i++) {
+		const struct rtplinst_extn *ci = &ar->ar_extn.rtplinst[i];
+
+		if ((ci->primary_freq == 0) &&
+		    (ci->txpower_throughput == 0) &&
+		    (ci->txpower_range == 0))
+			continue;
+
+		info_available = true;
+
+		rtplinst_attr = nla_nest_start(skb, i);
+		if (!rtplinst_attr) {
+			ath12k_err(NULL, "RROPINFO: nla nest start failed for RTPL instance %d\n", i);
+			kfree_skb(skb);
+			return -EINVAL;
+		}
+
+		if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_RTPLINST_PRIMARY_FREQUENCY,
+				ci->primary_freq) ||
+		    nla_put_s32(skb, QCA_WLAN_VENDOR_ATTR_RTPLINST_TXPOWER_THROUGHPUT,
+				ci->txpower_throughput) ||
+		    nla_put_s32(skb, QCA_WLAN_VENDOR_ATTR_RTPLINST_TXPOWER_RANGE,
+				ci->txpower_range)) {
+			ath12k_err(NULL, "RROPINFO: failed to put RTPL instance %d\n", i);
+			kfree_skb(skb);
+			return -EINVAL;
+		}
+
+		nla_nest_end(skb, rtplinst_attr);
+		count++;
+		ath12k_dbg(NULL, ATH12K_DBG_CFG, "RROPINFO: rtplinst[%d]: freq=%u th=%d range=%d\n",
+			   i, ci->primary_freq, ci->txpower_throughput, ci->txpower_range);
+	}
+
+	nla_nest_end(skb, nla_attr);
+
+	if (!info_available) {
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_CFG, "RROPINFO: reply sent with %d instances\n", count);
+	return cfg80211_vendor_cmd_reply(skb);
+}
+
 /**
  * ath12k_vendor_fw_recovery_event - Send a firmware recovery
  * vendor NL80211 event to userspace
@@ -2521,7 +2624,10 @@ static struct ath12k *ath12k_get_radio_by_index(struct wiphy *wiphy,
 }
 
 /*
- * ath12k_vendor_ctl_table- Set CTL table
+ * ath12k_vendor_ctl_table- Set CTL table It provides
+ * simplified power values intended for helping external Auto channel Selection
+ * applications compare potential Tx power performance between channels, other
+ * operating conditions remaining identical.
  * @wiphy: Pointer to wiphy
  * @wdev: wireless wdev
  * @data: vendor data

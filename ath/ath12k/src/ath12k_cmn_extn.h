@@ -137,6 +137,10 @@ struct ath12k_skb_tx_param {
  * @home_chan:            True if currently on the home channel.
  * @func_type:            Function type for the operation.
  * @num_frames:           Number of frames sent from userspace.
+ * @ts_scan_start:        Scan start timestamp
+ * @ts_foreign_entry:     Foreign chan entry timestamp
+ * @ts_foreign_exit:      Foreign chan exit timestamp
+ * @ts_scan_done:         Scan complete timestamp
  */
 struct ath12k_raw_pkt_ctx {
 	struct sk_buff_head  pkt_list;
@@ -152,6 +156,11 @@ struct ath12k_raw_pkt_ctx {
 	bool home_chan;
 	u8 func_type;
 	u8 num_frames;
+	ktime_t ts_scan_start;
+	ktime_t ts_foreign_entry;
+	ktime_t ts_foreign_exit;
+	ktime_t ts_scan_done;
+
 };
 
 /**

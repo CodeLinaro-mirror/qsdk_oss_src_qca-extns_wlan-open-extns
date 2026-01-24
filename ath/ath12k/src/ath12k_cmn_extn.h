@@ -73,9 +73,20 @@ enum preamble_type {
 };
 
 /**
+ * struct ath12k_blanking_params - Scan blanking parameters
+ * @valid: Indicates if blanking parameters are valid
+ * @blanking_count: Number of blanking events during scan
+ * @blanking_duration: Total blanking duration in msec
+ */
+struct ath12k_blanking_params {
+	__le32 valid;
+	__le32 blanking_count;
+	__le32 blanking_duration;
+} __packed;
+
+/**
  * struct ath12k_offchan_stat - statistics for off-channel activity
  * @noise_floor:        Noise floor in dBm (signed 16-bit).
- * @blanking_params_valid: Blanking parameters validity flag.
  * @tx_frame_count:        Number of frames transmitted.
  * @rx_frame_count:        Number of frames received.
  * @rx_clear_count:        RX clear time (units: driver-specific ticks).
@@ -83,12 +94,10 @@ enum preamble_type {
  * @dwell_time:            Dwell time on the off-channel (ms).
  * @chanswitch_time_htof:  Time to switch from home to off-channel (us).
  * @chanswitch_time_ftoh:  Time to switch from off-channel to home (us).
- * @blanking_count:        Number of blanking events.
- * @blanking_duration:     Total blanking duration (ms).
+ * @blank_params:          Blanking Param stats
  */
 struct ath12k_offchan_stat {
 	s16 noise_floor;
-	u8  blanking_params_valid;
 	u32 tx_frame_count;
 	u32 rx_frame_count;
 	u32 rx_clear_count;
@@ -96,8 +105,7 @@ struct ath12k_offchan_stat {
 	u32 dwell_time;
 	u32 chanswitch_time_htof;
 	u32 chanswitch_time_ftoh;
-	u32 blanking_count;
-	u32 blanking_duration;
+	struct ath12k_blanking_params blank_params;
 };
 
 /**
@@ -332,8 +340,9 @@ static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar,
 }
 
 static inline void ath12k_update_offchan_stats_extn(struct ath12k *ar,
+						    struct sk_buff *skb,
 						    u32 freq,
-					            struct wmi_chan_info_event *ch_info)
+						    struct wmi_chan_info_event *ch_info)
 {
 }
 
@@ -462,6 +471,7 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
 /**
  * ath12k_update_offchan_stats_extn - Update off-channel statistics
  * @ar: ath12k radio instance
+ * @skb: Point to skb containing chaninfo event buffer
  * @freq: Frequency in MHz from chan_info event
  * @ch_info: Channel info event data
  *
@@ -470,7 +480,9 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
  *
  * Return: Void
  */
-void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
+void ath12k_update_offchan_stats_extn(struct ath12k *ar,
+				      struct sk_buff *skb,
+				      u32 freq,
 				      struct wmi_chan_info_event *ch_info);
 
 /**

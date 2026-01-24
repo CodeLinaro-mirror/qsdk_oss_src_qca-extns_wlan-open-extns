@@ -65,48 +65,50 @@ enum hal_rx_mpdu_info_sw_frame_group_id_type {
 #define HAL_LEGACY_MCS6  6
 #define HAL_LEGACY_MCS7  7
 
+#define HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(chain, word_1, word_2, \
+					ppdu_info, rssi_info_tlv) \
+	{						\
+	ppdu_info->rssi_chain[chain][0] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
+				   RSSI_PRI20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][1] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
+				   RSSI_EXT20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][2] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
+				   RSSI_EXT40_LOW20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][3] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
+				   RSSI_EXT40_HIGH20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][4] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
+				   RSSI_EXT80_LOW20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][5] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
+				   RSSI_EXT80_LOW_HIGH20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][6] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
+				   RSSI_EXT80_HIGH_LOW20_CHAIN##chain); \
+	ppdu_info->rssi_chain[chain][7] = \
+			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
+				   RSSI_EXT80_HIGH20_CHAIN##chain); \
+	}						\
+
+#define HAL_RX_PPDU_UPDATE_RSSI(ppdu_info, rssi_info_tlv) \
+	{HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(0, 0, 1, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(1, 2, 3, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(2, 4, 5, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(3, 6, 7, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(4, 8, 9, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(5, 10, 11, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(6, 12, 13, ppdu_info, rssi_info_tlv) \
+	 HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(7, 14, 15, ppdu_info, rssi_info_tlv)} \
+
 #define HAL_RX_PHY_CMN_USER_INFO0_GI		GENMASK(17, 16)
 
 struct hal_phyrx_common_user_info {
 	__le32 rsvd0[2];
 	__le32 info0;
-	__le32 rsvd1;
-} __packed;
-
-#define HAL_RX_HE_SIG_B1_MU_INFO_INFO0_RU_ALLOCATION	GENMASK(7, 0)
-
-struct hal_rx_he_sig_b1_mu_info {
-	__le32 info0;
-} __packed;
-
-#define HAL_RX_HE_SIG_B2_MU_INFO_INFO0_STA_ID           GENMASK(10, 0)
-#define HAL_RX_HE_SIG_B2_MU_INFO_INFO0_STA_MCS		GENMASK(18, 15)
-#define HAL_RX_HE_SIG_B2_MU_INFO_INFO0_STA_CODING	BIT(20)
-#define HAL_RX_HE_SIG_B2_MU_INFO_INFO0_STA_NSTS		GENMASK(31, 29)
-
-struct hal_rx_he_sig_b2_mu_info {
-	__le32 info0;
-} __packed;
-
-#define HAL_RX_HE_SIG_B2_OFDMA_INFO_INFO0_STA_ID	GENMASK(10, 0)
-#define HAL_RX_HE_SIG_B2_OFDMA_INFO_INFO0_STA_NSTS	GENMASK(13, 11)
-#define HAL_RX_HE_SIG_B2_OFDMA_INFO_INFO0_STA_TXBF	BIT(14)
-#define HAL_RX_HE_SIG_B2_OFDMA_INFO_INFO0_STA_MCS	GENMASK(18, 15)
-#define HAL_RX_HE_SIG_B2_OFDMA_INFO_INFO0_STA_DCM	BIT(19)
-#define HAL_RX_HE_SIG_B2_OFDMA_INFO_INFO0_STA_CODING	BIT(20)
-
-struct hal_rx_he_sig_b2_ofdma_info {
-	__le32 info0;
-} __packed;
-
-#define HAL_RX_PHYRX_RSSI_LEGACY_INFO_INFO0_RECEPTION	GENMASK(3, 0)
-#define HAL_RX_PHYRX_RSSI_LEGACY_INFO_INFO0_RX_BW	GENMASK(7, 5)
-#define HAL_RX_PHYRX_RSSI_LEGACY_INFO_INFO1_RSSI_COMB	GENMASK(15, 8)
-
-struct hal_rx_phyrx_rssi_legacy_info {
-	__le32 info0;
-	__le32 rsvd0[39];
-	__le32 info1;
 	__le32 rsvd1;
 } __packed;
 

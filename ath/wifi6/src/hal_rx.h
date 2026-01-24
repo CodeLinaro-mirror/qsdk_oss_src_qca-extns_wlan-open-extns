@@ -36,15 +36,6 @@ enum hal_rx_vht_sig_a_gi_setting {
 	HAL_RX_VHT_SIG_A_SHORT_GI_AMBIGUITY = 3,
 };
 
-#define HE_GI_0_8 0
-#define HE_GI_0_4 1
-#define HE_GI_1_6 2
-#define HE_GI_3_2 3
-
-#define HE_LTF_1_X 0
-#define HE_LTF_2_X 1
-#define HE_LTF_4_X 2
-
 enum hal_rx_ul_reception_type {
 	HAL_RECEPTION_TYPE_ULOFMDA,
 	HAL_RECEPTION_TYPE_ULMIMO,

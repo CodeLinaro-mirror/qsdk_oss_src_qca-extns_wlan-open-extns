@@ -135,6 +135,7 @@ struct ath12k_skb_tx_param {
  * @req_freq:             Requested freq(if set) for offchan operation.
  * @custom_tx_status:     Tx completion status of queued packets.
  * @home_chan:            True if currently on the home channel.
+ * @operation_status:     Overall operation status (0=success, 1=failure).
  * @func_type:            Function type for the operation.
  * @num_frames:           Number of frames sent from userspace.
  * @ts_scan_start:        Scan start timestamp
@@ -154,6 +155,7 @@ struct ath12k_raw_pkt_ctx {
 	u32 req_freq;
 	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
 	bool home_chan;
+	u8 operation_status;
 	u8 func_type;
 	u8 num_frames;
 	ktime_t ts_scan_start;
@@ -208,6 +210,8 @@ struct offchan_event_work_with_txn {
  * @scan_dur: Scan duration in milliseconds for off-channel operation
  * @num_frames: Number of frames to transmit
  * @func: Function type (TX_MGMT, TX_DATA, or RX)
+ * @link_id: MLO link ID (0 for non-MLO or default link)
+ * @is_mld: Whether this is an MLO device
  */
 struct ath12k_home_offchan_params {
 	struct wireless_dev *wdev;
@@ -218,6 +222,8 @@ struct ath12k_home_offchan_params {
 	u16 scan_dur;
 	u8 num_frames;
 	u8 func;
+	u8 link_id;
+	bool is_mld;
 };
 
 /**

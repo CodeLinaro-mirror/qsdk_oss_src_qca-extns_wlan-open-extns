@@ -16,6 +16,85 @@
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
 
+/**
+ * ath12k_reset_raw_pkt_ctx - Reset raw packet context to clean state
+ * @raw_pkt_ctx: Pointer to raw packet context structure
+ *
+ * This function resets all fields of the raw packet context to their
+ * initial/clean state. It should be called after operation completion,
+ * timeout, or cancellation to ensure clean state for next operation.
+ *
+ * Note: This function does NOT drain the packet queue or cancel timers.
+ * Those operations should be done separately before calling this function.
+ */
+static void ath12k_reset_raw_pkt_ctx(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
+{
+	if (!raw_pkt_ctx)
+		return;
+	raw_pkt_ctx->vif = NULL;
+	raw_pkt_ctx->transaction_id = 0;
+	raw_pkt_ctx->func_type = QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_INVALID;
+	raw_pkt_ctx->num_frames = 0;
+	raw_pkt_ctx->home_chan = false;
+	raw_pkt_ctx->req_freq = 0;
+	raw_pkt_ctx->operation_status = 0;
+	atomic_set(&raw_pkt_ctx->num_cmpl_pending, 0);
+	memset(raw_pkt_ctx->custom_tx_status, 0, sizeof(raw_pkt_ctx->custom_tx_status));
+	memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
+}
+
+/**
+ * ath12k_handle_tx_completion - Handle TX completion for all packets
+ * @ar: Pointer to ath12k structure
+ * @raw_pkt_ctx: Pointer to raw packet context
+ * @wdev: Wireless device for event sending
+ * @transaction_id: Transaction ID for event correlation
+ *
+ * This function handles the completion logic when all TX packets are completed.
+ * It cancels the timer, sends completion event, resets context, and drains queue.
+ *
+ * Note: This function handles all the completion logic that was previously inline.
+ */
+static void ath12k_handle_tx_completion(struct ath12k *ar,
+					struct ath12k_raw_pkt_ctx *raw_pkt_ctx,
+					struct wireless_dev *wdev,
+					u32 transaction_id)
+{
+	bool timer_cancelled;
+	int ret;
+	if (!ar || !raw_pkt_ctx || !wdev)
+		return;
+
+	/* Acquire lock for cleanup operations */
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
+	/* Only send completion event if operation is still active (vif is set)
+	 * If vif is NULL, timeout handler already sent the event
+	 */
+	if (raw_pkt_ctx->vif) {
+		/* Set operation status to success */
+		raw_pkt_ctx->operation_status = 0;
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+		/* Cancel timer before sending event to prevent race conditions */
+		timer_cancelled = del_timer_sync(&raw_pkt_ctx->offchan_timer);
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "All packets completed, timer cancelled: %s, sending event\n",
+			   timer_cancelled ? "SUCCESS" : "ALREADY FIRED");
+		/* Send event to userspace */
+		ret = schedule_home_offchan_stats_event_ext(wdev, transaction_id, raw_pkt_ctx);
+		if (ret) {
+			ath12k_err(ar->ab, "Failed to schedule completion event: %d\n", ret);
+		}
+	} else {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "Operation already completed by timeout handler, skipping completion event\n");
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+	}
+	/* Drain the packet queue - this will unlink and free all remaining SKBs */
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "SUCCESS: All packets completed, calling drain to cleanup tracking list\n");
+	ath12k_home_offchan_tx_drain(raw_pkt_ctx);
+}
+
 void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 {
 	struct ath12k_skb_cb *skb_cb = ATH12K_SKB_CB(skb);
@@ -47,6 +126,8 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 		if (idx == ATH12K_MAX_CUSTOM_TX_PKT)
 			break;
 	}
+	/* Extract transaction ID from skb control buffer */
+	transaction_id = skb_cb->u.ar->ar_extn.raw_pkt_ctx.transaction_id;
 	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
 	vif = skb_cb->vif;
@@ -56,31 +137,15 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 		return;
 	}
 
-	/* Extract transaction ID from skb control buffer */
-	transaction_id = skb_cb->u.ar->ar_extn.raw_pkt_ctx.transaction_id;
 
 	/* Get the wireless_dev for sending the event */
 	if (ar->ah && ar->ah->hw && ar->ah->hw->wiphy)
 		wdev = ieee80211_vif_to_wdev(vif);
-
 	/* Send event to userspace if we have a valid wdev */
 	if (wdev) {
 		if (atomic_dec_and_test(&raw_pkt_ctx->num_cmpl_pending)) {
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "All packets completed, sending event\n");
-			/* Cancel timer if still running (must be done before lock) */
-			del_timer_sync(&raw_pkt_ctx->offchan_timer);
-			/* Acquire lock for cleanup operations */
-			spin_lock_bh(&raw_pkt_ctx->chan_lock);
-			/* Send event to userspace */
-			schedule_home_offchan_stats_event_ext(wdev, transaction_id, raw_pkt_ctx);
-			/* Clear the vif pointer to indicate operation complete */
-			raw_pkt_ctx->vif = NULL;
-			/* Clear custom_tx_status array */
-			memset(raw_pkt_ctx->custom_tx_status, 0, sizeof(raw_pkt_ctx->custom_tx_status));
-			/* Clear channel statistics */
-			memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
-			spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+			/* Use centralized completion handler */
+			ath12k_handle_tx_completion(ar, raw_pkt_ctx, wdev, transaction_id);
 		}
 	}
 
@@ -221,6 +286,52 @@ static void ath12k_process_rate_params(u32 *mcs, u32 *nss,
 	}
 }
 
+/**
+ * ath12k_validate_offchan_operation - Validate device state for off-channel operations
+ * @ar: Pointer to ath12k structure
+ * @arvif: Pointer to ath12k_link_vif structure
+ *
+ * This function performs common sanity checks to ensure the device is in a valid
+ * state for off-channel operations (both TX and RX functions).
+ *
+ * Return: 0 if validation passes, negative error code otherwise
+ */
+static int ath12k_validate_offchan_operation(struct ath12k *ar,
+					     struct ath12k_link_vif *arvif)
+{
+	struct ath12k_vif *ahvif;
+	if (!ar || !arvif) {
+		ath12k_err(NULL, "Invalid ar or arvif\n");
+		return -EINVAL;
+	}
+	ahvif = container_of((void *)arvif, struct ath12k_vif, deflink);
+	if (ahvif->vdev_type == WMI_VDEV_TYPE_MONITOR) {
+		ath12k_err(ar->ab, "Not supported on monitor interface\n");
+		return -EOPNOTSUPP;
+	}
+	if (unlikely(test_bit(ATH12K_FLAG_RECOVERY, &ar->ab->dev_flags))) {
+		ath12k_err(ar->ab, "Not allowed during recovery\n");
+		return -EPERM;
+	}
+	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, &ar->ab->dev_flags)) {
+		ath12k_err(ar->ab, "Not allowed during crash flush\n");
+		return -EPERM;
+	}
+	if (test_bit(ATH12K_FLAG_CAC_RUNNING, &ar->dev_flags)) {
+		ath12k_err(ar->ab, "Not allowed during CAC\n");
+		return -EAGAIN;
+	}
+	if (ar->csa_active_cnt) {
+		ath12k_err(ar->ab, "Not allowed during CSA\n");
+		return -EAGAIN;
+	}
+	if (ath12k_mac_is_bridge_vdev(arvif)) {
+		ath12k_err(ar->ab, "Not allowed on bridge vdev\n");
+		return -EPERM;
+	}
+	return 0;
+}
+
 void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
 {
 	struct ath12k_skb_tx_param *tx_param = &ar->ar_extn.raw_pkt_ctx.tx_param;
@@ -270,7 +381,7 @@ int ath12k_custom_tx_extn(struct sk_buff *skb)
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 	struct ieee80211_vif *vif = info->control.vif;
 	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
-	struct ath12k_link_vif *arvif = &ahvif->deflink;
+	struct ath12k_link_vif *arvif = NULL;
 	struct ath12k *ar;
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	struct sk_buff_head *q;
@@ -278,46 +389,26 @@ int ath12k_custom_tx_extn(struct sk_buff *skb)
 	bool is_prb_rsp;
 	int ret;
 
-
+	/* Use proper MLO link selection pattern with RCU lock */
+	rcu_read_lock();
+	if (skb_cb->link_id == INVALID_LINK_ID) {
+		arvif = &ahvif->deflink;
+	} else {
+		if (skb_cb->link_id < ATH12K_NUM_MAX_LINKS)
+			arvif = rcu_dereference(ahvif->link[skb_cb->link_id]);
+		else
+			arvif = NULL;
+	}
 	if (!arvif || !arvif->ar) {
+		rcu_read_unlock();
 		ret = -EINVAL;
 		goto free_skb;
 	}
-	hw = arvif->ar->ah->hw;
+	ar = arvif->ar;
+	hw = ar->ah->hw;
+	rcu_read_unlock();
 
 	lockdep_assert_wiphy(hw->wiphy);
-
-	if (ahvif->vdev_type == WMI_VDEV_TYPE_MONITOR) {
-		ret = -EOPNOTSUPP;
-		goto free_skb;
-	}
-
-	ar = arvif->ar;
-
-	if (unlikely(test_bit(ATH12K_FLAG_RECOVERY, &ar->ab->dev_flags))) {
-		ret = -EPERM;
-		goto free_skb;
-	}
-
-	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, &ar->ab->dev_flags)) {
-		ret = -EPERM;
-		goto free_skb;
-	}
-
-	if (test_bit(ATH12K_FLAG_CAC_RUNNING, &ar->dev_flags)) {
-		ret = -EAGAIN;
-		goto free_skb;
-	}
-
-	if (ar->csa_active_cnt) {
-		ret = -EAGAIN;
-		goto free_skb;
-	}
-
-	if (ath12k_mac_is_bridge_vdev(arvif)) {
-		ret = -EPERM;
-		goto free_skb;
-	}
 
 	if (skb_cb->flags & ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX)
 		info->flags |= IEEE80211_TX_CTL_TX_OFFCHAN;
@@ -392,6 +483,85 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
 			    freq);
 	}
 	spin_unlock_bh(&raw_ctx->chan_lock);
+}
+
+/**
+ * ath12k_handle_rx_scan_event - Handle RX function scan completion or failure
+ * @ar: Pointer to ath12k structure
+ * @raw_ctx: Pointer to raw packet context
+ * @is_success: true for completion, false for failure
+ * @event_type: The scan event type (used for failure logging)
+ *
+ * This function is called when scan completes or fails for RX function type.
+ * It sends the appropriate event to userspace and cleans up the context.
+ *
+ * Note: Called with raw_ctx->chan_lock held, releases and re-acquires it.
+ */
+static void ath12k_handle_rx_scan_event(struct ath12k *ar,
+					struct ath12k_raw_pkt_ctx *raw_ctx,
+					bool is_success,
+					u32 event_type)
+{
+	struct wireless_dev *wdev;
+	u32 transaction_id;
+	struct ieee80211_vif *vif_snapshot;
+
+	/* Check if this is RX function and operation is active */
+	if (raw_ctx->func_type != QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX || !raw_ctx->vif)
+		return;
+
+	/* Capture vif and transaction_id under lock protection */
+	vif_snapshot = raw_ctx->vif;
+	transaction_id = raw_ctx->transaction_id;
+
+	/* Release lock before timer cancellation to avoid deadlock */
+	spin_unlock_bh(&raw_ctx->chan_lock);
+
+	/* Cancel timer first to prevent timeout handler interference */
+	del_timer_sync(&raw_ctx->offchan_timer);
+
+	/* Get wdev from captured vif (safe since we have a snapshot) */
+	wdev = ieee80211_vif_to_wdev(vif_snapshot);
+	if (!wdev) {
+		ath12k_err(ar->ab, "Failed to get wdev for RX %s\n",
+			   is_success ? "completion" : "failure");
+		spin_lock_bh(&raw_ctx->chan_lock);
+		return;
+	}
+
+	if (is_success) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "RX function scan completed, sending event for transaction 0x%x\n",
+			   transaction_id);
+	} else {
+		ath12k_warn(ar->ab, "RX function scan failed (event=%u), sending failure event for transaction 0x%x\n",
+			    event_type, transaction_id);
+	}
+
+	/* Re-acquire lock for final operations */
+	spin_lock_bh(&raw_ctx->chan_lock);
+
+	/* Double-check vif is still valid after timer cancellation */
+	if (!raw_ctx->vif) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "Operation already completed by timeout handler\n");
+		return;
+	}
+
+	if (is_success) {
+		/* Set operation status to success */
+		raw_ctx->operation_status = 0;
+	} else {
+		/* Set operation status to failure */
+		raw_ctx->operation_status = 1;
+	}
+
+	/* Send event to userspace */
+	schedule_home_offchan_stats_event_ext(wdev, transaction_id, raw_ctx);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "RX function %s cleanup completed\n",
+		   is_success ? "completion" : "failure");
 }
 
 /**
@@ -484,7 +654,7 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 	case WMI_SCAN_EVENT_DEQUEUED:
 	case WMI_SCAN_EVENT_PREEMPTED:
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-			   "offchan: event %u\n",
+			   "offchan: scan failure event %u\n",
 			   event_type);
 		break;
 	default:
@@ -494,6 +664,16 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 		return;
 	}
 	ath12k_compute_offchan_timing_stats(raw_ctx);
+	/* Handle RX function completion/failure after timing stats computation */
+	if (event_type == WMI_SCAN_EVENT_COMPLETED) {
+		/* Handle RX function completion */
+		ath12k_handle_rx_scan_event(ar, raw_ctx, true, event_type);
+	} else if (event_type == WMI_SCAN_EVENT_START_FAILED ||
+		   event_type == WMI_SCAN_EVENT_DEQUEUED ||
+		   event_type == WMI_SCAN_EVENT_PREEMPTED) {
+		/* Handle RX function failure */
+		ath12k_handle_rx_scan_event(ar, raw_ctx, false, event_type);
+	}
 	spin_unlock_bh(&raw_ctx->chan_lock);
 }
 
@@ -527,30 +707,52 @@ static void ath12k_custom_txrx_timeout_handler(struct timer_list *t)
 	struct ath12k_hw *ah;
 	struct ath12k *ar;
 	struct wireless_dev *wdev;
+	struct ieee80211_vif *vif_snapshot;
+	u32 transaction_id;
+	u8 func_type;
 
-	if (!raw_pkt_ctx || !raw_pkt_ctx->vif)
+	if (!raw_pkt_ctx)
 		return;
 
-	ahvif = (struct ath12k_vif *)raw_pkt_ctx->vif->drv_priv;
-	if (!ahvif)
+	/* Capture vif pointer and other data under lock protection */
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
+	vif_snapshot = raw_pkt_ctx->vif;
+	if (!vif_snapshot) {
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 		return;
+	}
+
+	/* Get ahvif while still holding the lock */
+	ahvif = (struct ath12k_vif *)vif_snapshot->drv_priv;
+	if (!ahvif) {
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+		return;
+	}
 
 	ah = ahvif->ah;
-	if (!ah)
+	if (!ah) {
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 		return;
+	}
 
-	ar = ah->radio;  /* Get ar from ah */
-	if (!ar)
+	ar = ah->radio;
+	if (!ar) {
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 		return;
+	}
 
-	wdev = ieee80211_vif_to_wdev(raw_pkt_ctx->vif);
+	transaction_id = raw_pkt_ctx->transaction_id;
+	func_type = raw_pkt_ctx->func_type;
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	wdev = ieee80211_vif_to_wdev(vif_snapshot);
 	if (!wdev) {
 		ath12k_err(ar->ab, "Failed to get wdev from vif\n");
 		return;
 	}
 
-	ath12k_warn(ar->ab, "Home/off-channel TX timed out for transaction 0x%x\n",
-		    raw_pkt_ctx->transaction_id);
+	ath12k_warn(ar->ab, "Home/off-channel operation timed out for transaction 0x%x (func_type=%u)\n",
+		    transaction_id, func_type);
 
 	/* Drain the queue first (this acquires and releases the lock internally) */
 	ath12k_home_offchan_tx_drain(raw_pkt_ctx);
@@ -558,15 +760,11 @@ static void ath12k_custom_txrx_timeout_handler(struct timer_list *t)
 	/* Now acquire lock for all remaining operations to ensure atomicity */
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 
-	/* Send timeout response to user space while still holding lock */
-	schedule_home_offchan_stats_event_ext(wdev, raw_pkt_ctx->transaction_id, raw_pkt_ctx);
+	/* Set operation status to failure (timeout) */
+	raw_pkt_ctx->operation_status = 1;
 
-	/* Clear the vif pointer to indicate operation complete */
-	raw_pkt_ctx->vif = NULL;
-	/* Clear custom_tx_status array */
-	memset(raw_pkt_ctx->custom_tx_status, 0, sizeof(raw_pkt_ctx->custom_tx_status));
-	/* Clear channel statistics */
-	memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
+	/* Send timeout response to user space while still holding lock */
+	schedule_home_offchan_stats_event_ext(wdev, transaction_id, raw_pkt_ctx);
 
 	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 }
@@ -615,6 +813,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	u16 scan_dur = params->scan_dur;
 	u8 num_frames = params->num_frames;
 	u8 func = params->func;
+	u8 link_id = params->link_id;
 	struct nlattr *tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX + 1];
 	int ret, nss = 0, preamble = 0, mcs = 0, retry = 0, power = 0, rem;
 	uint8_t tx_bf = 0;
@@ -635,7 +834,113 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	int cur_freq = 0;
 	struct ieee80211_channel *chan;
 	struct ath12k_raw_pkt_ctx *raw_pkt_ctx;
+	struct sk_buff_head temp_list;
 	bool is_home_channel = false;
+	u32 beacon_interval = 100;
+	u32 timeout_ms;
+
+	/* Common setup for both TX and RX functions */
+	ah = ath12k_hw_to_ah(hw);
+	if (!ah) {
+		ath12k_err(NULL, "Failed to get ah from wiphy\n");
+		return -ENODEV;
+	}
+
+	/* Find any active vif first to get ahvif */
+	for (int i = 0; i < ah->num_radio; i++) {
+		struct ath12k *temp_ar = &ah->radio[i];
+
+		list_for_each_entry(arvif, &temp_ar->arvifs, list) {
+			if (arvif->is_up && arvif->vdev_id != 0xFF) {
+				ahvif = container_of((void *)arvif, struct ath12k_vif, deflink);
+				vif = ahvif->vif;
+				ar = temp_ar;
+				break;
+			}
+		}
+
+		if (ar && vif && ahvif)
+			break;
+	}
+
+	if (!ar || !vif || !ahvif) {
+		ath12k_err(NULL, "No active vif found on any radio\n");
+		return -ENODEV;
+	}
+
+	rcu_read_lock();
+	if (link_id == INVALID_LINK_ID) {
+		arvif = &ahvif->deflink;
+	} else {
+		if (link_id < ATH12K_NUM_MAX_LINKS)
+			arvif = rcu_dereference(ahvif->link[link_id]);
+		else
+			arvif = NULL;
+	}
+	if (!arvif || !arvif->ar) {
+		rcu_read_unlock();
+		ath12k_err(ar->ab, "Failed to get arvif for link_id %u\n", link_id);
+		return -EINVAL;
+	}
+	ar = arvif->ar;
+	rcu_read_unlock();
+
+	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
+
+	if (!arvif->chanctx.def.chan) {
+		ath12k_err(ar->ab, "Failed to send link info due to no chan ctx\n");
+		return -EINVAL;
+	}
+
+	ctx = &arvif->chanctx;
+	chan = ctx->def.chan;
+	cur_freq = chan->center_freq;
+	is_home_channel = (freq == cur_freq);
+
+	/* Validate device state for off-channel operations */
+	ret = ath12k_validate_offchan_operation(ar, arvif);
+	if (ret) {
+		ath12k_err(ar->ab, "Validation failed for off-channel operation: %d\n", ret);
+		return ret;
+	}
+
+	/* Common context initialization for both TX and RX functions */
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
+	raw_pkt_ctx->transaction_id = transaction_id;
+	raw_pkt_ctx->func_type = func;
+	raw_pkt_ctx->num_frames = (func == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) ? 0 : num_frames;
+	raw_pkt_ctx->home_chan = is_home_channel;
+	raw_pkt_ctx->vif = vif;
+	raw_pkt_ctx->req_freq = freq;
+	memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
+	/* Initialize all packet statuses to 1 (failed) by default.
+	 * They will be set to 0 (success) only when we receive completion.
+	 * This way, any packet that times out or doesn't complete will
+	 * already be marked as failed without needing explicit handling.
+	 */
+	memset(raw_pkt_ctx->custom_tx_status, 1, sizeof(raw_pkt_ctx->custom_tx_status));
+	/* Set atomic counter to expected number of completions (num_frames) */
+	atomic_set(&raw_pkt_ctx->num_cmpl_pending, num_frames);
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	/* For RX function, set timer and return early */
+	if (func == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "RX function - setting timer for %d ms (home_chan=%d)\n",
+			   ATH12K_MAX_OFFCHAN_WAIT + scan_dur, is_home_channel);
+		mod_timer(&raw_pkt_ctx->offchan_timer,
+			  jiffies + msecs_to_jiffies(ATH12K_MAX_OFFCHAN_WAIT + scan_dur));
+
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "RX function setup complete, waiting for ROC from application\n");
+		return 0;
+	}
+
+	/* TX function - offchan_frame must be present */
+	if (!offchan_frame) {
+		ath12k_err(NULL, "offchan_frame is NULL for TX function\n");
+		return -EINVAL;
+	}
 
 	nla_for_each_nested(frame, offchan_frame, rem) {
 		memset(tb, 0, attrsize);
@@ -659,52 +964,18 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			power = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_POWER]);
 		if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_TX_BEAMFORMING])
 			tx_bf = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_TX_BEAMFORMING]);
+
+		/* TX function - process frame data */
 		if (!tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]) {
-			ath12k_err(NULL, "Frame data missing\n");
+			ath12k_err(NULL, "Frame data missing for TX function\n");
 			return -EINVAL;
 		}
 
 		buf = nla_data(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]);
 		buf_len = nla_len(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]);
 
-		ah = ath12k_hw_to_ah(hw);
-		if (!ah) {
-			ath12k_err(NULL, "Failed to get ah from wiphy\n");
-			return -ENODEV;
-		}
-		/* Get the ar from the ah using band currently */
-		ar = ath12k_ah_to_ar(ah, band);
-
-		if (!ar) {
-			ath12k_err(NULL, "Failed to get ar from ah\n");
-			return -ENODEV;
-		}
-
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "Frame data received: len=%d, band=%d\n", buf_len, band);
-
-		/* Get raw packet context structure */
-		raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
-
-		list_for_each_entry(arvif, &ar->arvifs, list) {
-			if (arvif->is_up && arvif->vdev_id != 0xFF) {
-				// Found a valid arvif
-				ahvif = container_of((void *)arvif, struct ath12k_vif, deflink);
-				vif = ahvif->vif;
-				break;
-			}
-		}
-
-		if (!vif || !arvif) {
-			ath12k_err(ar->ab, "No active vif found\n");
-			return -ENODEV;
-		}
-
-		/* Check if chanctx is valid before allocating SKB */
-		if (!arvif->chanctx.def.chan) {
-			ath12k_err(ar->ab, "Failed to send link info due to no chan ctx\n");
-			return -EINVAL;
-		}
 
 		/* Allocate a new skb with enough headroom for the 802.11 header */
 		skb = dev_alloc_skb(buf_len);
@@ -731,22 +1002,18 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "Stored transaction ID 0x%x in raw_pkt_ctx\n", transaction_id);
 
-		ctx = &arvif->chanctx;
-		chan = ctx->def.chan;
-		cur_freq = chan->center_freq;
-
 		ret = ath12k_fill_tx_param(skb, nss, preamble, mcs, retry, power, tx_bf, band);
 		if (ret) {
 			ath12k_err(ar->ab, "Failed to fill tx param: %d\n", ret);
 			dev_kfree_skb_any(skb);
+			/* Cancel timer if it was set for off-channel operation */
+			if (!is_home_channel)
+				del_timer_sync(&raw_pkt_ctx->offchan_timer);
 			return ret;
 		}
 
 		/* Set the control.vif field */
 		info->control.vif = vif;
-
-		/* Determine if home channel or off-channel and set appropriate flags */
-		is_home_channel = (freq == cur_freq);
 
 		/*
 		* Set flags to indicate to driver whether this is home channel or off-channel TX
@@ -764,45 +1031,39 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 
 		/* Initialize context under lock protection BEFORE queuing packet */
 		spin_lock_bh(&raw_pkt_ctx->chan_lock);
-		/* Initialize context fields */
-		raw_pkt_ctx->transaction_id = transaction_id;
-		raw_pkt_ctx->func_type = func;
-		raw_pkt_ctx->num_frames = num_frames;
-		raw_pkt_ctx->home_chan = is_home_channel;
-		raw_pkt_ctx->vif = vif;
-
-		/* Initialize all packet statuses to 1 (failed) by default.
-		 * They will be set to 0 (success) only when we receive completion.
-		 * This way, any packet that times out or doesn't complete will
-		 * already be marked as failed without needing explicit handling.
-		 */
-		memset(raw_pkt_ctx->custom_tx_status, 1, sizeof(raw_pkt_ctx->custom_tx_status));
-
-		/* Set atomic counter to expected number of completions (num_frames).
-		 * This must be done atomically with packet queuing to prevent race
-		 * where completion handler runs before counter is set.
-		 */
-		atomic_set(&raw_pkt_ctx->num_cmpl_pending, num_frames);
 		/* Now add packet to queue */
 		skb_queue_tail(&raw_pkt_ctx->pkt_list, skb);
 		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+	}
 
-		if (is_home_channel) {
-			/* Home channel - send immediately */
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "Home channel TX - sending immediately\n");
-			ath12k_custom_tx_send(vif, raw_pkt_ctx);
-		} else {
-			/* Off-channel - set timer and send */
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "Off-channel TX - setting timer for %d ms and sending to driver\n",
-				   ATH12K_MAX_OFFCHAN_WAIT + scan_dur);
-			mod_timer(&raw_pkt_ctx->offchan_timer,
-				   jiffies + msecs_to_jiffies(ATH12K_MAX_OFFCHAN_WAIT + scan_dur));
-			ath12k_custom_tx_send(vif, raw_pkt_ctx);
+	if (is_home_channel) {
+		/* Home channel - send immediately */
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "Home channel TX - sending immediately\n");
+	} else {
+		/* Get beacon interval from vif if available */
+		if (vif && vif->bss_conf.beacon_int) {
+			beacon_interval = vif->bss_conf.beacon_int;
 		}
-		// Only process the first frame for now
-		break;
+
+		timeout_ms = ATH12K_MAX_OFFCHAN_WAIT + scan_dur + beacon_interval;
+
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "Off-channel TX - setting timer for %u ms (base=%u + scan=%u + beacon=%u) and sending %u packets to WMI queue\n",
+			   timeout_ms, ATH12K_MAX_OFFCHAN_WAIT, scan_dur, beacon_interval, num_frames);
+		mod_timer(&raw_pkt_ctx->offchan_timer,
+			   jiffies + msecs_to_jiffies(timeout_ms));
+	}
+
+	/* Move all packets to temporary list under lock */
+	skb_queue_head_init(&temp_list);
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
+	skb_queue_splice_init(&raw_pkt_ctx->pkt_list, &temp_list);
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	/* Process all packets without holding lock */
+	while ((skb = skb_dequeue(&temp_list)) != NULL) {
+			ath12k_custom_tx_extn(skb);
 	}
 
 	return 0;
@@ -811,51 +1072,25 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 void ath12k_home_offchan_tx_drain(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	struct sk_buff *skb;
+	int drained_count = 0;
 
 	if (!raw_pkt_ctx)
 		return;
 
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 	while ((skb = skb_dequeue(&raw_pkt_ctx->pkt_list)) != NULL) {
-		/* Decrement counter for both home and off-channel packets
-		 * since we increment it for both in tx_rx_frame function
-		 */
-		atomic_dec(&raw_pkt_ctx->num_cmpl_pending);
 		dev_kfree_skb_any(skb);
+		drained_count++;
 	}
 	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	if (drained_count > 0) {
+		ath12k_dbg(NULL, ATH12K_DBG_WMI,
+			   "ath12k_home_offchan_tx_drain: Drained %d SKBs from queue (not transmitted)\n",
+			   drained_count);
+	}
 }
 
-void ath12k_custom_tx_send(struct ieee80211_vif *vif,
-			     struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
-{
-	struct sk_buff *skb;
-	struct ath12k_vif *ahvif;
-	struct ath12k_hw *ah;
-	struct ath12k *ar;
-	struct ieee80211_tx_control control = {};
-	struct ieee80211_hw *hw;
-
-	if (!raw_pkt_ctx || !vif)
-		return;
-
-	ahvif = (struct ath12k_vif *)vif->drv_priv;
-	ah = ahvif->ah;
-	ar = ah->radio;  /* Get ar from ah */
-	hw = ah->hw;
-
-	spin_lock_bh(&raw_pkt_ctx->chan_lock);
-	skb = skb_dequeue(&raw_pkt_ctx->pkt_list);
-	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
-
-	if (!skb)
-		return;
-
-	/* Transmit the packet */
-	control.sta = NULL;
-	//ieee80211_tx_status(hw, skb);
-	ath12k_custom_tx_extn(skb);
-}
 
 void ath12k_home_offchan_cleanup(struct ath12k *ar)
 {
@@ -871,6 +1106,31 @@ void ath12k_home_offchan_cleanup(struct ath12k *ar)
 	raw_pkt_ctx->vif = NULL;
 }
 
+/**
+ * ath12k_convert_app_band_to_nl80211 - Convert application band to NL80211 band
+ * @app_band: Band value from application (0=auto, 1=2GHz, 2=5GHz, 3=6GHz)
+ *
+ * Converts application band enumeration to NL80211 band enumeration
+ * for use with ieee80211_channel_to_frequency()
+ *
+ * Return: NL80211_BAND_* value, or -EINVAL for invalid band
+ */
+static int ath12k_convert_app_band_to_nl80211(int app_band)
+{
+	switch (app_band) {
+	case BAND_DEFAULT:  /* 0 - auto, use 2GHz as default */
+		return NL80211_BAND_2GHZ;
+	case BAND_2GHZ:     /* 1 - 2GHz */
+		return NL80211_BAND_2GHZ;
+	case BAND_5GHZ:     /* 2 - 5GHz */
+		return NL80211_BAND_5GHZ;
+	case BAND_6GHZ:     /* 3 - 6GHz */
+		return NL80211_BAND_6GHZ;
+	default:
+		return -EINVAL;
+	}
+}
+
 int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 					      struct wireless_dev *wdev,
 					      const void *data,
@@ -880,8 +1140,11 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 	struct ath12k_home_offchan_params params;
 	int ret = 0;
 	int func = 0, chan = 0, band = 0, scan_dur = 0, freq = 0;
+	int nl80211_band = 0;
 	u32 transaction_id = 0;
 	u8 num_frames = 0;
+	u8 link_id = 0;
+	bool is_mld = false;
 
 	ret = nla_parse(tb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_MAX,
 			data, data_len,
@@ -906,7 +1169,22 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 	if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_NUM_FRAMES])
 		num_frames = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_NUM_FRAMES]);
 
-	freq = ieee80211_channel_to_frequency(chan,band);
+	/* Check if MLD is enabled */
+	if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_IS_MLD])
+		is_mld = nla_get_flag(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_IS_MLD]);
+
+	/* Extract link_id only if MLD is enabled */
+	if (is_mld && tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_LINK_ID])
+		link_id = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_LINK_ID]);
+
+	/* Convert application band to NL80211 band for frequency calculation */
+	nl80211_band = ath12k_convert_app_band_to_nl80211(band);
+	if (nl80211_band < 0) {
+		ath12k_err(NULL, "Invalid band value: %d\n", band);
+		return -EINVAL;
+	}
+
+	freq = ieee80211_channel_to_frequency(chan, nl80211_band);
 
 	/* Handle CANCEL function - doesn't need frame data */
 	if (func == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_CANCEL) {
@@ -960,17 +1238,17 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 				   "Cancel confirmation event scheduled\n");
 		}
-		/* 4. Clean up context */
-		raw_pkt_ctx->vif = NULL;
-		memset(raw_pkt_ctx->custom_tx_status, 0, sizeof(raw_pkt_ctx->custom_tx_status));
-		memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "CANCEL operation completed successfully\n");
 		return 0;
 	}
-	if (!tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME]) {
-		ath12k_err(NULL, "Offchan Frame missing\n");
-		return -EINVAL;
+
+	/* Frame attribute is not required for RX function */
+	if (func != QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
+		if (!tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME]) {
+			ath12k_err(NULL, "Offchan Frame missing for TX function\n");
+			return -EINVAL;
+		}
 	}
 
 	/* Assign values to params structure */
@@ -982,10 +1260,13 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 	params.scan_dur = scan_dur;
 	params.num_frames = num_frames;
 	params.func = func;
+	params.link_id = link_id;
+	params.is_mld = is_mld;
 
+	/* Call the unified frame handler for both TX and RX functions */
 	ret = ath12k_vendor_home_offchan_tx_rx_frame(&params);
 	if (ret) {
-		ath12k_err(NULL, "failed to parse Offchan Frames\n");
+		ath12k_err(NULL, "failed to process home/offchan operation\n");
 		return ret;
 	}
 
@@ -1052,6 +1333,23 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		return -EINVAL;
 	}
 
+	/* Add operation status (0=success, 1=failure) */
+	if (raw_pkt_ctx && nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_STATUS, raw_pkt_ctx->operation_status)) {
+		ath12k_err(NULL, "Failed to put operation_status\n");
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	/* Add channel switch timing for all functions (TX and RX, home and off-channel) */
+	if (raw_pkt_ctx && stats) {
+		if (nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_CHANSWITCH_HTOF, stats->chanswitch_time_htof) ||
+			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_CHANSWITCH_FTOH, stats->chanswitch_time_ftoh)) {
+			ath12k_err(NULL, "Failed to put channel switch timing\n");
+			kfree_skb(skb);
+			return -EINVAL;
+		}
+	}
+
 	/* Add channel statistics only for RX function type */
 	if (raw_pkt_ctx && stats && raw_pkt_ctx->func_type == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
 		if (nla_put_s16(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_NOISE_FLOOR, stats->noise_floor) ||
@@ -1061,8 +1359,6 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_RX_CLEAR_COUNT, stats->rx_clear_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_CYCLE_COUNT, stats->cycle_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_DWELL_TIME, stats->dwell_time) ||
-			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_CHANSWITCH_HTOF, stats->chanswitch_time_htof) ||
-			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_CHANSWITCH_FTOH, stats->chanswitch_time_ftoh) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_COUNT, stats->blanking_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_DURATION, stats->blanking_duration)) {
 			ath12k_err(NULL, "Failed to put offchan stats fields\n");
@@ -1102,6 +1398,9 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		   transaction_id);
 	/* Send the vendor event */
 	cfg80211_vendor_event(skb, GFP_KERNEL);
+
+	/* Reset context to clean state after event is sent */
+	ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
 
 	return 0;
 }

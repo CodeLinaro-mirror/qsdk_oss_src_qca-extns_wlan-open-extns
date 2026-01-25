@@ -63,9 +63,9 @@ void ath12k_wmi_esp_estimate_event_extn(struct ath12k_base *ab,
 	rcu_read_lock();
 	ar = ath12k_mac_get_ar_by_pdev_id(ab, pdev_id);
 	if (!ar) {
-		ath12k_warn(ab,
-			    "ESP: Air time estimate event for invalid pdev %d\n",
-			    pdev_id);
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "ESP: Air time estimate event for invalid pdev %d\n",
+			   pdev_id);
 		goto unlock;
 	}
 

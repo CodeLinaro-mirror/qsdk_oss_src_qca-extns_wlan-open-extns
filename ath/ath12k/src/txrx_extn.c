@@ -440,17 +440,23 @@ free_skb:
 	return ret;
 }
 
-void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
+void ath12k_update_offchan_stats_extn(struct ath12k *ar,
+				      struct sk_buff *skb,
+				      u32 freq,
 				      struct wmi_chan_info_event *ch_info)
 {
 	struct ath12k_raw_pkt_ctx *raw_ctx;
 	struct ath12k_offchan_stat *stats;
+	struct ath12k_blanking_params *ev, *blank_stats;
+	const void **tb;
+	struct ath12k_base *ab;
 
 	if (!ar) {
 		ath12k_dbg(NULL, ATH12K_DBG_WMI,
 			   "failed to update offchan stats, ar is NULL");
 		return;
 	}
+	ab = ar->ab;
 	raw_ctx = &ar->ar_extn.raw_pkt_ctx;
 
 	spin_lock_bh(&raw_ctx->chan_lock);
@@ -470,14 +476,45 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
 		stats->rx_clear_count = le32_to_cpu(ch_info->rx_clear_count);
 		stats->rx_frame_count = le32_to_cpu(ch_info->rx_frame_count);
 		stats->cycle_count = le32_to_cpu(ch_info->cycle_count);
-		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+
+
+		tb = ath12k_wmi_tlv_parse_alloc(ab, skb, GFP_ATOMIC);
+		if (IS_ERR(tb)) {
+			ath12k_dbg(ab, ATH12K_DBG_WMI,
+				   "failed to parse tlv for blanking params\n");
+                        spin_unlock_bh(&raw_ctx->chan_lock);
+			return;
+		}
+
+		blank_stats = &raw_ctx->chan_stat.blank_params;
+		if (tb[WMI_TAG_SCAN_BLANKING_PARAMS_INFO]) {
+			*ev = *(struct ath12k_blanking_params *)tb[WMI_TAG_SCAN_BLANKING_PARAMS_INFO];
+
+			blank_stats->valid = le32_to_cpu(ev->valid);
+			blank_stats->blanking_duration = le32_to_cpu(ev->blanking_duration);
+			blank_stats->blanking_count = le32_to_cpu(ev->blanking_count);
+
+			ath12k_dbg(ab, ATH12K_DBG_WMI,
+				   "scan blanking params: valid=%u count=%u duration=%u\n",
+				   blank_stats->valid, blank_stats->blanking_count,
+				   blank_stats->blanking_duration);
+		} else {
+			blank_stats->valid = 0;
+			blank_stats->blanking_count = 0;
+			blank_stats->blanking_duration = 0;
+			ath12k_dbg(ab, ATH12K_DBG_WMI,
+				   "scan blanking params not present in event\n");
+		}
+		kfree(tb);
+
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
 			   "offchan stats updated: freq=%u nf=%d tx=%u rx=%u "
 			   "rx_clear=%u cycle=%u\n",
 			   freq, stats->noise_floor, stats->tx_frame_count,
 			   stats->rx_frame_count, stats->rx_clear_count,
 			   stats->cycle_count);
 	} else {
-		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
 			   "Disgarding offchan stats update [%u, %u, %u, %u]",
 			    timer_pending(&raw_ctx->offchan_timer),
 			    raw_ctx->home_chan, raw_ctx->req_freq,
@@ -1354,14 +1391,14 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 	/* Add channel statistics only for RX function type */
 	if (raw_pkt_ctx && stats && raw_pkt_ctx->func_type == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
 		if (nla_put_s16(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_NOISE_FLOOR, stats->noise_floor) ||
-			nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_VALID, stats->blanking_params_valid) ||
+			nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_VALID, stats->blank_params.valid) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_TX_FRAME_COUNT, stats->tx_frame_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_RX_FRAME_COUNT, stats->rx_frame_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_RX_CLEAR_COUNT, stats->rx_clear_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_CYCLE_COUNT, stats->cycle_count) ||
 			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_DWELL_TIME, stats->dwell_time) ||
-			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_COUNT, stats->blanking_count) ||
-			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_DURATION, stats->blanking_duration)) {
+			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_COUNT, stats->blank_params.blanking_count) ||
+			nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_BLANKING_DURATION, stats->blank_params.blanking_duration)) {
 			ath12k_err(NULL, "Failed to put offchan stats fields\n");
 			kfree_skb(skb);
 			return -EINVAL;

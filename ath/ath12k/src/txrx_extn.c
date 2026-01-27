@@ -838,6 +838,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	bool is_home_channel = false;
 	u32 beacon_interval = 100;
 	u32 timeout_ms;
+	u8 effective_link_id;
 
 	/* Common setup for both TX and RX functions */
 	ah = ath12k_hw_to_ah(hw);
@@ -846,49 +847,50 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		return -ENODEV;
 	}
 
-	/* Find any active vif first to get ahvif */
-	for (int i = 0; i < ah->num_radio; i++) {
-		struct ath12k *temp_ar = &ah->radio[i];
-
-		list_for_each_entry(arvif, &temp_ar->arvifs, list) {
-			if (arvif->is_up && arvif->vdev_id != 0xFF) {
-				ahvif = container_of((void *)arvif, struct ath12k_vif, deflink);
-				vif = ahvif->vif;
-				ar = temp_ar;
-				break;
-			}
-		}
-
-		if (ar && vif && ahvif)
-			break;
-	}
-
-	if (!ar || !vif || !ahvif) {
-		ath12k_err(NULL, "No active vif found on any radio\n");
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif) {
+		ath12k_err(NULL, "Failed to get vif from wdev\n");
 		return -ENODEV;
 	}
 
+	ahvif = ath12k_vif_to_ahvif(vif);
+	if (!ahvif) {
+		ath12k_err(NULL, "Failed to get ahvif from vif\n");
+		return -ENODEV;
+	}
+
+	/* Validate link_id parameter early to catch invalid values */
+	if (link_id != INVALID_LINK_ID && link_id >= ATH12K_NUM_MAX_LINKS) {
+		ath12k_err(NULL, "Invalid link_id %u (max allowed: %u)\n",
+			   link_id, ATH12K_NUM_MAX_LINKS - 1);
+		return -EINVAL;
+	}
+
+	if (link_id == INVALID_LINK_ID || !ieee80211_vif_is_mld(vif)) {
+		effective_link_id = 0;
+	} else {
+		effective_link_id = link_id;
+	}
+
 	rcu_read_lock();
-	if (link_id == INVALID_LINK_ID) {
+	if (effective_link_id == 0) {
 		arvif = &ahvif->deflink;
 	} else {
-		if (link_id < ATH12K_NUM_MAX_LINKS)
-			arvif = rcu_dereference(ahvif->link[link_id]);
+		if (effective_link_id < ATH12K_NUM_MAX_LINKS)
+			arvif = rcu_dereference(ahvif->link[effective_link_id]);
 		else
 			arvif = NULL;
 	}
 	if (!arvif || !arvif->ar) {
 		rcu_read_unlock();
-		ath12k_err(ar->ab, "Failed to get arvif for link_id %u\n", link_id);
+		ath12k_err(NULL, "Failed to get arvif for effective_link_id %u\n", effective_link_id);
 		return -EINVAL;
 	}
 	ar = arvif->ar;
-	rcu_read_unlock();
-
-	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
 
 	if (!arvif->chanctx.def.chan) {
-		ath12k_err(ar->ab, "Failed to send link info due to no chan ctx\n");
+		rcu_read_unlock();
+		ath12k_err(NULL, "Failed to send link info due to no chan ctx\n");
 		return -EINVAL;
 	}
 
@@ -897,12 +899,16 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	cur_freq = chan->center_freq;
 	is_home_channel = (freq == cur_freq);
 
-	/* Validate device state for off-channel operations */
+	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
+
 	ret = ath12k_validate_offchan_operation(ar, arvif);
 	if (ret) {
+		rcu_read_unlock();
 		ath12k_err(ar->ab, "Validation failed for off-channel operation: %d\n", ret);
 		return ret;
 	}
+
+	rcu_read_unlock();
 
 	/* Common context initialization for both TX and RX functions */
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
@@ -995,8 +1001,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		/* Set the ar in the skb_cb */
 		skb_cb->u.ar = ar;
 
-		/* Set the link_id (usually 0 for non-MLO) */
-		skb_cb->link_id = 0;
+		skb_cb->link_id = effective_link_id;
 
 		/* Transaction ID is already stored in raw_pkt_ctx->transaction_id above */
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,

@@ -1581,6 +1581,15 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                            "GPIO %u output set to %u\n", gpio_pin, gpio_value);
                 break;
         }
+        case QCA_WLAN_VENDOR_RADIO_PARAM_MSDU_TTL:
+                ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_MSDU_TTL_CMDID,
+                                               value, ar->pdev->pdev_id);
+                if (!ret) {
+                        ar->radio_cfg.msdu_ttl = value;
+                } else {
+                        ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MSDU_TTL_CMDID to firmware");
+                }
+                break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -1998,6 +2007,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                           "Temperature read: %d°C (0x%x)\n",
                           (s32)*value, *value);
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_MSDU_TTL:
+                *value = ar->radio_cfg.msdu_ttl;
+                ret = 0;
                 break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

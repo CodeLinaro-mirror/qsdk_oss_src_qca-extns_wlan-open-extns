@@ -17,6 +17,7 @@ struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
 struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
+struct ath12k_skb_cb;
 
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
@@ -55,6 +56,8 @@ struct sta_240mhz_info {
 /* Checks whether SKB has custom pkt */
 #define ATH12K_IS_CUSTOM_PKT(cb)	(cb->flags & (ATH12K_SKB_CUSTOM_MGMT_TX |\
 						      ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX))
+/* Checks if Tx Params configured by User */
+#define ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN(ar) (ar->ar_extn.raw_pkt_ctx.tx_param.tx_param_configured)
 
 /* Band types used in offchan tx */
 enum band_type {
@@ -326,7 +329,7 @@ static inline void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 {
 }
 
-static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar,
+static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb,
 						     void *ptr)
 {
 }
@@ -437,13 +440,13 @@ int ath12k_custom_tx_extn(struct sk_buff *skb);
 
 /*
  * ath12k_wmi_prepare_tx_params_extn() - Prepare tx params for WMI command
- * @ar: Pointer to the ath12k structure
+ * @skb_cb: Pointer to the skb_cb
  * @ptr: Pointer to the WMI buffer
  *
  * This function prepares the tx params for the WMI command by:
  * Setting the appropriate fields in the tx_param_dword0 and tx_param_dword1 values
  */
-void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr);
+void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb, void *ptr);
 
 /**
  * ath12k_custom_tx_free_extn() - Free custom management TX skb and

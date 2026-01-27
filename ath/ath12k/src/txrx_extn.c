@@ -332,8 +332,9 @@ static int ath12k_validate_offchan_operation(struct ath12k *ar,
 	return 0;
 }
 
-void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
+void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb, void *ptr)
 {
+	struct ath12k *ar = skb_cb->u.ar;
 	struct ath12k_skb_tx_param *tx_param = &ar->ar_extn.raw_pkt_ctx.tx_param;
 	struct wmi_mgmt_send_params *params = (struct wmi_mgmt_send_params *)ptr;
 	u32 *tx_param_dword0 = &params->tx_param_dword0;
@@ -342,7 +343,8 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
 	u32 nss = tx_param->nss;
 	u32 preamble = tx_param->preamble;
 
-	if (!tx_param->tx_param_configured)
+	if (!ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN(ar) ||
+	    !ATH12K_IS_CUSTOM_PKT(skb_cb))
 		return;
 
 	ath12k_process_rate_params(&mcs, &nss, preamble);
@@ -372,7 +374,6 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
 			    /* Set retry limit ext in dword1 [25:23] */
 			    le32_encode_bits((tx_param->retry ? ((tx_param->retry & 0x70) >> 4) : 0),
 					     WMI_TX_PARAMS_DWORD1_RETRY_LIMIT_EXT);
-	tx_param->tx_param_configured = false;
 }
 
 int ath12k_custom_tx_extn(struct sk_buff *skb)

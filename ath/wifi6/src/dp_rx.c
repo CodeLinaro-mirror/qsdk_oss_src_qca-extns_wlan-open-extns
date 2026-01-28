@@ -431,7 +431,7 @@ ath12k_wifi6_dp_rx_handle_desc(struct ath12k_dp *dp,
 {
 	u8 *vaddr = rx_desc->vaddr;
 
-	ath12k_dbg(dp->ab, ATH12K_DBG_DP_MON_RX,
+	ath12k_dbg(dp->ab, ATH12K_DBG_DP_MON,
 		   "rx_handle_desc: cookie 0x%x pool %u cleared in_use=%u unmapped=%u vaddr=%p\n",
 		   rx_desc->cookie, rx_desc->pool_id,
 		   rx_desc->in_use, rx_desc->unmapped, vaddr);
@@ -506,7 +506,7 @@ int ath12k_wifi6_dp_buf_replenish(struct ath12k_dp *dp,
 		rx_desc->in_use = 1;
 		rx_desc->unmapped = 0;
 
-		ath12k_dbg(ab, ATH12K_DBG_DP_MON_RX,
+		ath12k_dbg(ab, ATH12K_DBG_DP_MON,
 			   "replenish: cookie 0x%x pool %u in_use=%u unmapped=%u paddr=%p vaddr=%p\n",
 			   rx_desc->cookie, rx_desc->pool_id,
 			   rx_desc->in_use, rx_desc->unmapped, &rx_desc->paddr, rx_desc->vaddr);
@@ -546,7 +546,7 @@ out:
 	if (unlikely(!list_empty(used_list))) {
 		list_for_each_entry_safe(rx_desc, tmp_rx_desc, used_list, list) {
 
-			ath12k_dbg(ab, ATH12K_DBG_DP_MON_RX,
+			ath12k_dbg(ab, ATH12K_DBG_DP_MON,
 				   "replenish-out: cookie 0x%x pool %u in_use=%u unmapped=%u\n",
 				   rx_desc->cookie, rx_desc->pool_id,
 				   rx_desc->in_use, rx_desc->unmapped);

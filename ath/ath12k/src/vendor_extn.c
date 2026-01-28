@@ -18,6 +18,7 @@
 #include "esp_extn.h"
 #include "../ini.h"
 #include "../cmn_defs.h"
+#include "../telemetry_agent_if.h"
 
 
 const struct nla_policy
@@ -504,6 +505,55 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MGMT_TX_POWER to firmware");
 		}
 		break;
+        case QCA_WLAN_VENDOR_GLOBAL_RSSI_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_RSSI_MAX_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MAX_THRESH:
+		if ((int32_t)value > 0 || (int32_t)value < -100) {
+			ath12k_err(NULL, "Invalid RSSI/ACKRSSI threshold value %d. Valid range: -100 to 0 dBm\n",
+				   (int32_t)value);
+			ret = -EINVAL;
+		} else {
+			if (param == QCA_WLAN_VENDOR_GLOBAL_RSSI_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RSSI_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_RSSI_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RSSI_MAX, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_ACKRSSI_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_ACKRSSI_MAX, value);
+
+			if (ret)
+				ath12k_err(NULL, "Failed to set RSSI/ACKRSSI threshold, param: %d\n", param);
+		}
+		break;
+	case QCA_WLAN_VENDOR_GLOBAL_TXRATE_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_TXRATE_MAX_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_RXRATE_MIN_THRESH:
+	case QCA_WLAN_VENDOR_GLOBAL_RXRATE_MAX_THRESH:
+		if ((int32_t)value < 0) {
+			ath12k_err(NULL, "Invalid rate threshold value %d. Rate must be positive\n",
+				   (int32_t)value);
+			ret = -EINVAL;
+		} else {
+			if (param == QCA_WLAN_VENDOR_GLOBAL_TXRATE_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_TXRATE_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_TXRATE_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_TXRATE_MAX, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_RXRATE_MIN_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RXRATE_MIN, value);
+			else if (param == QCA_WLAN_VENDOR_GLOBAL_RXRATE_MAX_THRESH)
+				ret = ath12k_telemetry_set_threshold(THRESHOLD_RXRATE_MAX, value);
+
+			if (ret)
+				ath12k_err(NULL, "Failed to set rate threshold, param: %d\n", param);
+		}
+		break;
+	case QCA_WLAN_VENDOR_GLOBAL_RSSI_RATE_BREACH_MASK:
+		ret = ath12k_telemetry_set_breach_mask(value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set RSSI/Rate breach mask\n");
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -519,6 +569,8 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                                           u32 param, u32 value, bool *reload)
 {
         int ret = -1;
+	u16 rx_ack_timeout = (value & 0xFFFF);
+	u16 pre_rx_ack_timeout = (value >> 16);
 
         switch (param) {
         case QCA_WLAN_VENDOR_RADIO_PARAM_TEST_RELOAD:
@@ -1258,8 +1310,6 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
         case QCA_WLAN_VENDOR_RADIO_PARAM_ACK_TIMEOUT:
 #define MIN_TX_ACK_TIMEOUT 0x40
 #define MAX_TX_ACK_TIMEOUT 0xFF
-                u16 rx_ack_timeout = (value & 0xFFFF);
-                u16 pre_rx_ack_timeout = (value >> 16);
                 if (rx_ack_timeout >= MIN_TX_ACK_TIMEOUT &&
                                 rx_ack_timeout <= (MAX_TX_ACK_TIMEOUT)) {
                         if (pre_rx_ack_timeout < MIN_TX_ACK_TIMEOUT ||
@@ -1367,6 +1417,197 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ar->radio_cfg.low_lat_mode = value;
                  }
                 break;
+        case QCA_WLAN_VENDOR_RADIO_PARAM_GET_TEMPERATURE:
+        {
+                struct ath12k_wmi_pdev *wmi = ar->wmi;
+                struct sk_buff *skb;
+                struct wmi_pdev_get_temperature_cmd {
+                        __le32 tlv_header;
+			__le32 param;
+                        __le32 pdev_id;
+                } __packed;
+                struct wmi_pdev_get_temperature_cmd *cmd;
+
+                /* Allocate WMI command buffer */
+                skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, sizeof(*cmd));
+                if (!skb) {
+                        ath12k_err(ar->ab, "Failed to allocate skb for temperature query\n");
+                        return -ENOMEM;
+                }
+
+                /* Construct WMI command */
+                cmd = (struct wmi_pdev_get_temperature_cmd *)skb->data;
+                cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG,
+                                            WMI_TAG_PDEV_GET_TEMPERATURE_CMD) |
+                                 FIELD_PREP(WMI_TLV_LEN,
+                                            sizeof(*cmd) - TLV_HDR_SIZE);
+                cmd->pdev_id = cpu_to_le32(ar->pdev->pdev_id);
+
+                /* Send WMI command directly */
+                ret = ath12k_wmi_cmd_send(wmi, skb,
+                                         WMI_PDEV_GET_TEMPERATURE_CMDID);
+                if (ret) {
+                        ath12k_err(ar->ab,
+                                  "Failed to send WMI_PDEV_GET_TEMPERATURE_CMDID: %d\n",
+                                  ret);
+                        dev_kfree_skb(skb);
+                        return ret;
+                }
+
+                ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+                          "Temperature query sent for pdev %d\n",
+                          ar->pdev->pdev_id);
+
+                /* Store that query was sent - response will come via event */
+                ar->radio_cfg.temperature_query_pending = 1;
+                ret = 0;
+                break;
+        }
+        case QCA_WLAN_VENDOR_RADIO_PARAM_GPIO_CONFIG:
+        {
+                struct ath12k_wmi_pdev *wmi = ar->wmi;
+                struct wmi_gpio_config_cmd *cmd;
+                struct sk_buff *skb;
+                u32 gpio_pin, gpio_dir, gpio_pull, gpio_function, gpio_intr;
+
+                /* Value encoding:
+                 * [31:24] - GPIO pin number (0-31)
+                 * [23:16] - GPIO direction (0=input, 1=output)
+                 * [15:8]  - GPIO pull type (0=none, 1=up, 2=down)
+                 * [7:4]   - GPIO interrupt mode
+                 * [3:0]   - GPIO function/mux
+                 */
+                gpio_pin      = (value >> 24) & 0xFF;
+                gpio_dir      = (value >> 16) & 0xFF;
+                gpio_pull     = (value >> 8)  & 0xFF;
+                gpio_intr     = (value >> 4)  & 0x0F;
+                gpio_function = value & 0x0F;
+
+                /* Validate basic parameters */
+                if (gpio_pin >= 32) {
+                        ath12k_err(NULL, "Invalid GPIO pin number: %u\n", gpio_pin);
+                        ret = -EINVAL;
+                        break;
+                }
+
+                if (gpio_dir > QCA_WLAN_GPIO_OUTPUT) {
+                        ath12k_err(NULL, "Invalid GPIO direction: %u\n", gpio_dir);
+                        ret = -EINVAL;
+                        break;
+                }
+
+                if (gpio_pull > QCA_WLAN_GPIO_PULL_DOWN) {
+                        ath12k_err(NULL, "Invalid GPIO pull type: %u\n", gpio_pull);
+                        ret = -EINVAL;
+                        break;
+                }
+
+                /* Allocate SKB for WMI command */
+                skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, sizeof(*cmd));
+                if (!skb) {
+                        ath12k_err(NULL, "Failed to allocate SKB for GPIO config\n");
+                        ret = -ENOMEM;
+                        break;
+                }
+
+                /* Build WMI GPIO config command */
+                cmd = (struct wmi_gpio_config_cmd *)skb->data;
+                cmd->tlv_header =
+                        FIELD_PREP(WMI_TLV_TAG, WMI_TAG_GPIO_CONFIG_CMD) |
+                        FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+                cmd->gpio_num       = cpu_to_le32(gpio_pin);
+                cmd->input          = cpu_to_le32(gpio_dir == QCA_WLAN_GPIO_INPUT ? 1 : 0);
+                cmd->pull_type      = cpu_to_le32(gpio_pull);
+                cmd->intr_mode      = cpu_to_le32(gpio_intr);
+                cmd->mux_config_val = cpu_to_le32(gpio_function);
+
+                /* Send WMI command */
+                ret = ath12k_wmi_cmd_send(wmi, skb, WMI_GPIO_CONFIG_CMDID);
+                if (ret) {
+                        ath12k_err(NULL, "Failed to send GPIO config command: %d\n", ret);
+                        dev_kfree_skb(skb);
+                        break;
+                }
+
+                /* Cache configuration on success */
+                ar->radio_cfg.gpio_cfg[gpio_pin].gpio_pin       = gpio_pin;
+                ar->radio_cfg.gpio_cfg[gpio_pin].gpio_function  = gpio_function;
+                ar->radio_cfg.gpio_cfg[gpio_pin].gpio_pull_type = gpio_pull;
+                ar->radio_cfg.gpio_cfg[gpio_pin].gpio_dir       = gpio_dir;
+                ar->radio_cfg.gpio_cfg[gpio_pin].gpio_intr_mode = gpio_intr;
+                ar->radio_cfg.gpio_cfg[gpio_pin].configured     = true;
+
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                           "GPIO %u configured: dir=%u pull=%u intr=%u func=0x%x\n",
+                           gpio_pin, gpio_dir, gpio_pull, gpio_intr, gpio_function);
+                break;
+        }
+        case QCA_WLAN_VENDOR_RADIO_PARAM_GPIO_OUTPUT:
+        {
+                struct ath12k_wmi_pdev *wmi = ar->wmi;
+                struct wmi_gpio_output_cmd *cmd;
+                struct sk_buff *skb;
+                u32 gpio_pin, gpio_value;
+
+                /* Suggested encoding:
+                 * [7:0]  - GPIO pin number (0-31)
+                 * [8]    - value (0/1)
+                 * others reserved
+                 */
+                gpio_pin   = value & 0xFF;
+                gpio_value = (value >> 8) & 0x01;
+
+                /* Validate pin */
+                if (gpio_pin >= 32) {
+                        ath12k_err(NULL, "Invalid GPIO pin number: %u\n", gpio_pin);
+                        ret = -EINVAL;
+                        break;
+                }
+
+                /* Check cached configuration */
+                if (!ar->radio_cfg.gpio_cfg[gpio_pin].configured) {
+                        ath12k_err(NULL, "GPIO %u not configured\n", gpio_pin);
+                        ret = -EINVAL;
+                        break;
+                }
+
+                if (ar->radio_cfg.gpio_cfg[gpio_pin].gpio_dir != QCA_WLAN_GPIO_OUTPUT) {
+                        ath12k_err(NULL, "GPIO %u not configured as output\n", gpio_pin);
+                        ret = -EINVAL;
+                        break;
+                }
+
+                /* Allocate SKB */
+                skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, sizeof(*cmd));
+                if (!skb) {
+                        ath12k_err(NULL, "Failed to allocate SKB for GPIO output\n");
+                        ret = -ENOMEM;
+                        break;
+                }
+
+                /* Build WMI GPIO output command */
+                cmd = (struct wmi_gpio_output_cmd *)skb->data;
+                cmd->tlv_header =
+                        FIELD_PREP(WMI_TLV_TAG, WMI_TAG_GPIO_OUTPUT_CMD) |
+                        FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+                cmd->gpio_num = cpu_to_le32(gpio_pin);
+                cmd->set      = cpu_to_le32(gpio_value);
+
+                /* Send WMI command */
+                ret = ath12k_wmi_cmd_send(wmi, skb, WMI_GPIO_OUTPUT_CMDID);
+                if (ret) {
+                        ath12k_err(NULL, "Failed to send GPIO output command: %d\n", ret);
+                        dev_kfree_skb(skb);
+                        break;
+                }
+
+                /* Cache value on success */
+                ar->radio_cfg.gpio_cfg[gpio_pin].gpio_value = gpio_value;
+
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                           "GPIO %u output set to %u\n", gpio_pin, gpio_value);
+                break;
+        }
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -1558,6 +1799,11 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		*value = arvif->vap_cfg.bcn_tx_power;
 		ret = 0;
 		break;
+        case QCA_WLAN_VENDOR_GLOBAL_GET_RSSI_RATE_THRESHOLDS:
+		ret = ath12k_telemetry_print_thresholds();
+		if (ret)
+			ath12k_err(NULL, "Failed to print RSSI/Rate thresholds\n");
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -1739,6 +1985,46 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
         case QCA_WLAN_VENDOR_RADIO_PARAM_SET_PREAM_PUNCT_BW:
                 *value = ar->radio_cfg.punct_bw;
                 ret = 0;
+                break;
+        case QCA_WLAN_VENDOR_RADIO_PARAM_GPIO_INPUT:
+        {
+		u32 i = 0;
+
+		for (i = 0; i < 32; i++) {
+			if (ar->radio_cfg.gpio_cfg[i].configured) {
+				ath12k_err(NULL, "GPIO %u get: value=%u dir=%u pull=%u intr=%u func=0x%x\n",
+					   i, ar->radio_cfg.gpio_cfg[i].gpio_value,
+					   ar->radio_cfg.gpio_cfg[i].gpio_dir,
+					   ar->radio_cfg.gpio_cfg[i].gpio_pull_type,
+					   ar->radio_cfg.gpio_cfg[i].gpio_intr_mode,
+					   ar->radio_cfg.gpio_cfg[i].gpio_function);
+					/* Return a packed status:
+					* [31:24] - GPIO value (0 or 1)
+					* [23:16] - GPIO direction
+						* [15:8]  - GPIO pull type
+					* [7:4]   - GPIO interrupt mode
+					* [3:0]   - GPIO function
+					*/
+
+					*value =
+					(ar->radio_cfg.gpio_cfg[i].gpio_value      << 24) |
+					(ar->radio_cfg.gpio_cfg[i].gpio_dir        << 16) |
+					(ar->radio_cfg.gpio_cfg[i].gpio_pull_type  << 8)  |
+					(ar->radio_cfg.gpio_cfg[i].gpio_intr_mode  << 4)  |
+					(ar->radio_cfg.gpio_cfg[i].gpio_function);
+			}
+		}
+		ret = 0;
+		break;
+        }
+        case QCA_WLAN_VENDOR_RADIO_PARAM_GET_TEMPERATURE:
+                /* Return cached temperature value */
+                *value = ar->thermal.temperature;
+                ret = 0;
+
+                ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                          "Temperature read: %d°C (0x%x)\n",
+                          (s32)*value, *value);
                 break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

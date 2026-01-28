@@ -23,6 +23,7 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 	int i = 0;
 	int tot_work_done = 0;
 	u8 rx_mask;
+	struct hal_srng *refill_srng;
 
 	rx_mask = dp->hw_params->ring_mask->rx[grp_id];
 
@@ -125,9 +126,10 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		LIST_HEAD(list);
 		size_t req_entries;
 
-		req_entries = ath12k_dp_get_req_entries_from_buf_ring(dp->ab, rx_ring, &list);
+		refill_srng = &dp->ab->hal.srng_list[rx_ring->refill_buf_ring.ring_id];
+		req_entries = ath12k_dp_get_req_entries_from_buf_ring(dp->ab, refill_srng, &list);
 		if (req_entries)
-			ath12k_dp_rx_bufs_replenish(dp, rx_ring, &list);
+			ath12k_dp_rx_bufs_replenish(dp, refill_srng, &list);
 	}
 
 /*
@@ -351,6 +353,13 @@ int ath12k_wifi6_dp_link_peer_create(struct ath12k_base *ab, u32 vdev_id, u8 *ad
 	return 0;
 }
 
+int ath12k_wifi6_dp_peer_assoc(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
+			       struct ath12k_dp_vif *dp_vif, u8 *addr)
+{
+	return 0;
+}
+
+
 static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_op_device_init = ath12k_wifi6_dp_op_device_init,
 	.dp_op_device_deinit = ath12k_wifi6_dp_op_device_deinit,
@@ -361,6 +370,7 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_peer_create = ath12k_wifi6_dp_peer_create,
 	.dp_peer_delete = ath12k_wifi6_dp_peer_delete,
 	.dp_link_peer_create = ath12k_wifi6_dp_link_peer_create,
+	.dp_peer_assoc = ath12k_wifi6_dp_peer_assoc,
 };
 
 /* TODO: remove export once this file is built with wifi6 ko */

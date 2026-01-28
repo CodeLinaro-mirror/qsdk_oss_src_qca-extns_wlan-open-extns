@@ -11,4 +11,9 @@ ath12k_wifi6-y += core.o \
 		  dp_rx.o \
 		  dp.o \
 		  hal.o \
-		  hal_qcn9074.o
+		  hal_qcn9074.o \
+		  hal_mon.o
+
+ifeq ($(CONFIG_KERNEL_ATH_GCOV_PROFILE),)
+GCOV_PROFILE:=y
+endif

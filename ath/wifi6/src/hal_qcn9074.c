@@ -11,8 +11,8 @@
 #include "hal_tx.h"
 #include <linux/cacheflush.h>
 
-extern void ath12k_wifi6_hal_mon_ops_init(struct ath12k_hal *hal,
-					  u8 hw_version);
+void ath12k_wifi6_hal_mon_ops_init(struct ath12k_hal *hal,
+				   u8 hw_version);
 
 static const struct hal_srng_config hw_srng_config_template[] = {
 	/* TODO: max_rings can populated by querying HW capabilities */
@@ -525,29 +525,8 @@ const struct hal_ops hal_qcn9074_ops = {
 	.setup_link_idle_list = ath12k_wifi6_hal_setup_link_idle_list,
 	.cc_config = ath12k_wifi6_hal_cc_config,
 	.get_idle_link_rbm = ath12k_wifi6_hal_get_idle_link_rbm,
-	.hal_mon_ops_init = NULL,
+	.hal_mon_ops_init = ath12k_wifi6_hal_mon_ops_init,
 	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
-
-	/*
-	.tx_set_dscp_tid_map = ath12k_wifi6_hal_tx_set_dscp_tid_map,
-	.tx_update_dscp_tid_map = ath12k_wifi6_hal_tx_update_dscp_tid_map,
-	.tx_configure_bank_register =
-				ath12k_wifi6_hal_tx_configure_bank_register,
-	.write_reoq_lut_addr = ath12k_wifi6_hal_write_reoq_lut_addr,
-	.write_ml_reoq_lut_addr = ath12k_wifi6_hal_write_ml_reoq_lut_addr,
-	.reoq_lut_addr_read_enable = ath12k_wifi6_hal_reoq_lut_addr_read_enable,
-	.reoq_lut_set_max_peerid = ath12k_wifi6_hal_reoq_lut_set_max_peerid,
-	.reo_qdesc_setup = ath12k_wifi6_hal_reo_qdesc_setup,
-	.reo_init_cmd_ring = ath12k_wifi6_hal_reo_init_cmd_ring,
-	.reo_hw_setup = ath12k_wifi6_hal_reo_hw_setup,
-	.reset_rx_reo_tid_q = ath12k_wifi6_hal_reset_rx_reo_tid_q,
-	.reo_shared_qaddr_cache_clear = ath12k_wifi6_hal_reo_shared_qaddr_cache_clear,
-	.hal_get_tsf2_scratch_reg = ath12k_hal_qcn9274_get_tsf2_scratch_reg,
-	.hal_get_tqm_scratch_reg = ath12k_hal_qcn9274_get_tqm_scratch_reg,
-	.rxdesc_get_mpdu_start_addr2 = NULL,
-	.rx_h_is_decrypted = NULL,
-	.rx_desc_get_fse_info = NULL,
-	*/
 
 	.rx_reo_ent_buf_paddr_get = ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get,
 	.rx_msdu_list_get = ath12k_wifi6_hal_rx_msdu_list_get,

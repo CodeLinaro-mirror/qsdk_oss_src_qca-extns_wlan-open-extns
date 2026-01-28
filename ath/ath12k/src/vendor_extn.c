@@ -21,7 +21,7 @@
 #include "../telemetry_agent_if.h"
 #include "dcs_extn.h"
 
-
+#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -326,6 +326,39 @@ static int ath12k_vendor_event_iface_reload(struct wiphy *wiphy, u8 radio_idx)
 	        return 0;
 }
 
+static int ath12k_set_ampdu_aggr_size_arvif(struct ath12k_link_vif *arvif, u32 value)
+{
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	struct set_custom_aggr_size_params params = {0};
+	int ret;
+
+	if (!arvif || !arvif->ar)
+		return -ENODEV;
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	params.vdev_id = arvif->vdev_id;
+	params.aggr_type = WMI_VDEV_CUSTOM_AGGR_TYPE_AMPDU;
+	params.ac = 0;
+	params.tx_aggr_size = value;
+	params.rx_aggr_size = 0;
+	params.tx_aggr_size_disable = false;
+	params.rx_aggr_size_disable = true;
+	params.tx_ac_enable = true;
+
+	ret = ath12k_wmi_send_aggr_size_cmd(ar, &params);
+	if (ret) {
+		ath12k_warn(ar->ab,
+				"AMPDU aggr size set failed vdev_id %d value %u ret %d\n",
+				params.vdev_id, value, ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
@@ -540,6 +573,22 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 			ath12k_err(NULL, "Failed to set RSSI/Rate breach mask\n");
 		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
+		if (value > ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE) {
+			ath12k_err(NULL, "Valid AMPDU Aggregation Size is in the range 0-255");
+			return -EINVAL;
+		} else {
+			ret = ath12k_set_ampdu_aggr_size_arvif(arvif, value);
+			if (!ret) {
+				arvif->vap_cfg.ampdu_aggr_size = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_CUSTOM_AGGR_TYPE_AMPDU to firmware");
+			}
+		}
+		break;
+
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -1802,6 +1851,12 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		if (ret)
 			ath12k_err(NULL, "Failed to print RSSI/Rate thresholds\n");
 		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
+		*value = arvif->vap_cfg.ampdu_aggr_size;
+		ret = 0;
+		break;
+
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);

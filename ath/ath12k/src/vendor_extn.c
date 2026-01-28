@@ -1888,6 +1888,7 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 			    ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				    "unknown state");
 		    }
+		    ret = 0;
 		}
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_BURST_DUR:

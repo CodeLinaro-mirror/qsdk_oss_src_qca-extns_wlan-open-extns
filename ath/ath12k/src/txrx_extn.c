@@ -463,11 +463,9 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 
 	/* Check if offchan operation is active:
 	 * 1. Timer is pending (indicates offchan operation in progress)
-	 * 2. Not on home channel
-	 * 3. Frequency matches the current offchan frequency
+	 * 2. Frequency matches the current offchan frequency
 	 */
 	if (timer_pending(&raw_ctx->offchan_timer) &&
-	    !raw_ctx->home_chan &&
 	    raw_ctx->req_freq == freq) {
 		stats = &raw_ctx->chan_stat;
 

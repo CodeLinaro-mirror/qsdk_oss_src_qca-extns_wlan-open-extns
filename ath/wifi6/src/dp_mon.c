@@ -814,8 +814,6 @@ ath12k_wifi6_dp_mon_rx_parse_dest(struct ath12k_pdev_dp *dp_pdev,
 
 		if (tlv_tag == HAL_RX_PPDU_END)
 			tlv_len = sizeof(struct hal_rx_rxpcu_classification_overview);
-		else
-			tlv_len = le32_get_bits(tlv->tl, HAL_TLV_HDR_LEN);
 
 		tlv_parsed_hdr.tag = tlv_tag;
 		tlv_parsed_hdr.len = tlv_len;
@@ -829,7 +827,8 @@ ath12k_wifi6_dp_mon_rx_parse_dest(struct ath12k_pdev_dp *dp_pdev,
 		ptr += tlv_len;
 		ptr = PTR_ALIGN(ptr, HAL_TLV_ALIGN);
 
-		if ((ptr - skb->data) >= skb->len)
+		if (((ptr - skb->data) >= RX_MON_STATUS_BUF_SIZE) ||
+		    (RX_MON_STATUS_BUF_SIZE - (ptr - skb->data) < HAL_TLV_ALIGN))
 			break;
 
 	} while ((hal_status == HAL_RX_MON_STATUS_PPDU_NOT_DONE) ||
@@ -1674,7 +1673,6 @@ int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp, int
 		goto exit;
 
 	while ((skb = __skb_dequeue(&skb_list))) {
-		memset(ppdu_info, 0, sizeof(*ppdu_info));
 		ppdu_info->peer_id = HAL_INVALID_PEERID;
 
 		hal_status = ath12k_wifi6_dp_mon_rx_parse_dest(pdev_dp, skb);

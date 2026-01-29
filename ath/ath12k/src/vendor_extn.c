@@ -310,36 +310,6 @@ static int ath12k_vendor_event_iface_reload(struct wiphy *wiphy, u8 radio_idx)
 	        return 0;
 }
 
-/*
- * Check if at least one enabled channel exists in the given band
- * based on the current regulatory context of the wiphy.
- */
-static bool ath12k_reg_is_band_present(struct ath12k *ar, enum nl80211_band band)
-{
-        struct ieee80211_hw *hw = ar->ah->hw;
-        struct ieee80211_supported_band **bands;
-        int i;
-
-        if (!hw || band < 0 || band >= NUM_NL80211_BANDS)
-                return false;
-
-        bands = hw->wiphy->bands;
-        if (!bands || !bands[band])
-                return false;
-
-        /* Ensure ath12k has sbands populated and matches mac80211 bands */
-        if (!ar->mac.sbands[band].channels)
-                return false;
-
-        for (i = 0; i < bands[band]->n_channels; i++) {
-                const struct ieee80211_channel *ch = &bands[band]->channels[i];
-
-                if (!(ch->flags & IEEE80211_CHAN_DISABLED))
-                        return true;
-        }
-        return false;
-}
-
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
@@ -571,6 +541,7 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
         int ret = -1;
 	u16 rx_ack_timeout = (value & 0xFFFF);
 	u16 pre_rx_ack_timeout = (value >> 16);
+	enum nl80211_band band;
 
         switch (param) {
         case QCA_WLAN_VENDOR_RADIO_PARAM_TEST_RELOAD:
@@ -1025,9 +996,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_SET_HW_MODE_CMDID,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_SET_HW_MODE_CMDID to firmware");
-                         } else {
                                  ar->radio_cfg.current_mode = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_SET_HW_MODE_CMDID to firmware");
                          }
                  }
                  break;
@@ -1037,25 +1008,27 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                   * regulatory band, at least one channel in that band should be present/enabled in the
                   * current regulatory context, returns true.
                   */
-                 if (ath12k_reg_is_band_present(ar, (enum nl80211_band)value)) {
+                 band = ath12k_get_band_based_on_freq(ar->chan_info.low_freq);
+                 if (band == NL80211_BAND_2GHZ) {
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_TXPOWER_LIMIT2G,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_LIMIT2G to firmware");
-                         } else {
                                  ar->radio_cfg.txpowlimit2G = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_LIMIT2G to firmware");
                          }
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_TXPOWER_LIMIT5G:
-                 if (ath12k_reg_is_band_present(ar, (enum nl80211_band)value)) {
+                 band = ath12k_get_band_based_on_freq(ar->chan_info.low_freq);
+                 if (band == NL80211_BAND_5GHZ || band == NL80211_BAND_6GHZ) {
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_TXPOWER_LIMIT5G,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_LIMIT5G to firmware");
-                         } else {
                                  ar->radio_cfg.txpowlimit5G = value;
-				  }
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_LIMIT5G to firmware");
+                         }
                  }
                  break;
 #define ANTENNA_GAIN_2G_MASK    0x0
@@ -1064,10 +1037,10 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  if (value >= 0 && value <= 30) {
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANTENNA_GAIN,
                                          (value | ANTENNA_GAIN_2G_MASK), ar->pdev->pdev_id);
-                         if (ret < 0) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANTENNA_GAIN to firmware");
-                         } else {
+                         if (!ret) {
                                  ar->radio_cfg.antenna_gain_2g = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANTENNA_GAIN to firmware");
                          }
                  } else {
                          ath12k_dbg(NULL, ATH12K_DBG_CFG,
@@ -1079,10 +1052,10 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 		 if (value >= 0 && value <= 30) {
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANTENNA_GAIN,
                                          (value | ANTENNA_GAIN_5G_MASK), ar->pdev->pdev_id);
-                         if (ret < 0) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANTENNA_GAIN to firmware");
-                         } else {
+                         if (!ret) {
                                  ar->radio_cfg.antenna_gain_5g = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANTENNA_GAIN to firmware");
                          }
                  } else {
                          ath12k_dbg(NULL, ATH12K_DBG_CFG,
@@ -1094,9 +1067,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANI_OFDM_LEVEL,
                                  value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANI_OFDM_LEVEL to firmware");
-                 } else {
                          ar->radio_cfg.ofdem_level = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANI_OFDM_LEVEL to firmware");
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_TXPOWER_SCALE:
@@ -1104,9 +1077,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_TXPOWER_SCALE,
                                          value, ar->pdev->pdev_id);
                          if(!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_SCALE to firmware");
-                         } else {
                                  ar->radio_cfg.txpower_scale = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_SCALE to firmware");
                          }
                  } else {
                          ret = -EINVAL;
@@ -1116,9 +1089,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_RX_FILTER,
                                  value, ar->pdev->pdev_id);
                  if(!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_RX_FILTER to firmware");
-                 } else {
                          ar->radio_cfg.rx_filter = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_RX_FILTER to firmware");
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_BLOCK_INTERBSS:
@@ -1140,9 +1113,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_DISABLE_RESET_CMDID,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_DISABLE_RESET_CMDID to firmware");
-                         } else {
                                  ar->radio_cfg.fw_disable_reset = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_DISABLE_RESET_CMDID to firmware");
                          }
                  }
                  break;
@@ -1152,9 +1125,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_PPDU_DURATION_CMDID,
                                  value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_PPDU_DURATION_CMDID to firmware");
-                 } else {
                          ar->radio_cfg.ppdu_dur = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_PPDU_DURATION_CMDID to firmware");
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_TXBF_SOUND_PERIOD_CMDID:
@@ -1164,9 +1137,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_TXBF_SOUND_PERIOD_CMDID,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXBF_SOUND_PERIOD_CMDID to firmware");
-                         } else {
                                  ar->radio_cfg.txbf_sound_period = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXBF_SOUND_PERIOD_CMDID to firmware");
                          }
 			 }
                  break;
@@ -1177,9 +1150,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_PROMISC_MODE_CMDID,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_PROMISC_MODE_CMDID to firmware");
-                         } else {
                                  ar->radio_cfg.promisc_mode = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_PROMISC_MODE_CMDID to firmware");
                          }
                  }
                  break;
@@ -1192,9 +1165,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_BURST_MODE_CMDID,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_BURST_MODE_CMDID to firmware");
-                         } else {
                                  ar->radio_cfg.burst_mode = value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_BURST_MODE_CMDID to firmware");
                          }
                  }
                  break;
@@ -1208,36 +1181,36 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_MCAST_BCAST_ECHO,
                                          value, ar->pdev->pdev_id);
                          if (!ret) {
-                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MCAST_BCAST_ECHO to firmware");
-                         } else {
                                  ar->radio_cfg.mcast_bcast_echo = (u_int8_t)value;
+                         } else {
+                                 ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MCAST_BCAST_ECHO to firmware");
                          }
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_ANT_PLZN:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANT_PLZN, value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANT_PLZN to firmware");
-                 } else {
                          ar->radio_cfg.ant_plzn = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANT_PLZN to firmware");
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_ENABLE_AMSDU:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_PER_TID_AMSDU,
                                  value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_PER_TID_AMSDU to firmware");
-			  } else {
                          ar->radio_cfg.amsdu_mask = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_PER_TID_AMSDU to firmware");
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_ENABLE_AMPDU:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_PER_TID_AMPDU,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_PER_TID_AMPDU to firmware");
-                 } else {
                          ar->radio_cfg.ampdu_mask = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_PER_TID_AMPDU to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_HE_MBSSID_CTRL_FRAME_CONFIG:
@@ -1256,9 +1229,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME to firmware");
-                        } else {
                                 ar->radio_cfg.mbssid_en_ctrl_frame = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME to firmware");
                         }
                 }
                 break;
@@ -1268,9 +1241,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME to firmware");
-                        } else {
                                 ar->radio_cfg.resp_retry_limit = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME to firmware");
                         }
                 } else {
                         ath12k_err(NULL, "PROBERESP RETRY LIMIT should be between 1 and 127");
@@ -1283,9 +1256,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_CTS_TIMEOUT,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_CTS_TIMEOUT to firmware");
-                        } else {
                                 ar->radio_cfg.cts_timeout = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_CTS_TIMEOUT to firmware");
 				}
                 } else {
                         ath12k_err(NULL, "CTS Timeout value should be between 0 and 0xFF");
@@ -1298,9 +1271,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SLOT_TIME,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SLOT_TIME to firmware");
-                        } else {
                                 ar->radio_cfg.slot_time = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SLOT_TIME to firmware");
                         }
                 } else {
                         ath12k_err(NULL, "Slot Time value should be between 0 and 90");
@@ -1319,9 +1292,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ACK_TIMEOUT,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ACK_TIMEOUT to firmware");
-                        } else {
                                 ar->radio_cfg.ack_timeout = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ACK_TIMEOUT to firmware");
                         }
                 } else {
                         ath12k_err(NULL, "TX ACK Time-out value should be between 0x70 and 0xFF");
@@ -1332,9 +1305,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_CCK_TX_ENABLE,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_CCK_TX_ENABLE to firmware");
-                 } else {
                          ar->radio_cfg.cck_enable = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_CCK_TX_ENABLE to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_EQUAL_RU_ALLOCATION_ENABLE:
@@ -1342,9 +1315,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_EQUAL_RU_ALLOCATION_ENABLE,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_EQUAL_RU_ALLOCATION_ENABLE to firmware");
-				} else {
                                 ar->radio_cfg.ru_alloc_en = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_EQUAL_RU_ALLOCATION_ENABLE to firmware");
                         }
                 } else {
                         ath12k_err(NULL, "RU allocation enable value should be 0 or 1.");
@@ -1357,9 +1330,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANTENNA_GAIN_HALF_DB,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANTENNA_GAIN_HALF_DB to firmware");
-                        } else {
                                 ar->radio_cfg.antenna_gain_half_db = value;
+                        } else {
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ANTENNA_GAIN_HALF_DB to firmware");
                         }
                 }
 		break;
@@ -1367,54 +1340,54 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_MGMT_TTL,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MGMT_TTL to firmware");
-                 } else {
                          ar->radio_cfg.mgmt_ttl = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MGMT_TTL to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_SET_PROBE_RESP_TTL:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_PROBE_RESP_TTL,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_PROBE_RESP_TTL to firmware");
-                 } else {
                          ar->radio_cfg.prb_rsp_ttl = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_PROBE_RESP_TTL to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_SET_MU_PPDU_DURATION:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_MU_PPDU_DURATION,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MU_PPDU_DURATION to firmware");
-                 } else {
                          ar->radio_cfg.mu_ppdu_dur = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MU_PPDU_DURATION to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_SET_TBTT_CTRL:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_TBTT_CTRL,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_TBTT_CTRL to firmware");
-                 } else {
                          ar->radio_cfg.tbtt_ctrl = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_TBTT_CTRL to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_SET_PREAM_PUNCT_BW:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_PREAM_PUNCT_BW,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-		     ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_PREAM_PUNCT_BW to firmware");
-                 } else {
                          ar->radio_cfg.punct_bw = value;
+                 } else {
+                     ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_PREAM_PUNCT_BW to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_LOW_LATENCY_SCHED_MODE:
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_LOW_LATENCY_SCHED_MODE,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
-                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_LOW_LATENCY_SCHED_MODE to firmware");
-                 } else {
                          ar->radio_cfg.low_lat_mode = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_LOW_LATENCY_SCHED_MODE to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_GET_TEMPERATURE:

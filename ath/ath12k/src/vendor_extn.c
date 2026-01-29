@@ -1238,12 +1238,12 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
         case QCA_WLAN_VENDOR_RADIO_PARAM_PROBE_RESP_RETRY_LIMIT:
 #define MAX_PRESP_RETRY_LIMIT 0x7F
                 if (value > 0 && value <= MAX_PRESP_RETRY_LIMIT) {
-                        ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME,
+                        ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_PROBE_RESP_RETRY_LIMIT,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
                                 ar->radio_cfg.resp_retry_limit = value;
                         } else {
-                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_ENABLE_MBSSID_CTRL_FRAME to firmware");
+                                ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_PROBE_RESP_RETRY_LIMIT to firmware");
                         }
                 } else {
                         ath12k_err(NULL, "PROBERESP RETRY LIMIT should be between 1 and 127");

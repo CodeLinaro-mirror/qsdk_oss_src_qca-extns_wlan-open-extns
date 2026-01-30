@@ -440,10 +440,29 @@ free_skb:
 	return ret;
 }
 
+static void
+ath12k_chan_info_event_extn(struct ath12k_extn *ar_extn,
+			    const struct wmi_chan_info_event *ch_info_ev,
+			    int channel_idx)
+{
+	struct rtplinst_extn *inst;
+
+	if (channel_idx < 0 || channel_idx >= ATH12K_NUM_CHANS)
+		return;
+
+	inst = &ar_extn->rtplinst[channel_idx];
+
+	/* Populate RTPL fields from channel info event */
+        inst->primary_freq = le32_to_cpu(ch_info_ev->freq);
+	inst->txpower_throughput = (int)le32_to_cpu(ch_info_ev->chan_tx_pwr_tp);
+	inst->txpower_range = (int)le32_to_cpu(ch_info_ev->chan_tx_pwr_range);
+}
+
 void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 				      struct sk_buff *skb,
 				      u32 freq,
-				      struct wmi_chan_info_event *ch_info)
+				      struct wmi_chan_info_event *ch_info,
+				      int channel_idx)
 {
 	struct ath12k_raw_pkt_ctx *raw_ctx;
 	struct ath12k_offchan_stat *stats;
@@ -456,6 +475,11 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 			   "failed to update offchan stats, ar is NULL");
 		return;
 	}
+
+	if (ch_info->cmd_flags == WMI_CHAN_INFO_START_RESP)
+		ath12k_chan_info_event_extn(&ar->ar_extn, ch_info,
+					    channel_idx);
+
 	ab = ar->ab;
 	raw_ctx = &ar->ar_extn.raw_pkt_ctx;
 

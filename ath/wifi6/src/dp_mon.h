@@ -52,6 +52,8 @@ void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 mac_id);
 void ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup(struct ath12k_pdev_dp *dp_pdev);
+int ath12k_wifi6_dp_mon_pdev_rx_htt_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 mac_id);
+int ath12k_wifi6_mon_setup_mon_link_desc(struct ath12k_pdev_dp *dp_pdev);
 int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp,
 					     int mac_id, struct napi_struct *napi,
 					     int *budget);

@@ -26,11 +26,13 @@
  *
  * Note: This function does NOT drain the packet queue or cancel timers.
  * Those operations should be done separately before calling this function.
+ * IMPORTANT: The caller must hold the chan_lock before calling this function.
  */
 static void ath12k_reset_raw_pkt_ctx(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	if (!raw_pkt_ctx)
 		return;
+
 	raw_pkt_ctx->vif = NULL;
 	raw_pkt_ctx->transaction_id = 0;
 	raw_pkt_ctx->func_type = QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_INVALID;
@@ -38,9 +40,20 @@ static void ath12k_reset_raw_pkt_ctx(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 	raw_pkt_ctx->home_chan = false;
 	raw_pkt_ctx->req_freq = 0;
 	raw_pkt_ctx->operation_status = 0;
+	raw_pkt_ctx->link_id = INVALID_LINK_ID;
+
+	/* Reset timing timestamps */
+	raw_pkt_ctx->ts_scan_start = 0;
+	raw_pkt_ctx->ts_foreign_entry = 0;
+	raw_pkt_ctx->ts_foreign_exit = 0;
+	raw_pkt_ctx->ts_scan_done = 0;
+
 	atomic_set(&raw_pkt_ctx->num_cmpl_pending, 0);
 	memset(raw_pkt_ctx->custom_tx_status, 0, sizeof(raw_pkt_ctx->custom_tx_status));
 	memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
+	/* Clear tracking array */
+	memset(raw_pkt_ctx->tracked_skbs, 0, sizeof(raw_pkt_ctx->tracked_skbs));
+	raw_pkt_ctx->num_tracked_skbs = 0;
 }
 
 /**
@@ -97,14 +110,24 @@ static void ath12k_handle_tx_completion(struct ath12k *ar,
 
 void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 {
-	struct ath12k_skb_cb *skb_cb = ATH12K_SKB_CB(skb);
+	struct ath12k_skb_cb *skb_cb;
 	struct ath12k *ar;
 	struct ath12k_raw_pkt_ctx *raw_pkt_ctx;
-	struct sk_buff *tmp_skb;
 	struct wireless_dev *wdev = NULL;
 	struct ieee80211_vif *vif;
 	u8 idx = 0;
 	u32 transaction_id;
+	u32 normalized_status;
+	bool found_skb = false;
+
+	if (!skb)
+		return;
+
+	skb_cb = ATH12K_SKB_CB(skb);
+	if (!skb_cb) {
+		dev_kfree_skb_any(skb);
+		return;
+	}
 
 	ar = skb_cb->u.ar;
 	if (!ar) {
@@ -113,21 +136,53 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 	}
 
 	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
+	if (!raw_pkt_ctx) {
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
+	/* Check if this is a custom packet before processing */
+	if (!ATH12K_IS_CUSTOM_PKT(skb_cb)) {
+		dev_kfree_skb_any(skb);
+		return;
+	}
 
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 
-	skb_queue_walk(&raw_pkt_ctx->pkt_list, tmp_skb) {
-		if (tmp_skb == skb) {
-			raw_pkt_ctx->custom_tx_status[idx] = status;
-			__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
+	/* Normalize status values: treat both 0 and 3 as success (0) */
+	if (status == 0 || status == 3)
+		normalized_status = 0;
+	else
+		normalized_status = status;
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "custom tx completion: status=%u, searching %u tracked skbs\n",
+		   status, raw_pkt_ctx->num_tracked_skbs);
+
+	for (idx = 0; idx < raw_pkt_ctx->num_tracked_skbs && idx < ATH12K_MAX_CUSTOM_TX_PKT; idx++) {
+		if (raw_pkt_ctx->tracked_skbs[idx] == skb) {
+			/* Update status for this packet */
+			raw_pkt_ctx->custom_tx_status[idx] = normalized_status;
+			/* Clear the tracking entry */
+			raw_pkt_ctx->tracked_skbs[idx] = NULL;
+			found_skb = true;
+			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+				   "found skb at index %u: raw_status=%u normalized_status=%u\n",
+				   idx, status, normalized_status);
 			break;
 		}
-		idx++;
-		if (idx == ATH12K_MAX_CUSTOM_TX_PKT)
-			break;
 	}
-	/* Extract transaction ID from skb control buffer */
-	transaction_id = skb_cb->u.ar->ar_extn.raw_pkt_ctx.transaction_id;
+
+	if (!found_skb) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "skb not found in tracking array, freeing normally\n");
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
+	/* Extract transaction ID from raw_pkt_ctx */
+	transaction_id = raw_pkt_ctx->transaction_id;
 	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
 	vif = skb_cb->vif;
@@ -137,15 +192,20 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 		return;
 	}
 
-
 	/* Get the wireless_dev for sending the event */
 	if (ar->ah && ar->ah->hw && ar->ah->hw->wiphy)
 		wdev = ieee80211_vif_to_wdev(vif);
+
 	/* Send event to userspace if we have a valid wdev */
 	if (wdev) {
 		if (atomic_dec_and_test(&raw_pkt_ctx->num_cmpl_pending)) {
-			/* Use centralized completion handler */
+			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+				   "all packets completed (txn_id=0x%x), calling completion handler\n",
+				   transaction_id);
 			ath12k_handle_tx_completion(ar, raw_pkt_ctx, wdev, transaction_id);
+		} else {
+			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+				   "packets still pending (txn_id=0x%x)\n", transaction_id);
 		}
 	}
 
@@ -375,34 +435,61 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr)
 	tx_param->tx_param_configured = false;
 }
 
-int ath12k_custom_tx_extn(struct sk_buff *skb)
+int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
-	struct ath12k_skb_cb *skb_cb = ATH12K_SKB_CB(skb);
-	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
-	struct ieee80211_vif *vif = info->control.vif;
-	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
+	struct sk_buff *skb, *tmp_skb;
+	struct ath12k_skb_cb *skb_cb;
+	struct ieee80211_tx_info *info;
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
 	struct ath12k_link_vif *arvif = NULL;
-	struct ath12k *ar;
-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+	struct ath12k *ar = NULL;
+	struct ieee80211_hdr *hdr;
 	struct sk_buff_head *q;
 	struct ieee80211_hw *hw;
+	u8 stored_link_id;
 	bool is_prb_rsp;
-	int ret;
+	int processed_count = 0;
+
+	if (!raw_pkt_ctx) {
+		ath12k_err(NULL, "custom tx: NULL raw_pkt_ctx\n");
+		return -EINVAL;
+	}
+
+	/* Get vif from raw_pkt_ctx - it should be the same for all packets */
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
+	vif = raw_pkt_ctx->vif;
+	if (!vif) {
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+		ath12k_err(NULL, "custom tx: NULL vif in raw_pkt_ctx\n");
+		return -EINVAL;
+	}
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+	if (!ahvif) {
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+		ath12k_err(NULL, "custom tx: NULL ahvif\n");
+		return -EINVAL;
+	}
+
+	/* Use stored link_id from raw_pkt_ctx for MLO selection */
+	stored_link_id = raw_pkt_ctx->link_id;
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
 	/* Use proper MLO link selection pattern with RCU lock */
 	rcu_read_lock();
-	if (skb_cb->link_id == INVALID_LINK_ID) {
+	if (stored_link_id == INVALID_LINK_ID) {
 		arvif = &ahvif->deflink;
 	} else {
-		if (skb_cb->link_id < ATH12K_NUM_MAX_LINKS)
-			arvif = rcu_dereference(ahvif->link[skb_cb->link_id]);
+		if (stored_link_id < ATH12K_NUM_MAX_LINKS)
+			arvif = rcu_dereference(ahvif->link[stored_link_id]);
 		else
 			arvif = NULL;
 	}
 	if (!arvif || !arvif->ar) {
 		rcu_read_unlock();
-		ret = -EINVAL;
-		goto free_skb;
+		ath12k_err(NULL, "ath12k_custom_tx_extn: Invalid arvif or ar for link_id %u\n", stored_link_id);
+		return -EINVAL;
 	}
 	ar = arvif->ar;
 	hw = ar->ah->hw;
@@ -410,33 +497,116 @@ int ath12k_custom_tx_extn(struct sk_buff *skb)
 
 	lockdep_assert_wiphy(hw->wiphy);
 
-	if (skb_cb->flags & ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX)
-		info->flags |= IEEE80211_TX_CTL_TX_OFFCHAN;
+	/* Re-acquire lock for queue operations */
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 
-	is_prb_rsp = ieee80211_is_probe_resp(hdr->frame_control);
-	if (is_prb_rsp &&
-	    atomic_read(&ar->num_pending_mgmt_tx) > ATH12K_PRB_RSP_DROP_THRESHOLD) {
-		ret = -EBUSY;
-		goto free_skb;
+	/* Initialize tracking array */
+	raw_pkt_ctx->num_tracked_skbs = 0;
+
+	skb_queue_walk_safe(&raw_pkt_ctx->pkt_list, skb, tmp_skb) {
+		/* Critical errors - abort entire operation */
+		if (!skb) {
+			ath12k_err(NULL, "ath12k_custom_tx_extn: NULL skb in queue - aborting operation\n");
+			processed_count = -EINVAL;
+			goto cleanup_and_fail;
+		}
+
+		skb_cb = ATH12K_SKB_CB(skb);
+		if (!skb_cb) {
+			ath12k_err(NULL, "ath12k_custom_tx_extn: NULL skb_cb - aborting operation\n");
+			processed_count = -EINVAL;
+			goto cleanup_and_fail;
+		}
+
+		info = IEEE80211_SKB_CB(skb);
+		if (!info) {
+			ath12k_err(NULL, "ath12k_custom_tx_extn: NULL info - aborting operation\n");
+			processed_count = -EINVAL;
+			goto cleanup_and_fail;
+		}
+
+		info->control.vif = vif;
+		hdr = (struct ieee80211_hdr *)skb->data;
+		if (!hdr) {
+			ath12k_err(NULL, "ath12k_custom_tx_extn: NULL hdr - aborting operation\n");
+			processed_count = -EINVAL;
+			goto cleanup_and_fail;
+		}
+
+		if (skb_cb->flags & ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX)
+			info->flags |= IEEE80211_TX_CTL_TX_OFFCHAN;
+
+		/* Non-critical errors - skip this packet but continue with others */
+		is_prb_rsp = ieee80211_is_probe_resp(hdr->frame_control);
+		if (is_prb_rsp &&
+		    atomic_read(&ar->num_pending_mgmt_tx) > ATH12K_PRB_RSP_DROP_THRESHOLD) {
+			ath12k_dbg(ar->ab, ATH12K_DBG_WMI, "Probe response dropped due to threshold\n");
+			__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
+			dev_kfree_skb_any(skb);
+			continue;
+		}
+
+		q = &ar->wmi_mgmt_tx_queue;
+		if (skb_queue_len_lockless(q) >= ATH12K_TX_MGMT_NUM_PENDING_MAX) {
+			ath12k_dbg(ar->ab, ATH12K_DBG_WMI, "WMI queue full, skipping packet\n");
+			__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
+			dev_kfree_skb_any(skb);
+			continue;
+		}
+
+		/* Store SKB pointer in tracking array BEFORE removing from queue */
+		if (raw_pkt_ctx->num_tracked_skbs < ATH12K_MAX_CUSTOM_TX_PKT) {
+			raw_pkt_ctx->tracked_skbs[raw_pkt_ctx->num_tracked_skbs] = skb;
+			raw_pkt_ctx->num_tracked_skbs++;
+			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+				   "added skb to tracking array at index %u\n",
+				   raw_pkt_ctx->num_tracked_skbs - 1);
+		} else {
+			ath12k_err(ar->ab, "tracking array full, skipping packet\n");
+			__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
+			dev_kfree_skb_any(skb);
+			continue;
+		}
+
+		__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
+
+		/* Queue the SKB to WMI management TX queue */
+		skb_queue_tail(q, skb);
+
+		if (!(info->flags & IEEE80211_TX_CTL_TX_OFFCHAN))
+			atomic_inc(&ar->num_pending_mgmt_tx);
+
+		processed_count++;
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI, "queued packet %d to wmi queue\n", processed_count);
+	}
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	/* Trigger WMI work to process all queued packets */
+	if (processed_count > 0 && ar && hw) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "triggering wmi work for %d packets\n", processed_count);
+		ath12k_mgmt_over_wmi_tx_work(hw->wiphy, &ar->wmi_mgmt_tx_work);
+	} else {
+		ath12k_err(ar->ab, "cannot trigger wmi work: processed=%d ar=%p hw=%p\n",
+			   processed_count, ar, hw);
 	}
 
-	q = &ar->wmi_mgmt_tx_queue;
-	if (skb_queue_len_lockless(q) >= ATH12K_TX_MGMT_NUM_PENDING_MAX) {
-		ret = -EBUSY;
-		goto free_skb;
-	}
-	skb_queue_tail(q, skb);
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI, "processed %d packets\n", processed_count);
 
-	if (!(info->flags & IEEE80211_TX_CTL_TX_OFFCHAN))
-		atomic_inc(&ar->num_pending_mgmt_tx);
+	if (processed_count > 0)
+		return 0;
 
-	ath12k_mgmt_over_wmi_tx_work(hw->wiphy, &ar->wmi_mgmt_tx_work);
+	return -ENODATA;
 
-	return 0;
+cleanup_and_fail:
+	ath12k_err(ar->ab, "Critical error in packet processing - resetting context\n");
+	/* Reset context to clean state - this will clear vif, transaction_id, etc. */
+	ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
-free_skb:
-	dev_kfree_skb_any(skb);
-	return ret;
+	/* Drain any remaining packets to prevent memory leaks */
+	ath12k_home_offchan_tx_drain(raw_pkt_ctx);
+	return processed_count;
 }
 
 void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
@@ -616,6 +786,7 @@ static void ath12k_compute_offchan_timing_stats(struct ath12k_raw_pkt_ctx *raw_c
 void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 {
 	struct ath12k_raw_pkt_ctx *raw_ctx;
+	__le32 scan_event =  le32_to_cpu(event_type);
 
 	if (!ar)
 		return;
@@ -629,7 +800,7 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 		return;
 	}
 
-	switch (event_type) {
+	switch (scan_event) {
 	case WMI_SCAN_EVENT_STARTED:
 		raw_ctx->ts_scan_start = ktime_get();
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
@@ -655,24 +826,24 @@ void ath12k_update_offchan_ts_extn(struct ath12k *ar, u32 event_type)
 	case WMI_SCAN_EVENT_PREEMPTED:
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "offchan: scan failure event %u\n",
-			   event_type);
+			   scan_event);
 		break;
 	default:
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-			   "offchan: event %u not handler\n", event_type);
+			   "offchan: event %u not handler\n", scan_event);
 		spin_unlock_bh(&raw_ctx->chan_lock);
 		return;
 	}
 	ath12k_compute_offchan_timing_stats(raw_ctx);
 	/* Handle RX function completion/failure after timing stats computation */
-	if (event_type == WMI_SCAN_EVENT_COMPLETED) {
+	if (scan_event == WMI_SCAN_EVENT_COMPLETED) {
 		/* Handle RX function completion */
-		ath12k_handle_rx_scan_event(ar, raw_ctx, true, event_type);
-	} else if (event_type == WMI_SCAN_EVENT_START_FAILED ||
-		   event_type == WMI_SCAN_EVENT_DEQUEUED ||
-		   event_type == WMI_SCAN_EVENT_PREEMPTED) {
+		ath12k_handle_rx_scan_event(ar, raw_ctx, true, scan_event);
+	} else if (scan_event == WMI_SCAN_EVENT_START_FAILED ||
+		   scan_event == WMI_SCAN_EVENT_DEQUEUED ||
+		   scan_event == WMI_SCAN_EVENT_PREEMPTED) {
 		/* Handle RX function failure */
-		ath12k_handle_rx_scan_event(ar, raw_ctx, false, event_type);
+		ath12k_handle_rx_scan_event(ar, raw_ctx, false, scan_event);
 	}
 	spin_unlock_bh(&raw_ctx->chan_lock);
 }
@@ -834,7 +1005,6 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	int cur_freq = 0;
 	struct ieee80211_channel *chan;
 	struct ath12k_raw_pkt_ctx *raw_pkt_ctx;
-	struct sk_buff_head temp_list;
 	bool is_home_channel = false;
 	u32 beacon_interval = 100;
 	u32 timeout_ms;
@@ -899,6 +1069,14 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	cur_freq = chan->center_freq;
 	is_home_channel = (freq == cur_freq);
 
+	/* Validate ar and ar_extn before accessing raw_pkt_ctx */
+	if (!ar || !ar->ab) {
+		rcu_read_unlock();
+		ath12k_err(NULL, "Invalid ar or ar->ab pointer\n");
+		return -EINVAL;
+	}
+
+	/* Get raw_pkt_ctx from ar_extn structure */
 	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
 
 	ret = ath12k_validate_offchan_operation(ar, arvif);
@@ -910,6 +1088,10 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 
 	rcu_read_unlock();
 
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "home/offchan frame handler: func=%u freq=%d home_chan=%d\n",
+		   func, freq, is_home_channel);
+
 	/* Common context initialization for both TX and RX functions */
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 	raw_pkt_ctx->transaction_id = transaction_id;
@@ -918,6 +1100,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	raw_pkt_ctx->home_chan = is_home_channel;
 	raw_pkt_ctx->vif = vif;
 	raw_pkt_ctx->req_freq = freq;
+	raw_pkt_ctx->link_id = effective_link_id;  /* Save link_id for later use */
 	memset(&raw_pkt_ctx->chan_stat, 0, sizeof(raw_pkt_ctx->chan_stat));
 	/* Initialize all packet statuses to 1 (failed) by default.
 	 * They will be set to 0 (success) only when we receive completion.
@@ -1060,16 +1243,8 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			   jiffies + msecs_to_jiffies(timeout_ms));
 	}
 
-	/* Move all packets to temporary list under lock */
-	skb_queue_head_init(&temp_list);
-	spin_lock_bh(&raw_pkt_ctx->chan_lock);
-	skb_queue_splice_init(&raw_pkt_ctx->pkt_list, &temp_list);
-	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
-
-	/* Process all packets without holding lock */
-	while ((skb = skb_dequeue(&temp_list)) != NULL) {
-			ath12k_custom_tx_extn(skb);
-	}
+	/* Call ath12k_custom_tx_extn with raw_pkt_ctx to process all packets */
+	ath12k_custom_tx_extn(raw_pkt_ctx);
 
 	return 0;
 }
@@ -1405,7 +1580,9 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 	cfg80211_vendor_event(skb, GFP_KERNEL);
 
 	/* Reset context to clean state after event is sent */
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 	ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
 	return 0;
 }

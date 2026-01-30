@@ -134,6 +134,9 @@ struct ath12k_skb_tx_param {
  * @num_cmpl_pending:     Number of pending completions.
  * @req_freq:             Requested freq(if set) for offchan operation.
  * @custom_tx_status:     Tx completion status of queued packets.
+ * @tracked_skbs:         Array of SKB pointers for completion tracking.
+ * @num_tracked_skbs:     Number of SKBs currently being tracked.
+ * @link_id:              MLO link ID for the operation (stored from user request).
  * @home_chan:            True if currently on the home channel.
  * @operation_status:     Overall operation status (0=success, 1=failure).
  * @func_type:            Function type for the operation.
@@ -154,6 +157,9 @@ struct ath12k_raw_pkt_ctx {
 	atomic_t num_cmpl_pending;
 	u32 req_freq;
 	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
+	struct sk_buff *tracked_skbs[ATH12K_MAX_CUSTOM_TX_PKT];
+	u8 num_tracked_skbs;
+	u8 link_id;
 	bool home_chan;
 	u8 operation_status;
 	u8 func_type;
@@ -309,7 +315,7 @@ static inline void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 }
 
-static inline int ath12k_custom_tx_extn(struct sk_buff *skb)
+static inline int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	return -1;
 }
@@ -419,21 +425,18 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 /**
  * ath12k_custom_tx_extn() - Extended custom transmission handler for
  *                           management frames
- * @skb: skb the frame to transmit
+ * @raw_pkt_ctx: Pointer to raw packet context containing SKB queue
  *
  * This function handles the transmission of custom management frames,
  * including both regular and off-channel transmissions.
- * It performs various validation checks,
- * manages the transmission queue, and directly invokes the workq handler.
+ * It walks through all SKBs in the raw packet context queue,
+ * performs various validation checks, and queues them to WMI.
  *
- * Return: 0 on success (frame queued for transmission)
- *         -EINVAL if arvif or ar is NULL
- *         -EOPNOTSUPP if called on monitor interface
- *         -EPERM if device is in recovery, crash flush, or bridge mode
- *         -EAGAIN if CAC is running or CSA is active
- *         -EBUSY if queue is full or probe response threshold exceeded
+ * Return: 0 on success (frames queued for transmission)
+ *         -EINVAL if raw_pkt_ctx is NULL
+ *         -ENODATA if no packets were processed
  */
-int ath12k_custom_tx_extn(struct sk_buff *skb);
+int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
 
 /*
  * ath12k_wmi_prepare_tx_params_extn() - Prepare tx params for WMI command

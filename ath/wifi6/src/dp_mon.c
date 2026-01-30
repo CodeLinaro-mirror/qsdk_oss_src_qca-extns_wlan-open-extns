@@ -22,8 +22,8 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_htt_srng_setup = ath12k_wifi6_dp_mon_rx_htt_srng_setup,
 	.mon_pdev_alloc = ath12k_dp_mon_pdev_alloc,
 	.mon_pdev_free = ath12k_dp_mon_pdev_free,
-	.mon_pdev_rx_srng_setup = NULL,
-	.mon_pdev_rx_srng_cleanup = NULL,
+	.mon_pdev_rx_srng_setup = ath12k_wifi6_dp_mon_pdev_rx_srng_setup,
+	.mon_pdev_rx_srng_cleanup = ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup,
 	.mon_pdev_rx_htt_srng_setup = NULL,
 	.mon_pdev_rx_attach = ath12k_dp_mon_pdev_rx_attach,
 	.mon_pdev_rx_mpdu_list_init = NULL,
@@ -33,7 +33,6 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_filter_free = ath12k_dp_mon_rx_filter_free,
 	.rx_stats_enable = NULL,
 	.rx_stats_disable = NULL,
-	.rx_filter_update = NULL,
 	.rx_filter_update = ath12k_wifi6_dp_mon_rx_update_ring_filter,
 	.rx_monitor_mode_set = ath12k_wifi6_dp_mon_rx_monitor_mode_set,
 	.rx_monitor_mode_reset = ath12k_wifi6_dp_mon_rx_monitor_mode_reset,
@@ -62,13 +61,32 @@ int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)
 		srng = &dp_mon->rx_mon_status_refill_ring[i].refill_buf_ring;
 		ret = ath12k_dp_srng_setup(ab, srng,
 					   HAL_RXDMA_MONITOR_STATUS, 0, i,
-					   DP_RXDMA_MON_STATUS_RING_SIZE);
+					   HAL_RX_MON_STATUS_RING_SIZE);
 		if (ret) {
 			ath12k_warn(dp, "failed to setup mon status ring %d\n", i);
 			return ret;
 		}
 	}
 
+	if (ath12k_dp_mon_rxdma1_enable(dp)) {
+		ret = ath12k_dp_srng_setup(ab,
+					   &dp_mon->rxdma_mon_buf_ring.refill_buf_ring,
+					   HAL_RXDMA_MONITOR_BUF, 0, 0,
+					   HAL_RX_MON_REFILL_RING_SIZE);
+		if (ret) {
+			ath12k_warn(dp, "failed to setup HAL_RXDMA_MONITOR_BUF %d\n", ret);
+			return ret;
+		}
+
+		ret = ath12k_dp_srng_setup(ab, &dp_mon->rxdma_mon_desc_ring,
+					   HAL_RXDMA_MONITOR_DESC,
+					   0, 0,
+					   HAL_RX_MON_DESC_RING_SIZE);
+		if (ret) {
+			ath12k_warn(dp, "failed to setup mon desc ring %d\n", ret);
+			return ret;
+		}
+	}
 	return 0;
 }
 
@@ -82,6 +100,11 @@ void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp)
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
 		srng = &dp_mon->rx_mon_status_refill_ring[i].refill_buf_ring;
 		ath12k_dp_srng_cleanup(ab, srng);
+	}
+
+	if (ath12k_dp_mon_rxdma1_enable(dp)) {
+		ath12k_dp_srng_cleanup(ab, &dp_mon->rxdma_mon_desc_ring);
+		ath12k_dp_mon_rx_srng_cleanup(dp);
 	}
 }
 
@@ -253,6 +276,36 @@ int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp)
 	}
 
 	return 0;
+}
+
+int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 mac_id)
+{
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct ath12k_base *ab = dp->ab;
+	int srng_id = ath12k_hw_mac_id_to_srng_id(ab->hw_params, mac_id);
+	struct dp_srng *ring = &dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[srng_id];
+	int ret;
+
+	ret = ath12k_dp_srng_setup(ab, ring,
+				   HAL_RXDMA_MONITOR_DST,
+				   0, srng_id,
+				   HAL_RX_MON_DST_RING_SIZE);
+	if (ret) {
+		ath12k_warn(dp, "failed to setup mon dest ring %d\n", srng_id);
+		return ret;
+	}
+
+        return 0;
+}
+
+void ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup(struct ath12k_pdev_dp *dp_pdev)
+{
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct ath12k_base *ab = dp->ab;
+	int i;
+
+	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++)
+		ath12k_dp_srng_cleanup(ab, &dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[i]);
 }
 
 static struct sk_buff

@@ -12,6 +12,7 @@
 #include "dp_rx.h"
 #include "dp.h"
 #include "hal.h"
+#include "dp_mon.h"
 
 static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 					struct ath12k_ext_irq_grp *irq_grp,
@@ -405,6 +406,8 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 		ath12k_warn(dp, "dp_mon_init failed %d\n", ret);
 		goto dp_err;
 	}
+
+	ath12k_wifi6_dp_mon_ops_register(dp);
 
 	return dp;
 dp_err:

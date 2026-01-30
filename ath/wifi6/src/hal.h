@@ -44,6 +44,8 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_RX_REFILL_RING_SIZE			32
 #define HAL_RX_MON_REFILL_RING_SIZE		4096
 #define HAL_RX_MON_STATUS_RING_SIZE		1024
+#define HAL_RX_MON_DESC_RING_SIZE		4096
+#define HAL_RX_MON_DST_RING_SIZE		4096
 
 /* WCSS Relative address */
 #define HAL_SEQ_WCSS_CMEM_OFFSET		0x00100000

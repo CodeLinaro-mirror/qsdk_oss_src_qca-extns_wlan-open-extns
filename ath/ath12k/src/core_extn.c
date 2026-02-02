@@ -376,7 +376,7 @@ int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arv
 			return -EOPNOTSUPP;
 		}
 
-		arg->create_flags |= VDEV_FLAGS_SCAN_MODE_VAP;
+		arg->mbssid_flags |= VDEV_FLAGS_SCAN_MODE_VAP;
 		ath12k_info(ar->ab, "vdev %d: Scan Radio ENABLED on pdev %d (caps=0x%x)\n",
 			    arvif->vdev_id, ar->pdev->pdev_id,
 			    ar->pdev->cap.scan_radio_caps);

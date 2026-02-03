@@ -44,6 +44,7 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.mon_rx_wmask = NULL,
 	.rx_enable_packet_filters = NULL,
 	.pktlog_config = NULL,
+	.htt_rx_filter_rxmon_cfg = NULL,
 };
 
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)

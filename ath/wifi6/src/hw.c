@@ -381,6 +381,7 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		 */
 		.cfr_stream_buf_size = 16716,
 		.mlo_3_link_tx_support = false,
+		.quad_ring_monitor_support = true,
 		.board_magic = "QCA-ATH11K-BOARD",
 	},
 };

@@ -712,6 +712,8 @@ ath12k_wifi6_hal_mon_rx_parse_mpdu_start(const void *tlv_data, u32 userid,
 	ppdu_info->userstats[userid].enc_type =
 				HAL_RX_GET_ENCRYPT_TYPE(rx_mpdu_start);
 
+	ppdu_info->userstats[userid].ampdu_id = ppdu_id;
+
 	if (ppdu_info->ppdu_info_extn.sw_frame_group_id ==
 	    HAL_MPDU_SW_FRAME_GROUP_NULL_DATA) {
 		ppdu_info->frame_control_info_valid =
@@ -905,8 +907,8 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 		break;
 	}
 	case HAL_RX_PPDU_END_USER_STATS:
-               ath12k_wifi6_hal_mon_rx_parse_ppdu_end_usr_stats(tlv_data,
-								userid, ppdu_info);
+		ath12k_wifi6_hal_mon_rx_parse_ppdu_end_usr_stats(tlv_data,
+								 userid, ppdu_info);
 		break;
 	case HAL_RX_PPDU_END_USER_STATS_EXT:
 		break;

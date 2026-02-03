@@ -9,10 +9,9 @@
 #include "hal.h"
 #include "hal_rx.h"
 
-void ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get(void *rx_desc, dma_addr_t *paddr,
-					       u32 *sw_cookie,
-					       struct ath12k_buffer_addr **pp_buf_addr,
-					       u8 *rbm, u32 *msdu_cnt)
+void ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get(void *rx_desc,
+					       struct hal_rx_buf_info *buf_info,
+					       u32 *msdu_cnt)
 {
 	struct hal_reo_entrance_ring *reo_ent_ring =
 		(struct hal_reo_entrance_ring *)rx_desc;
@@ -27,17 +26,15 @@ void ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get(void *rx_desc, dma_addr_t *paddr,
 
 	buf_addr_info = (struct ath12k_buffer_addr *)&reo_ent_ring->buf_addr_info;
 
-	*paddr = (((u64)le32_get_bits(buf_addr_info->info1,
-				      BUFFER_ADDR_INFO1_ADDR)) << 32) |
-			le32_get_bits(buf_addr_info->info0,
-				      BUFFER_ADDR_INFO0_ADDR);
+	buf_info->paddr = (((u64)le32_get_bits(buf_addr_info->info1,
+					       WIFI6_BUFFER_ADDR_INFO1_ADDR)) << 32) |
+					le32_get_bits(buf_addr_info->info0,
+						      WIFI6_BUFFER_ADDR_INFO0_ADDR);
 
-	*sw_cookie = le32_get_bits(buf_addr_info->info1,
-				   BUFFER_ADDR_INFO1_SW_COOKIE);
-	*rbm = le32_get_bits(buf_addr_info->info1,
-			     BUFFER_ADDR_INFO1_RET_BUF_MGR);
-
-	*pp_buf_addr = (void *)buf_addr_info;
+	buf_info->sw_cookie = le32_get_bits(buf_addr_info->info1,
+					    WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
+	buf_info->rbm = le32_get_bits(buf_addr_info->info1,
+				      WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR);
 }
 
 void
@@ -71,37 +68,53 @@ void ath12k_wifi6_hal_rx_msdu_list_get(void *desc,
 	msdu_details = &link_desc->msdu_link[0];
 
 	for (i = 0; i < HAL_RX_NUM_MSDU_DESC; i++) {
+		/* num_msdus received in mpdu descriptor may be incorrect
+		 * sometimes due to HW issue. Check msdu buffer address also
+		 */
 		if (!i && le32_get_bits(msdu_details[i].buf_addr_info.info0,
-					BUFFER_ADDR_INFO0_ADDR) == 0)
+					WIFI6_BUFFER_ADDR_INFO0_ADDR) == 0)
 			break;
 		if (le32_get_bits(msdu_details[i].buf_addr_info.info0,
-				  BUFFER_ADDR_INFO0_ADDR) == 0) {
+				  WIFI6_BUFFER_ADDR_INFO0_ADDR) == 0) {
+			/* set the last msdu bit in the prev msdu_desc_info */
 			msdu_desc_info = &msdu_details[i - 1].rx_msdu_info;
 			msdu_desc_info->info0 |= cpu_to_le32(last);
 			break;
 		}
 		msdu_desc_info = &msdu_details[i].rx_msdu_info;
 
+		/* set first MSDU bit or the last MSDU bit */
 		if (!i)
 			msdu_desc_info->info0 |= cpu_to_le32(first);
 		else if (i == (HAL_RX_NUM_MSDU_DESC - 1))
 			msdu_desc_info->info0 |= cpu_to_le32(last);
+
 		msdu_list->msdu_info[i].msdu_flags = le32_to_cpu(msdu_desc_info->info0);
 		msdu_list->msdu_info[i].msdu_len =
 			 HAL_RX_MSDU_PKT_LENGTH_GET(msdu_desc_info->info0);
 		msdu_list->sw_cookie[i] =
 			le32_get_bits(msdu_details[i].buf_addr_info.info1,
-				      BUFFER_ADDR_INFO1_SW_COOKIE);
+				      WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
 		tmp = le32_get_bits(msdu_details[i].buf_addr_info.info1,
-				    BUFFER_ADDR_INFO1_RET_BUF_MGR);
+				    WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR);
 		msdu_list->paddr[i] =
 			((u64)(le32_get_bits(msdu_details[i].buf_addr_info.info1,
-					     BUFFER_ADDR_INFO1_ADDR)) << 32) |
+					     WIFI6_BUFFER_ADDR_INFO1_ADDR)) << 32) |
 			le32_get_bits(msdu_details[i].buf_addr_info.info0,
-				      BUFFER_ADDR_INFO0_ADDR);
+				      WIFI6_BUFFER_ADDR_INFO0_ADDR);
 		msdu_list->rbm[i] = tmp;
 	}
 	*num_msdus = i;
+}
+
+void
+ath12k_wifi6_dp_mon_rx_priv_info_set(u8 *buf, u8 *priv_data, u8 len)
+{
+	struct hal_rx_desc *rx_desc = (struct hal_rx_desc *)buf;
+
+	len = (len > HAL_RX_DESC_PADDING0_BYTES) ?
+		  HAL_RX_DESC_PADDING0_BYTES : len;
+	memcpy(rx_desc->u.qcn9074.rx_padding0, priv_data, len);
 }
 
 void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,

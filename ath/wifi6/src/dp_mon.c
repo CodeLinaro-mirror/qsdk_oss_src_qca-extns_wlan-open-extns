@@ -251,6 +251,55 @@ ath12k_wifi6_dp_mon_rx_status_buf_setup(struct ath12k_dp *dp, int mac_id)
 	return ret;
 }
 
+static int
+ath12k_wifi6_dp_mon_buf_setup(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	int num_entries;
+	struct dp_rxdma_mon_ring *rx_ring;
+	struct dp_srng *rx_mon_buf_srng;
+	size_t req_entries;
+	LIST_HEAD(list);
+	u16 ring_size;
+	int ret = 0;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_mon;
+	ring_size = HAL_RX_MON_REFILL_RING_SIZE;
+
+	ret = ath12k_wifi6_rx_desc_pool_init(dp, rx_desc_pool, 0, ring_size);
+	if (ret) {
+		ath12k_warn(dp, "rx desc pool init failed %d\n", ret);
+		return ret;
+	}
+
+	rx_desc_pool->dest_frag_enable =  true;
+	rx_desc_pool->buf_size = ATH12K_DP_MON_RX_BUF_SIZE;
+
+	rx_ring = &dp_mon->rxdma_mon_buf_ring;
+	rx_mon_buf_srng = &rx_ring->refill_buf_ring;
+
+	num_entries = rx_ring->refill_buf_ring.size /
+			ath12k_hal_srng_get_entrysize(ab, HAL_RXDMA_BUF);
+
+	rx_ring->bufs_max = num_entries;
+
+	req_entries = ath12k_wifi6_dp_get_req_entries_from_buf_ring(dp, rx_mon_buf_srng,
+								    &list,
+								    rx_desc_pool);
+	if (req_entries) {
+		ret = ath12k_wifi6_dp_buf_replenish(dp, rx_mon_buf_srng, &list,
+						    req_entries, rx_desc_pool);
+	} else {
+		ath12k_warn(dp, "No required entries available for mon buf ring\n");
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
 int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
@@ -265,7 +314,7 @@ int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp)
 	}
 
 	if (ath12k_dp_mon_rxdma1_enable(dp)) {
-		ret = ath12k_dp_mon_rx_buf_setup(dp);
+		ret = ath12k_wifi6_dp_mon_buf_setup(dp);
 		if (ret)
 			return ret;
 	}
@@ -311,6 +360,44 @@ void ath12k_wifi6_dp_mon_rx_status_ring_free(struct ath12k_dp *dp, int mac_id)
 	spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
 }
 
+void ath12k_wifi6_dp_mon_rx_buf_ring_free(struct ath12k_dp *dp)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	u8 *vaddr;
+	dma_addr_t paddr;
+	int i;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_mon;
+
+	spin_lock_bh(&rx_desc_pool->rx_mon_desc_lock);
+	if (!rx_desc_pool->mon_desc_pool) {
+		spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
+		return;
+	}
+
+	for (i = 0; i < rx_desc_pool->pool_size; i++) {
+		if (rx_desc_pool->mon_desc_pool[i].in_use != 1)
+			continue;
+
+		vaddr = rx_desc_pool->mon_desc_pool[i].vaddr;
+		paddr = rx_desc_pool->mon_desc_pool[i].paddr;
+
+		if (!(rx_desc_pool->mon_desc_pool[i].unmapped)) {
+			ath12k_core_dma_unmap_page(dp->dev, paddr,
+						   rx_desc_pool->buf_size,
+						   DMA_FROM_DEVICE);
+			rx_desc_pool->mon_desc_pool[i].unmapped = 1;
+		}
+		page_frag_free(vaddr);
+		rx_desc_pool->mon_desc_pool[i].vaddr = NULL;
+	}
+
+	kfree(rx_desc_pool->mon_desc_pool);
+	rx_desc_pool->mon_desc_pool = NULL;
+	spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
+}
+
 void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
@@ -321,7 +408,7 @@ void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp)
 	}
 
 	if (ath12k_dp_mon_rxdma1_enable(dp))
-		ath12k_dp_mon_rx_buf_free(dp);
+		ath12k_wifi6_dp_mon_rx_buf_ring_free(dp);
 }
 
 int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp)

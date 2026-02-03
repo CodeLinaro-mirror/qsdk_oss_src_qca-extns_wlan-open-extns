@@ -684,3 +684,25 @@ void *ath12k_wifi6_hal_srng_src_get_cur_desc_n_move_next(struct ath12k_base *ab,
 
 	return curr_desc;
 }
+
+void *ath12k_wifi6_hal_srng_src_next_next_peek(struct ath12k_base *ab,
+					       struct hal_srng *srng)
+{
+	void *desc;
+	u32 next_hp;
+	u32 next_next_hp;
+
+	lockdep_assert_held(&srng->lock);
+
+	next_hp = (srng->u.src_ring.hp + srng->entry_size) % srng->ring_size;
+	next_next_hp = (srng->u.src_ring.hp + (srng->entry_size * 2)) %
+				srng->ring_size;
+
+	if (next_hp == srng->u.src_ring.cached_tp ||
+	    next_next_hp == srng->u.src_ring.cached_tp)
+		return NULL;
+
+	desc = srng->ring_base_vaddr + next_next_hp;
+
+	return desc;
+}

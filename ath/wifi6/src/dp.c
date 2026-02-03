@@ -21,10 +21,10 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 	struct napi_struct *napi = &irq_grp->napi;
 	int grp_id = irq_grp->grp_id;
 	int work_done = 0;
-	int i = 0;
+	int i = 0, j = 0;
 	int tot_work_done = 0;
-	u8 rx_mask;
 	struct hal_srng *refill_srng;
+	u8 ring_mask, rx_mask;
 
 	rx_mask = dp->hw_params->ring_mask->rx[grp_id];
 
@@ -54,8 +54,8 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		if (budget <= 0)
 			goto done;
 	}
-/*
- *	if (dp->hw_params->ring_mask->rx_mon_status[grp_id]) {
+
+	if (dp->hw_params->ring_mask->rx_mon_status[grp_id]) {
 		ring_mask = dp->hw_params->ring_mask->rx_mon_status[grp_id];
 		for (i = 0; i < dp->num_radios; i++) {
 			for (j = 0; j < dp->hw_params->num_rxdma_per_pdev; j++) {
@@ -73,10 +73,8 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 			}
 		}
 	}
-	 */
 
-/*
- *	if (dp->hw_params->ring_mask->rx_mon_dest[grp_id]) {
+	if (dp->hw_params->ring_mask->rx_mon_dest[grp_id]) {
 		ring_mask = dp->hw_params->ring_mask->rx_mon_dest[grp_id];
 		for (i = 0; i < dp->num_radios; i++) {
 			for (j = 0; j < dp->hw_params->num_rxdma_per_pdev; j++) {
@@ -95,29 +93,7 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 			}
 		}
 	}
-	 */
 
-/*
- *	if (dp->hw_params->ring_mask->tx_mon_dest[grp_id]) {
-		ring_mask = dp->hw_params->ring_mask->tx_mon_dest[grp_id];
-		for (i = 0; i < dp->num_radios; i++) {
-			for (j = 0; j < dp->hw_params->num_rxdma_per_pdev; j++) {
-				int id = i * dp->hw_params->num_rxdma_per_pdev + j;
-
-				if (ring_mask & BIT(id)) {
-					work_done =
-					ath12k_dp_tx_mon_process_ring(dp, id, napi,
-								      budget);
-					budget -= work_done;
-					tot_work_done += work_done;
-
-					if (budget <= 0)
-						goto done;
-				}
-			}
-		}
-	}
-	 */
 	if (dp->hw_params->ring_mask->reo_status[grp_id]) {
 		ath12k_wifi6_dp_rx_process_reo_status(dp);
 	}
@@ -132,13 +108,6 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		if (req_entries)
 			ath12k_dp_rx_bufs_replenish(dp, refill_srng, &list);
 	}
-
-/*
- *	if (dp->hw_params->ring_mask->host2rxmon[grp_id])
-		ath12k_dp_mon_rx_process_low_thres(dp);
-
-*/
-	// TODO: Implement handler for other interrupts
 
 done:
 	return tot_work_done;

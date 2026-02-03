@@ -29,7 +29,6 @@ struct ath12k_dp_rx_desc_pool *ath12k_wifi6_dp_rx_get_mon_desc_pool(struct ath12
 		return &dp_wifi6->rx_desc_mon;
 }
 
-
 static inline
 int ath12k_dp_rx_mon_process_ring(struct ath12k_dp *dp, int mac_id,
 				  struct napi_struct *napi, int budget)
@@ -57,6 +56,49 @@ int ath12k_dp_rx_mon_process_ring(struct ath12k_dp *dp, int mac_id,
 	rcu_read_unlock();
 
 	return num_buffs_reaped;
+}
+
+#define ATH12K_DP_RX_DESC_COOKIE_INDEX    GENMASK(17, 0)
+#define ATH12K_DP_RX_DESC_COOKIE_POOL_ID  GENMASK(22, 18)
+
+static inline
+struct ath12k_dp_rx_desc_pool *
+ath12k_wifi6_dp_get_rx_desc_pool(struct ath12k_dp *dp, int mac_id)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+
+	if (unlikely(!dp_wifi6))
+		return NULL;
+
+	return &dp_wifi6->rx_desc_status[mac_id];
+}
+
+static inline
+struct ath12k_dp_wifi6_rx_desc_info *
+ath12k_wifi6_dp_get_rx_status_desc(struct ath12k_dp *dp, u32 cookie)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	u32 index, pool_id;
+
+	if (unlikely(!dp_wifi6))
+		return NULL;
+
+	pool_id = u32_get_bits(cookie, ATH12K_DP_RX_DESC_COOKIE_POOL_ID);
+	index   = u32_get_bits(cookie, ATH12K_DP_RX_DESC_COOKIE_INDEX);
+
+	if (unlikely(pool_id >= MAX_RXDMA_PER_PDEV))
+		return NULL;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_status[pool_id];
+
+	if (unlikely(index >= rx_desc_pool->pool_size))
+		return NULL;
+
+	if (unlikely(!rx_desc_pool->mon_desc_pool))
+		return NULL;
+
+	return &rx_desc_pool->mon_desc_pool[index];
 }
 
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp);

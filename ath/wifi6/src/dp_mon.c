@@ -1352,59 +1352,104 @@ next_msdu:
 	return rx_bufs_used;
 }
 
-static void ath12k_dp_mon_rx_msdus_set_payload(struct ath12k_dp *dp,
-					       struct sk_buff *head_msdu,
-					       struct sk_buff *tail_msdu)
+static void
+ath12k_wifi6_dp_mon_rx_fraglist_prepare(struct sk_buff *head_msdu,
+					struct sk_buff *tail_msdu)
 {
-	struct ath12k_base *ab = dp->ab;
-	u32 rx_pkt_offset, l2_hdr_offset, total_offset;
+	struct sk_buff *msdu, *mpdu_buf, *head_frag_list;
+	u32 frag_list_sum_len;
 
-	if (ath12k_dp_get_mon_type(dp) == ATH12K_DP_MON_TYPE_DUAL_RING) {
-		total_offset = ATH12K_MON_RX_PKT_OFFSET;
-	} else {
-		rx_pkt_offset = ab->hal.hal_desc_sz;
-		l2_hdr_offset =
-			ath12k_hal_rx_h_l3pad_get(&ab->hal,
-						  (void *)tail_msdu->data);
+	/* Single skb accommodating MPDU worth Data */
+	if (tail_msdu == head_msdu)
+		return;
 
-		total_offset = rx_pkt_offset + l2_hdr_offset;
+	mpdu_buf = head_msdu;
+	frag_list_sum_len = 0;
+
+	msdu = head_msdu->next;
+	/* msdu can't be NULL here as it is multiple skb case here */
+
+	/* Head frag list to point to second skb */
+	head_frag_list = msdu;
+
+	while (msdu) {
+		frag_list_sum_len += msdu->len;
+		msdu = msdu->next;
 	}
 
-	skb_pull(head_msdu, total_offset);
+	/* Append second skb to the frag list of head skb */
+	skb_shinfo(mpdu_buf)->frag_list = head_frag_list;
+	mpdu_buf->data_len += frag_list_sum_len;
+	mpdu_buf->len += frag_list_sum_len;
+
+	/* Make Parent skb next to NULL */
+	mpdu_buf->next = NULL;
 }
 
 static struct sk_buff *
-ath12k_dp_mon_rx_merg_msdus(struct ath12k_pdev_dp *dp_pdev,
-			    struct dp_mon_mpdu *mon_mpdu,
-			    struct hal_rx_mon_ppdu_info *ppdu_info,
-			    struct ieee80211_rx_status *rxs)
+ath12k_wifi6_dp_mon_rx_mpdu_restitch(struct ath12k_pdev_dp *dp_pdev,
+				     struct sk_buff *head_msdu,
+				     struct sk_buff *tail_msdu,
+				     struct hal_rx_mon_ppdu_info *ppdu_info)
 {
 	struct ath12k_dp *dp = dp_pdev->dp;
 	struct ath12k_base *ab = dp->ab;
-	struct ath12k *ar = dp_pdev->ar;
-	struct sk_buff *msdu, *mpdu_buf, *prev_buf, *head_frag_list;
-	struct sk_buff *head_msdu, *tail_msdu;
+	struct hal_mon_rx_msdu_info frame_info;
 	void *rx_desc;
-	u8 *hdr_desc, *dest, decap_format = mon_mpdu->decap_format;
-	struct ieee80211_hdr_3addr *wh;
-	struct ieee80211_channel *channel;
-	u32 frag_list_sum_len = 0;
-	u8 channel_num = ppdu_info->chan_num;
-
-	mpdu_buf = NULL;
-	head_msdu = mon_mpdu->head;
-	tail_msdu = mon_mpdu->tail;
+	u16 rx_mon_pkt_tlv_size = ab->hal.hal_desc_sz;
+	u16 num_frags;
 
 	if (!head_msdu || !tail_msdu)
-		goto err_merge_fail;
+		goto mpdu_restitch_fail;
 
-	ath12k_dp_mon_fill_rx_stats_info(ppdu_info, rxs);
+	rx_desc =  ath12k_dp_mon_skb_get_frag_addr(head_msdu, 0);
+	rx_desc -= rx_mon_pkt_tlv_size;
+
+	/* Need to handle msdu len error */
+	if (ath12k_wifi6_dp_rx_desc_mpdu_len_err_get(rx_desc)) {
+		/* need to stat counter for mon_rx_drop */
+		return NULL;
+	}
+
+	memset(&frame_info, 0, sizeof(struct hal_mon_rx_msdu_info));
+	ath12k_wifi6_dp_mon_rx_priv_info_get(rx_desc,(u8 *)&frame_info,
+					     sizeof(struct hal_mon_rx_msdu_info));
+
+	/* Look for FCS error*/
+	num_frags = skb_shinfo(tail_msdu)->nr_frags;
+
+	rx_desc = ath12k_dp_mon_skb_get_frag_addr(tail_msdu, num_frags - 1);
+	rx_desc -= rx_mon_pkt_tlv_size;
+
+	ppdu_info->rs_fcs_err = ath12k_wifi6_dp_rx_desc_mpdu_fcs_err_get(rx_desc);
+
+	if (frame_info.is_decap_raw == 1)
+		ath12k_wifi6_dp_mon_rx_fraglist_prepare(head_msdu, tail_msdu);
+
+	return head_msdu;
+
+mpdu_restitch_fail:
+	ath12k_dbg(ab, ATH12K_DBG_DP_MON,
+		   "%pK: mpdu_stitch_fail head_msdu %pK", dp_pdev, head_msdu);
+	return NULL;
+}
+
+static
+int ath12k_wifi6_dp_mon_rx_update_band_and_get_freq(struct ath12k_pdev_dp *dp_pdev,
+						    u16 channel_num,
+						    struct ieee80211_rx_status *rxs)
+{
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k *ar =  dp_pdev->ar;
+	struct ieee80211_channel *channel;
+	int freq = -1;
 
 	if (unlikely(rxs->band == NUM_NL80211_BANDS ||
-		     !ath12k_dp_pdev_to_hw(dp_pdev)->wiphy->bands[rxs->band])) {
-		ath12k_dbg(ab, ATH12K_DBG_DATA,
-			   "sband is NULL for status band %d channel_num %d center_freq %d pdev_id %d\n",
-			   rxs->band, channel_num, ppdu_info->freq, ar->pdev_idx);
+		     !ath12k_ar_to_hw(ar)->wiphy->bands[rxs->band])) {
+		ath12k_dbg(ab, ATH12K_DBG_DP_MON,
+			   "sband is NULL for status band %d channel_num %d pdev_id %d\n",
+			   rxs->band, channel_num, ar->pdev_idx);
 
 		spin_lock_bh(&ar->data_lock);
 		channel = ar->rx_channel;
@@ -1417,145 +1462,62 @@ ath12k_dp_mon_rx_merg_msdus(struct ath12k_pdev_dp *dp_pdev,
 	}
 
 	if (rxs->band < NUM_NL80211_BANDS)
-		rxs->freq = ieee80211_channel_to_frequency(channel_num,
-							   rxs->band);
+		freq = ieee80211_channel_to_frequency(channel_num, rxs->band);
 
-	ath12k_dp_mon_fill_rx_rate(dp_pdev, ppdu_info, rxs);
-
-	if (decap_format == DP_RX_DECAP_TYPE_RAW) {
-		ath12k_dp_mon_rx_msdus_set_payload(dp, head_msdu, tail_msdu);
-
-		prev_buf = head_msdu;
-		msdu = head_msdu->next;
-		head_frag_list = NULL;
-
-		while (msdu) {
-			ath12k_dp_mon_rx_msdus_set_payload(dp, msdu, tail_msdu);
-
-			if (!head_frag_list)
-				head_frag_list = msdu;
-
-			frag_list_sum_len += msdu->len;
-			prev_buf = msdu;
-			msdu = msdu->next;
-		}
-
-		prev_buf->next = NULL;
-
-		skb_trim(prev_buf, prev_buf->len);
-		if (head_frag_list) {
-			skb_shinfo(head_msdu)->frag_list = head_frag_list;
-			head_msdu->data_len = frag_list_sum_len;
-			head_msdu->len += head_msdu->data_len;
-			head_msdu->next = NULL;
-		}
-	} else if (decap_format == DP_RX_DECAP_TYPE_NATIVE_WIFI) {
-		u8 qos_pkt = 0;
-
-		rx_desc = head_msdu->data;
-		hdr_desc =
-			ath12k_hal_mon_rx_desc_get_msdu_payload(dp->hal, rx_desc);
-
-		if (!hdr_desc)
-			goto err_merge_fail;
-
-		/* Base size */
-		wh = (struct ieee80211_hdr_3addr *)hdr_desc;
-
-		if (ieee80211_is_data_qos(wh->frame_control))
-			qos_pkt = 1;
-
-		msdu = head_msdu;
-
-		while (msdu) {
-			ath12k_dp_mon_rx_msdus_set_payload(dp, msdu, tail_msdu);
-			if (qos_pkt) {
-				dest = skb_push(msdu, sizeof(__le16));
-				if (!dest)
-					goto err_merge_fail;
-				memcpy(dest, hdr_desc, sizeof(struct ieee80211_qos_hdr));
-			}
-			prev_buf = msdu;
-			msdu = msdu->next;
-		}
-		dest = skb_put(prev_buf, HAL_RX_MON_FCS_LEN);
-		if (!dest)
-			goto err_merge_fail;
-
-		ath12k_dbg(ab, ATH12K_DBG_DATA,
-			   "mpdu_buf %p mpdu_buf->len %u",
-			   prev_buf, prev_buf->len);
-	} else {
-		ath12k_dbg(ab, ATH12K_DBG_DATA,
-			   "decap format %d is not supported!\n",
-			   decap_format);
-		goto err_merge_fail;
-	}
-
-	return head_msdu;
-
-err_merge_fail:
-	if (mpdu_buf && decap_format != DP_RX_DECAP_TYPE_RAW) {
-		ath12k_dbg(ab, ATH12K_DBG_DATA,
-			   "err_merge_fail mpdu_buf %p", mpdu_buf);
-		/* Free the head buffer */
-		dev_kfree_skb_any(mpdu_buf);
-	}
-	return NULL;
+	return freq;
 }
 
 static
-int ath12k_dp_mon_rx_deliver(struct ath12k_pdev_dp *dp_pdev,
-			     struct dp_mon_mpdu *mon_mpdu,
-			     struct hal_rx_mon_ppdu_info *ppduinfo,
-			     struct napi_struct *napi)
+int ath12k_wifi6_dp_mon_rx_deliver_mpdu(struct ath12k_pdev_dp *dp_pdev,
+					struct sk_buff *head_msdu,
+					struct sk_buff *tail_msdu,
+					struct hal_rx_mon_ppdu_info *ppdu_info,
+					struct napi_struct *napi)
 {
-	struct sk_buff *mon_skb, *skb_next, *header;
-	struct ieee80211_rx_status *rxs = &dp_pdev->dp_mon_pdev->rx_status;
-	u8 decap = DP_RX_DECAP_TYPE_RAW;
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct ath12k_base *ab = dp->ab;
+	struct sk_buff *mpdu, *next_mpdu;
+	struct ieee80211_rx_status rxs = {0};
+	int freq_update = -1;
 
-	mon_skb = ath12k_dp_mon_rx_merg_msdus(dp_pdev, mon_mpdu, ppduinfo, rxs);
-	if (!mon_skb)
-		goto mon_deliver_fail;
+	if (!dp_pdev) {
+		goto fail;
+	}
 
-	header = mon_skb;
-	rxs->flag = 0;
+	mpdu = ath12k_wifi6_dp_mon_rx_mpdu_restitch(dp_pdev, head_msdu, tail_msdu,
+						       ppdu_info);
+	/* If MPDU restitch fails, free buffers*/
+	if (!mpdu)
+		goto fail;
 
-	if (mon_mpdu->err_bitmap & HAL_RX_MON_MPDU_ERR_FCS)
-		rxs->flag = RX_FLAG_FAILED_FCS_CRC;
+	ath12k_dp_mon_fill_rx_stats_info(ppdu_info, &rxs);
 
-	do {
-		skb_next = mon_skb->next;
-		if (!skb_next)
-			rxs->flag &= ~RX_FLAG_AMSDU_MORE;
-		else
-			rxs->flag |= RX_FLAG_AMSDU_MORE;
+	freq_update = ath12k_wifi6_dp_mon_rx_update_band_and_get_freq(dp_pdev,
+								      ppdu_info->chan_num,
+								      &rxs);
+	if (freq_update != -1)
+		rxs.freq = freq_update;
 
-		if (mon_skb == header) {
-			header = NULL;
-			rxs->flag &= ~RX_FLAG_ALLOW_SAME_PN;
-		} else {
-			rxs->flag |= RX_FLAG_ALLOW_SAME_PN;
-		}
-		rxs->flag |= RX_FLAG_ONLY_MONITOR;
+	ath12k_dp_mon_update_radiotap(dp_pdev, ppdu_info, mpdu, &rxs);
 
-		if (!(rxs->flag & RX_FLAG_ONLY_MONITOR))
-			decap = mon_mpdu->decap_format;
+	rxs.flag |= RX_FLAG_ONLY_MONITOR;
+	if (skb_shinfo(mpdu)->nr_frags)
+		rxs.flag |= RX_FLAG_AMSDU_MORE;
 
-		ath12k_dp_mon_update_radiotap(dp_pdev, ppduinfo, mon_skb, rxs);
-		ath12k_dp_mon_rx_deliver_skb(dp_pdev, napi, mon_skb, rxs, ppduinfo);
-		mon_skb = skb_next;
-	} while (mon_skb);
-	rxs->flag = 0;
+	if (ppdu_info->rs_fcs_err)
+		rxs.flag |= RX_FLAG_FAILED_FCS_CRC;
+
+	ath12k_dp_mon_rx_deliver_skb(dp_pdev, napi, mpdu, &rxs, ppdu_info);
 
 	return 0;
-
-mon_deliver_fail:
-	mon_skb = mon_mpdu->head;
-	while (mon_skb) {
-		skb_next = mon_skb->next;
-		dev_kfree_skb_any(mon_skb);
-		mon_skb = skb_next;
+fail:
+	mpdu = head_msdu;
+	while (mpdu) {
+		next_mpdu = mpdu->next;
+		dev_kfree_skb_any(mpdu);
+		ath12k_dbg(ab, ATH12K_DBG_DP_MON, "mpdu deliver failed mpdu = %pK"
+			   "len = %u\n", mpdu, mpdu->len);
+		mpdu = next_mpdu;
 	}
 	return -EINVAL;
 }
@@ -1579,7 +1541,6 @@ void ath12k_wifi6_dp_mon_rx_dest_process(struct ath12k_pdev_dp *dp_pdev, int mac
 	struct ath12k_dp_mon *dp_mon;
 	struct ath12k_base *ab;
 	void *ring_entry, *mon_dst_srng;
-	struct dp_mon_mpdu *tmp_mpdu;
 	LIST_HEAD(rx_desc_used_list);
 	struct hal_srng *srng;
 
@@ -1668,8 +1629,11 @@ void ath12k_wifi6_dp_mon_rx_dest_process(struct ath12k_pdev_dp *dp_pdev, int mac
 		}
 
 		if (likely(head_msdu && tail_msdu)) {
-			ath12k_dp_mon_rx_deliver(dp_pdev, tmp_mpdu,
-						 &pmon->mon_ppdu_info, napi);
+			ath12k_wifi6_dp_mon_rx_deliver_mpdu(dp_pdev,
+							    head_msdu,
+							    tail_msdu,
+							    &pmon->mon_ppdu_info,
+							    napi);
 			rx_mon_stats->dest_mpdu_done++;
 		}
 

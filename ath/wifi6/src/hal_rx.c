@@ -117,6 +117,16 @@ ath12k_wifi6_dp_mon_rx_priv_info_set(u8 *buf, u8 *priv_data, u8 len)
 	memcpy(rx_desc->u.qcn9074.rx_padding0, priv_data, len);
 }
 
+void
+ath12k_wifi6_dp_mon_rx_priv_info_get(u8 *buf, u8 *priv_data, u8 len)
+{
+	struct hal_rx_desc *rx_desc = (struct hal_rx_desc *)buf;
+
+	len = (len > HAL_RX_DESC_PADDING0_BYTES) ?
+		HAL_RX_DESC_PADDING0_BYTES : len;
+	memcpy(priv_data, rx_desc->u.qcn9074.rx_padding0, len);
+}
+
 void ath12k_wifi6_hal_rx_buf_addr_info_set(struct ath12k_buffer_addr *b_info,
 					   dma_addr_t paddr, u32 cookie,
 					   u8 manager)

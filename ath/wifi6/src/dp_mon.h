@@ -4,6 +4,7 @@
  */
 
 #include "../../dp_mon.h"
+#include "dp.h"
 
 extern const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops;
 extern const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_dual_ring_ops;
@@ -15,6 +16,19 @@ void ath12k_wifi6_dp_mon_ops_register(struct ath12k_dp *dp)
 
 	dp_mon->mon_ops = &ath12k_wifi6_dp_arch_mon_quad_ring_ops;
 }
+
+static inline
+struct ath12k_dp_rx_desc_pool *ath12k_wifi6_dp_rx_get_mon_desc_pool(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+
+	if (!ab->hw_params->rxdma1_enable)
+		return &dp_wifi6->rx_desc_buf;
+	else
+		return &dp_wifi6->rx_desc_mon;
+}
+
 
 static inline
 int ath12k_dp_rx_mon_process_ring(struct ath12k_dp *dp, int mac_id,

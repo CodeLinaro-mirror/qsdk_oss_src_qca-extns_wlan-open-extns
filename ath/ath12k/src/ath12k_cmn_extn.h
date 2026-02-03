@@ -639,5 +639,8 @@ int ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
 			void *data);
 int ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 				const void *ptr, void *data);
+void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
+						 struct sk_buff *skb,
+						 u32 pdev_id);
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

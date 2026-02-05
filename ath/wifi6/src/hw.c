@@ -330,7 +330,6 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 					BIT(NL80211_IFTYPE_AP) |
 					BIT(NL80211_IFTYPE_MESH_POINT),
 		.supports_monitor = true,
-		.supports_tx_monitor = false,
 
 		.idle_ps = false,
 		.cold_boot_calib = false,

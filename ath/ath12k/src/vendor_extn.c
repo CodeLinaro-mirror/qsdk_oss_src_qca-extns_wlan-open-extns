@@ -144,6 +144,13 @@ ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP] = {.type = NLA_U32},
 };
 
+const struct nla_policy
+ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID] = { .type = NLA_U8 },
+};
+
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
 					   u8 *mac_addr)
 {
@@ -3130,4 +3137,197 @@ int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 exit:
 	rcu_read_unlock();
 	return -1;
+}
+
+static int ath12k_vendor_send_reg_params_update(struct wiphy *wiphy,
+						u8 cmd, u8 opclass,
+						u16 hw_value,
+						int max_reg_power,
+						u8 num_opclasses,
+						u8 *opclass_lst,
+						u8 *chansize_lst,
+						u8 **channel_lists)
+{
+	struct sk_buff *skb;
+	struct nlattr *nla_attr;
+	int i, j, temp;
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
+	if (!skb)
+		return -ENOMEM;
+
+	if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS) {
+		if (nla_put_u8(skb,
+			       QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_NUM_OPCLASS,
+			       num_opclasses))
+			goto fail;
+		else
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "Number of opclasses is %d",
+				   num_opclasses);
+	} else if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_CHAN_NUM) {
+		if (nla_put_u8(skb,
+			       QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_CHAN_NUM,
+			       hw_value))
+			goto fail;
+		else
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "hw_value is %d", hw_value);
+	} else if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_TXPOWER) {
+		if (nla_put_s32(skb,
+				QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_TXPOWER,
+				max_reg_power))
+			goto fail;
+		else
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "max_reg_power is %d", max_reg_power);
+	} else if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST) {
+		temp = QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_OPCLASS_LIST;
+		nla_attr = nla_nest_start(skb, temp);
+		if (!nla_attr)
+			goto fail;
+
+		for (i = 0; i < num_opclasses; i++) {
+			if (nla_put_u8(skb, i, opclass_lst[i]))
+				goto fail;
+			else
+				ath12k_dbg(NULL, ATH12K_DBG_REG,
+					   "opclasslist[%d] is %d",
+					   i, opclass_lst[i]);
+		}
+		nla_nest_end(skb, nla_attr);
+	}
+
+	if (opclass) {
+		for (i = 0; i < num_opclasses; i++) {
+			if (opclass == opclass_lst[i]) {
+				j = i;
+				break;
+			}
+		}
+
+		if (i == num_opclasses)
+			goto fail;
+
+		temp = QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_OPCLASS_CHAN;
+		nla_attr = nla_nest_start(skb, temp);
+		if (!nla_attr)
+			goto fail;
+
+		for (i = 0; i < chansize_lst[j]; i++) {
+			if (nla_put_u8(skb, i, channel_lists[j][i]))
+				goto fail;
+			else
+				ath12k_dbg(NULL, ATH12K_DBG_REG,
+					   "channellist[%d] is %d",
+					   i, channel_lists[j][i]);
+		}
+		nla_nest_end(skb, nla_attr);
+	}
+
+	return cfg80211_vendor_cmd_reply(skb);
+
+fail:
+	kfree_skb(skb);
+	return -EMSGSIZE;
+}
+
+int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
+	enum nl80211_band band;
+	int ret_val = 0;
+	u8 cmd = 0;
+	u8 opclass = 0;
+	u8 link_id, num_op = 0;
+	u8 *op_lst  = NULL, *chansize = NULL, **chan_lst = NULL;
+	u16 hw_value = 0;
+	int max_reg_power = 0;
+	int curr_reg_power;
+	bool need_clean = false;
+
+	if (!wdev || !data || !data_len) {
+		ath12k_err(NULL, "Invalid input to REG PARAMS handler");
+		return -EINVAL;
+	}
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX, data,
+		      data_len, ath12k_reg_params_policy, NULL)) {
+		ath12k_err(NULL, "Failed to parse REG PARAMS vendor attributes");
+		return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID]) {
+		ath12k_err(NULL, "Missing mandatory Link_id attributes");
+		return -EINVAL;
+	}
+
+	link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID]);
+
+	if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
+		return -EINVAL;
+
+	if (!wdev->links[link_id].ap.chandef.chan) {
+		ath12k_err(NULL, "No channel defined for link_id %u\n", link_id);
+		return -EINVAL;
+	}
+
+	band = wdev->links[link_id].ap.chandef.chan->band;
+	curr_reg_power = wdev->links[link_id].ap.chandef.chan->max_reg_power;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD])
+		cmd = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN])
+		opclass = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN]);
+
+	if ((cmd >= QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS &&
+	     cmd <= QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST) || opclass) {
+		if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_CHAN_NUM) {
+			hw_value = wdev->links[link_id].ap.chandef.chan->hw_value;
+		}
+
+		if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_TXPOWER) {
+			max_reg_power = curr_reg_power;
+		}
+
+		if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS ||
+		    cmd == QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST ||
+		    opclass) {
+			ret_val = ath12k_get_opclasses_and_channels(NULL,
+								    &num_op,
+								    &op_lst,
+								    &chansize,
+								    &chan_lst,
+								    band);
+			need_clean = true;
+			if (ret_val) {
+				ath12k_err(NULL,
+					   "Failed to retrieve opclass list and channel");
+				goto clean;
+			}
+		}
+
+		ret_val = ath12k_vendor_send_reg_params_update(wiphy, cmd, opclass,
+							       hw_value,
+							       max_reg_power,
+							       num_op, op_lst,
+							       chansize,
+							       chan_lst);
+
+	} else {
+		ret_val = -EINVAL;
+	}
+
+	if (need_clean)
+		goto clean;
+	return ret_val;
+
+clean:
+	ath12k_free_opclasses_and_channels(num_op, op_lst,
+					   chansize, chan_lst);
+	return ret_val;
 }

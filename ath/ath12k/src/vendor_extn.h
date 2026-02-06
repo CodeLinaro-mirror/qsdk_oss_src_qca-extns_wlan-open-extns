@@ -160,6 +160,17 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 {
 	return -1;
 }
+
+static int ath12k_get_dp_rx_scan_radio_stats_len(void)
+{
+	return 0;
+}
+
+static int ath12k_fill_rx_scan_radio_stats(struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats)
+{
+	return 0;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -231,6 +242,12 @@ int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
 				      struct wireless_dev *wdev,
 				      const void *data,
 				      int data_len);
+
+int ath12k_get_dp_rx_scan_radio_stats_len(void);
+
+int ath12k_fill_rx_scan_radio_stats(
+		struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats);
 
 #endif /* CPTCFG_QCN_EXTN */
 

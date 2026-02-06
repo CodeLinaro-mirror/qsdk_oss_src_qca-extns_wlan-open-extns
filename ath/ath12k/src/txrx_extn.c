@@ -1142,7 +1142,18 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
 
 	beacon_interval = vif->bss_conf.beacon_int;
-	timeout_ms = ATH12K_MAX_OFFCHAN_WAIT + scan_dur + beacon_interval;
+
+	/* Scan radio does not support beacon.
+	* Need this delay for host FW message processing,
+	* as beacon interval accounts this in delay in serving radio.
+	*/
+	if (ath12k_scan_radio_supported(ar->pdev)) {
+		timeout_ms = ATH12K_MAX_OFFCHAN_WAIT + scan_dur +
+				ATH12K_SCAN_RADIO_OFFCHAN_RX_DELAY;
+	} else {
+		timeout_ms = ATH12K_MAX_OFFCHAN_WAIT + scan_dur +
+				beacon_interval;
+	}
 
 	ret = ath12k_validate_offchan_operation(ar, arvif);
 	if (ret) {

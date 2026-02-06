@@ -56,6 +56,8 @@ struct sta_240mhz_info {
 
 /* Maximum wait time for off-channel operations (milliseconds). */
 #define ATH12K_MAX_OFFCHAN_WAIT        50
+/* Off Rx timemout delay for scan radio (ms) */
+#define ATH12K_SCAN_RADIO_OFFCHAN_RX_DELAY	150
 /* Maximum number of custom pkts for tx per request */
 #define ATH12K_MAX_CUSTOM_TX_PKT	20
 /* Checks whether SKB has custom pkt */

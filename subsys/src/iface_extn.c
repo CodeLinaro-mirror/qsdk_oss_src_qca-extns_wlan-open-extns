@@ -46,7 +46,7 @@ void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_local *local = sdata->local;
 	struct wireless_dev *wdev = &sdata->wdev;
 
-	if (!wdev || !wdev_is_scan_radio(wdev))
+	if (!wdev || !wdev_is_scan_radio(wdev) || local->monitors == 0)
 		return;
 
 	local->monitors--;

@@ -332,7 +332,7 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		.supports_monitor = true,
 
 		.idle_ps = false,
-		.cold_boot_calib = false,
+		.cold_boot_calib = true,
 		.download_calib = true,
 		.supports_suspend = false,
 		.reoq_lut_support = false,

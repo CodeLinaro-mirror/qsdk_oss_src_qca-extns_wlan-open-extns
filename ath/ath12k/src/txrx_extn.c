@@ -1008,6 +1008,7 @@ void ath12k_custom_txrx_init(struct ath12k *ar)
 	timer_setup(&raw_ctx->offchan_timer,
 		    ath12k_custom_txrx_timeout_handler, 0);
 	skb_queue_head_init(&raw_ctx->pkt_list);
+	mutex_init(&raw_ctx->raw_ctx_mutex);
 }
 
 void ath12k_custom_txrx_deinit(struct ath12k *ar)
@@ -1019,6 +1020,7 @@ void ath12k_custom_txrx_deinit(struct ath12k *ar)
 	spin_lock_bh(&raw_ctx->chan_lock);
 	skb_queue_purge(&raw_ctx->pkt_list);
 	spin_unlock_bh(&raw_ctx->chan_lock);
+	mutex_destroy(&raw_ctx->raw_ctx_mutex);
 }
 
 /**
@@ -1139,6 +1141,9 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	/* Get raw_pkt_ctx from ar_extn structure */
 	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
 
+	beacon_interval = vif->bss_conf.beacon_int;
+	timeout_ms = ATH12K_MAX_OFFCHAN_WAIT + scan_dur + beacon_interval;
+
 	ret = ath12k_validate_offchan_operation(ar, arvif);
 	if (ret) {
 		rcu_read_unlock();
@@ -1148,9 +1153,19 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 
 	rcu_read_unlock();
 
+	/* Acquire mutex to serialize operations - hold until user event arrives.
+	 * Cancel command will invoke the event hanlder in the callee which will
+	 * will unlock the mutex post sending the event to user space
+	 */
+	ret = mutex_lock_interruptible(&raw_pkt_ctx->raw_ctx_mutex);
+	if (ret) {
+		ath12k_err(ar->ab, "[TXN:0x%x] Failed to acquire raw_ctx_mutex: %d\n", transaction_id, ret);
+		return ret;
+	}
+
 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-		   "home/offchan frame handler: func=%u freq=%d home_chan=%d\n",
-		   func, freq, is_home_channel);
+		   "home/offchan frame handler: func=%u freq=%d home_chan=%d transaction_id=0x%x\n",
+		   func, freq, is_home_channel, transaction_id);
 
 	/* Common context initialization for both TX and RX functions */
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
@@ -1175,19 +1190,21 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	/* For RX function, set timer and return early */
 	if (func == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-			   "RX function - setting timer for %d ms (home_chan=%d)\n",
-			   ATH12K_MAX_OFFCHAN_WAIT + scan_dur, is_home_channel);
+			   "RX function - setting timer for %u ms (base=%u + scan=%u + beacon=%u) (home_chan=%d)\n",
+			   timeout_ms, ATH12K_MAX_OFFCHAN_WAIT, scan_dur, beacon_interval, is_home_channel);
 		mod_timer(&raw_pkt_ctx->offchan_timer,
-			  jiffies + msecs_to_jiffies(ATH12K_MAX_OFFCHAN_WAIT + scan_dur));
+			  jiffies + msecs_to_jiffies(timeout_ms));
 
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "RX function setup complete, waiting for ROC from application\n");
+		/* mutex will be unlocked in the timeout handler or scan event completion*/
 		return 0;
 	}
 
 	/* TX function - offchan_frame must be present */
 	if (!offchan_frame) {
 		ath12k_err(NULL, "offchan_frame is NULL for TX function\n");
+		mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 		return -EINVAL;
 	}
 
@@ -1198,6 +1215,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 							   ath12k_vendor_home_offchan_tx_rx_frame_policy, NULL);
 		if (ret) {
 			ath12k_err(NULL, "Invalid Offchan Frame policy\n");
+			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return ret;
 		}
 
@@ -1217,6 +1235,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		/* TX function - process frame data */
 		if (!tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]) {
 			ath12k_err(NULL, "Frame data missing for TX function\n");
+			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return -EINVAL;
 		}
 
@@ -1228,8 +1247,11 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 
 		/* Allocate a new skb with enough headroom for the 802.11 header */
 		skb = dev_alloc_skb(buf_len);
-		if (!skb)
+		if (!skb) {
+			ath12k_err(ar->ab, "[TXN:0x%x] Failed to allocate SKB\n", transaction_id);
+			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return -ENOMEM;
+		}
 
 		skb_put_data(skb, buf, buf_len);
 
@@ -1257,6 +1279,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			/* Cancel timer if it was set for off-channel operation */
 			if (!is_home_channel)
 				del_timer_sync(&raw_pkt_ctx->offchan_timer);
+			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return ret;
 		}
 
@@ -1289,13 +1312,6 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "Home channel TX - sending immediately\n");
 	} else {
-		/* Get beacon interval from vif if available */
-		if (vif && vif->bss_conf.beacon_int) {
-			beacon_interval = vif->bss_conf.beacon_int;
-		}
-
-		timeout_ms = ATH12K_MAX_OFFCHAN_WAIT + scan_dur + beacon_interval;
-
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "Off-channel TX - setting timer for %u ms (base=%u + scan=%u + beacon=%u) and sending %u packets to WMI queue\n",
 			   timeout_ms, ATH12K_MAX_OFFCHAN_WAIT, scan_dur, beacon_interval, num_frames);
@@ -1304,9 +1320,17 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	}
 
 	/* Call ath12k_custom_tx_extn with raw_pkt_ctx to process all packets */
-	ath12k_custom_tx_extn(raw_pkt_ctx);
+	ret = ath12k_custom_tx_extn(raw_pkt_ctx);
+	if (ret) {
+		ath12k_err(ar->ab, "[TXN:0x%x] Failed to process custom tx packets: %d\n", transaction_id, ret);
+		/* Cancel timer if it was set for off-channel operation */
+		if (!is_home_channel)
+			del_timer_sync(&raw_pkt_ctx->offchan_timer);
+		mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
+		return ret;
+	}
 
-	return 0;
+	return ret;
 }
 
 void ath12k_home_offchan_tx_drain(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
@@ -1643,6 +1667,9 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 	spin_lock_bh(&raw_pkt_ctx->chan_lock);
 	ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
 	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	/* Release the raw_ctx_mutex AFTER context reset to ensure clean state */
+	mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 
 	return 0;
 }

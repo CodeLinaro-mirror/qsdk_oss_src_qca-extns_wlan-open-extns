@@ -2894,6 +2894,7 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 	int ret, link_id = 0, cmd_type, dcs_enable;
 	struct ath12k *ar;
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
+	struct dcs_wlan_intr_user_cfg *cfg;
 
 	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_DCS_MAX, data, data_len,
 			ath12k_vendor_dcs_config_policy, NULL);
@@ -2935,6 +2936,36 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 		return -ENODATA;
 
 	ath12k_mac_set_intf_detect(ar, dcs_enable);
+
+	/* Store thresholds into wlan_intf_extn.dcs_cfg directly (hostapd manages defaults) */
+	if (cmd_type == ATH12K_WLAN_INTR_CMD) {
+		cfg = &ar->ar_extn.wlan_intf.dcs_cfg;
+
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_THRESHOLD])
+			cfg->intr_detection_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW])
+			cfg->sample_size =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_PENALTY])
+			cfg->phyerr_penalty =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_PENALTY]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_THRESHOLD])
+			cfg->phyerr_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_RADAR_ERR_THRESHOLD])
+			cfg->radarerr_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_RADAR_ERR_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_TX_ERR_THRESHOLD])
+			cfg->txerr_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_TX_ERR_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD])
+			cfg->coch_intr_threshold =
+				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU])
+			cfg->user_max_cu =
+				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU]);
+	}
 	return 0;
 }
 

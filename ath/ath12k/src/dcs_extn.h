@@ -25,6 +25,8 @@
 #define ATH12K_CHWIDTH_160              160 /* Channel width 160 MHz */
 #define ATH12K_CHWIDTH_320              320 /* Channel width 320 MHz */
 
+#define ATH12K_WLAN_INTR_CMD	1
+
 static const int intf_map_80[4][4] = {
 	{ 0, 1, 2, 3 },
 	{ 1, 0, 2, 3 },
@@ -84,6 +86,31 @@ enum ath12k_dcs_interference_chan_segment {
 	ATH12K_DCS_SEG_SEC160                = 0xFF00,
 };
 
+struct dcs_wlan_intr_metrics {
+	u32 reg_ofdm_phyerr_delta;
+	u32 reg_cck_phyerr_delta;
+	u32 reg_tsf_delta;
+	u32 rxclr_delta;
+	u32 rxclr_ext_delta;
+	u32 cycle_count_delta;
+	u32 tx_frame_delta;
+	u32 rx_frame_delta;
+	u32 reg_total_cu;
+	u32 reg_tx_cu;
+	u32 reg_rx_cu;
+	u32 reg_unused_cu;
+	u32 rx_time_cu;
+	u32 reg_ofdm_phyerr_cu;
+	u32 ofdm_phy_err_rate;
+	u32 cck_phy_err_rate;
+	u32 max_phy_err_rate;
+	u32 max_phy_err_count;
+	u32 total_wasted_cu;
+	u32 wasted_tx_cu;
+	u32 tx_err;
+	int too_many_phy_errors;
+};
+
 #ifndef CPTCFG_QCN_EXTN
 static inline void ath12k_mac_set_intf_detect(struct ath12k *ar,
 					      u16 intf_detect_bitmap)
@@ -108,6 +135,22 @@ static inline void ath12k_wmi_dcs_cw_interference_event_extn(struct ath12k_base 
 							     u32 pdev_id)
 {
 }
+
+static inline void
+ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
+					    struct sk_buff *skb,
+					    u32 pdev_id)
+{
+}
+
+static inline void ath12k_wlan_intf_update_stats_extn(struct ath12k *ar,
+		      const struct wmi_dcs_wlan_interference_stats *stats)
+{
+}
+
+static inline void ath12k_wlan_intf_rollover_stats_extn(struct ath12k *ar)
+{
+}
 #else
 void ath12k_mac_set_intf_detect(struct ath12k *ar, u16 intf_detect_bitmap);
 void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar,
@@ -117,5 +160,12 @@ void ath12k_vendor_send_intf_notify_extn(struct ath12k *ar, u16 type,
 void ath12k_wmi_dcs_cw_interference_event_extn(struct ath12k_base *ab,
 					       struct sk_buff *skb,
 					       u32 pdev_id);
+void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
+						 struct sk_buff *skb,
+						 u32 pdev_id);
+void
+ath12k_wlan_intf_update_stats_extn(struct ath12k *ar,
+			const struct wmi_dcs_wlan_interference_stats *stats);
+void ath12k_wlan_intf_rollover_stats_extn(struct ath12k *ar);
 #endif
 #endif

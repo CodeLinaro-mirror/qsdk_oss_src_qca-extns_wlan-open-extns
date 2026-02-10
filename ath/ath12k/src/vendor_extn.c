@@ -2568,6 +2568,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	}
 
 	ctl_cmd_len = nla_get_u16(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH]);
+	ctl_cmd_len += sizeof(uint32_t);
 	ctl_tlv_len = TLV_HDR_SIZE + roundup(ctl_cmd_len, sizeof(u32));
 	len = sizeof(*cmd) + ctl_tlv_len;
 	wmi = ar->wmi;
@@ -2589,7 +2590,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	band = nla_get_u32(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_BAND]);
 	ctl_data = nla_data(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA]);
 	ctl_array[0] = cpu_to_le32(band);
-	memcpy(&ctl_array[1], ctl_data, ctl_cmd_len - sizeof(band));
+	memcpy(&ctl_array[1], ctl_data, ctl_cmd_len);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 		   "WMI CTL TABLE: pdev %d ctl len %d\n",

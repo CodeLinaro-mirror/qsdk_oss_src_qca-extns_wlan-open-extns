@@ -145,6 +145,7 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 	struct wiphy *wiphy = ar->ah->hw->wiphy;
 	struct device *dev = wiphy_dev(wiphy);
 	struct kobject *parent;
+	struct ath12k_base *ab = ar->ab;
 	char rname[16];
 	int i, r;
 
@@ -158,11 +159,15 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 	 * Create radio directory under phyX: radio<radio_idx>,
 	 * determine radio_idx within ah->radio[]
 	 */
-	for (r = 0; r < ar->ah->num_radio; r++) {
-		if (&ar->ah->radio[r] == ar) {
-			snprintf(rname, sizeof(rname), "radio%d", r);
-			break;
+	if (ab->ag->mlo_capable) {
+		for (r = 0; r < ar->ah->num_radio; r++) {
+			if (&ar->ah->radio[r] == ar) {
+				snprintf(rname, sizeof(rname), "radio%d", r);
+				break;
+			}
 		}
+	} else {
+		snprintf(rname, sizeof(rname), "radio%d", ar->pdev_idx);
 	}
 
 	ar->ar_extn.radio_kobj = kobject_create_and_add(rname, parent);

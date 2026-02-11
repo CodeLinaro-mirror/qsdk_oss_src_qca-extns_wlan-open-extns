@@ -305,6 +305,14 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 {
 	ath12k_esp_init_extn(ar);
 	ath12k_custom_txrx_init(ar);
+
+	/* Initialize WLAN interference stats cache */
+	ar->ar_extn.wlan_intf.prev_valid = false;
+	ar->ar_extn.wlan_intf.curr_valid = false;
+	memset(&ar->ar_extn.wlan_intf.prev_stats, 0,
+	       sizeof(ar->ar_extn.wlan_intf.prev_stats));
+	memset(&ar->ar_extn.wlan_intf.curr_stats, 0,
+	       sizeof(ar->ar_extn.wlan_intf.curr_stats));
 }
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)

@@ -191,6 +191,30 @@ struct ath12k_raw_pkt_ctx {
 
 };
 
+#define DCS_TX_MAX_CU          30
+
+/* DCS user-configured thresholds (from hostapd_cli),
+ * fallback to macros in dcs_extn.h when not set.
+ */
+struct dcs_wlan_intr_user_cfg {
+	u32 intr_detection_threshold;
+	u32 phyerr_penalty;
+	u32 phyerr_threshold;
+	u32 radarerr_threshold;
+	u32 txerr_threshold;
+	u32 sample_size;
+	u8  coch_intr_threshold;
+	u8  user_max_cu;
+};
+
+struct wlan_intf_extn {
+	struct wmi_dcs_wlan_interference_stats prev_stats;
+	struct wmi_dcs_wlan_interference_stats curr_stats;
+	bool prev_valid;
+	bool curr_valid;
+	struct dcs_wlan_intr_user_cfg dcs_cfg;
+};
+
 /**
  * struct ath12k_extn - ath12k driver private extensions
  * @esp:  esp extensions structure
@@ -200,6 +224,9 @@ struct ath12k_raw_pkt_ctx {
  * @vif_entries:   Pointer to 17 sysfs vif entries.
  * @dcs_config_bitmap: Bitmap of DCS enablement mode.
  * @rtplinst:      Representative tx power list instances for ATH12K_NUM_CHANS
+ * @wlan_intf: WLAN interference structure.
+ * @intf_detect_cnt: Interefernce detection counter.
+ * @samp_cnt: Sample counter.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -211,6 +238,9 @@ struct ath12k_extn {
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;
 	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
+	struct wlan_intf_extn wlan_intf;
+	u8 intf_detect_cnt;
+	u8 samp_cnt;
 };
 
 /**
@@ -658,6 +688,9 @@ int ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
 int ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 				const void *ptr, void *data);
 void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
+						 struct sk_buff *skb,
+						 u32 pdev_id);
+void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 						 struct sk_buff *skb,
 						 u32 pdev_id);
 #endif /* CPTCFG_QCN_EXTN */

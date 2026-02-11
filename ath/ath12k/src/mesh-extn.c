@@ -14,7 +14,7 @@
 #include "../debug.h"
 #include "../mac.h"
 #include "esp_extn.h"
-#include "../ini.h"
+#include "ini.h"
 #include "../cmn_defs.h"
 #include "mesh_util.h"
 #include "../../../../../../net/mac80211/qcn_extns/cmn_extn.h"

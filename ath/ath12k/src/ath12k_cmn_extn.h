@@ -271,6 +271,44 @@ ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
 
 #else
 
+struct ath12k_pci_extn {
+	/* SMMU DS */
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct dma_iommu_mapping *smmu_mapping;
+	struct iommu_domain *iommu_domain;
+	u8 smmu_s1_enable;
+	dma_addr_t smmu_iova_start;
+	size_t smmu_iova_len;
+	dma_addr_t smmu_iova_ipa_start;
+	dma_addr_t smmu_iova_ipa_current;
+	size_t smmu_iova_ipa_len;
+#endif
+};
+
+struct ath12k_base_extn {
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct ath12k_wlan_ipa *ipa_ctx;
+	/* This is to hold the rx_buffers allocated initially in RXDMA for IPA
+	 * as in UD we make use of common API for allocating RX buffer initially
+	 * and for refilling the buffers.
+	 * IPA ops are not initialized by the time RX buffers allocated initially
+	 * 1. hence store the RX buffers in ath12k_base and once IPA is up map them
+	 * 2. for any further refilling, check if IPA ops are initialized and
+	 *    map the buffer from ath12k_rx_bufs_replinsh
+	 */
+	bool rx_init_buf_mapped;
+	void **rx_buf_pool;
+	u32 rx_buf_cnt;
+	dma_addr_t mem_pa;
+#endif
+};
+
+struct ath12k_dp_extn {
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct dp_rxdma_ring rx_refill_buf_ring2;
+#endif
+};
+
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 			  const struct ieee80211_ops_extn *ops_extn);
 

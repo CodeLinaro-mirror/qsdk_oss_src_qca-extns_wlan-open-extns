@@ -329,6 +329,8 @@ struct ath12k_pdev_mon_dp_extn {
 	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
 };
 
+struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
+
 #ifndef CPTCFG_QCN_EXTN
 
 static inline void
@@ -467,6 +469,42 @@ ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 {
 }
 
+static inline void
+ath12k_wmi_dcs_cw_interference_event_extn(struct ath12k_base *ab,
+					  struct sk_buff *skb,
+					  u32 pdev_id)
+{
+}
+
+static inline void
+ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
+					    struct sk_buff *skb,
+					    u32 pdev_id)
+{
+}
+
+static inline void
+ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
+					    struct sk_buff *skb,
+					    u32 pdev_id)
+{
+}
+
+static inline int
+ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
+		    int (*iter)(struct ath12k_base *ab, u16 tag, u16 len,
+				const void *ptr, void *data),
+		    void *data)
+{
+	return -1;
+}
+
+static inline int
+ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
+			    const void *ptr, void *data)
+{
+	return -1;
+}
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -677,7 +715,6 @@ void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 
                    int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);
-struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
 void ath12k_wmi_dcs_cw_interference_event_extn(struct ath12k_base *ab,
 					       struct sk_buff *skb,
 					       u32 pdev_id);

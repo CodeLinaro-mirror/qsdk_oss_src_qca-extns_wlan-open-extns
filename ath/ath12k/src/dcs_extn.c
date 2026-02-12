@@ -278,20 +278,14 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 	struct ath12k_mac_get_any_chanctx_conf_arg arg;
 	u32 intf_bitmap, modified_host_bitmap;
 	struct ath12k_hw *ah;
+	struct ath12k_link_vif *arvif;
+	bool ap_started = false;
 	int ret;
-
-	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
-				  ath12k_wmi_dcs_event_parser,
-				  &obss_info);
-	if (ret) {
-		ath12k_err(ab, "failed to parse cw tlv %d\n", ret);
-		return;
-	}
 
 	rcu_read_lock();
 	ar = ath12k_mac_get_ar_by_pdev_id(ab, pdev_id);
 	if (!ar) {
-		ath12k_err(ab, "CW detected in invalid pdev id(%d)\n",
+		ath12k_err(ab, "OBSS detected in invalid pdev id(%d)\n",
 			    pdev_id);
 		goto exit;
 	}
@@ -301,10 +295,29 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 		spin_unlock_bh(&ar->data_lock);
 		goto exit;
 	}
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		struct ieee80211_vif *vif;
+
+		if (!arvif->is_started || !arvif->ahvif)
+			continue;
+
+		vif = arvif->ahvif->vif;
+		if (!vif)
+			continue;
+
+		if (vif->type == NL80211_IFTYPE_AP) {
+			ap_started = true;
+			break;
+		}
+	}
 	spin_unlock_bh(&ar->data_lock);
 
-	ath12k_dbg(ab, ATH12K_DBG_WMI, "OBSS Interference detected for pdev=%d\n",
-		   pdev_id);
+	if (!ap_started) {
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "dropping OBSS interference event on pdev=%d (no AP vif)\n",
+			   pdev_id);
+		goto exit;
+	}
 
 	ah = ar->ah;
 
@@ -317,6 +330,28 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 		ath12k_err(ab, "chanctx_conf is not available\n");
 		goto exit;
 	}
+
+	if (!chanctx_conf->def.chan ||
+	    (chanctx_conf->def.chan->band != NL80211_BAND_5GHZ &&
+	     chanctx_conf->def.chan->band != NL80211_BAND_6GHZ)) {
+		int band = chanctx_conf->def.chan ?
+			   chanctx_conf->def.chan->band : NL80211_BAND_2GHZ;
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "dropping OBSS interference event on pdev=%d (unsupported band %d)\n",
+			   pdev_id, band);
+		goto exit;
+	}
+
+	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
+				  ath12k_wmi_dcs_event_parser,
+				  &obss_info);
+	if (ret) {
+		ath12k_err(ab, "failed to parse obss tlv %d\n", ret);
+		goto exit;
+	}
+
+	ath12k_dbg(ab, ATH12K_DBG_WMI, "OBSS Interference detected for pdev=%d\n",
+		   pdev_id);
 
 	intf_bitmap = obss_info.chan_bw_interference_bitmap;
 	if (!intf_bitmap) {

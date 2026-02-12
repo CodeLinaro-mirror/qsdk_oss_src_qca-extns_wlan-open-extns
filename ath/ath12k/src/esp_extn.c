@@ -362,3 +362,57 @@ void ath12k_vendor_send_esp_airtime_update_extn(struct ath12k *ar)
 
 	wiphy_work_queue(ar->ah->hw->wiphy, &ar->ar_extn.esp.airtime_update_work);
 }
+
+void ath12k_reconfig_esp_params_extn(struct ath12k *ar)
+{
+	int ret;
+
+	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
+
+	if (ar->ar_extn.esp.periodicity) {
+		ret = ath12k_wmi_pdev_set_param(ar,
+						WMI_PDEV_PARAM_ESP_INDICATION_PERIOD,
+						ar->ar_extn.esp.periodicity,
+						ar->pdev->pdev_id);
+		if (ret)
+			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+				    "ESP: failed to set periodicity %u on pdev %d: %d\n",
+				    ar->ar_extn.esp.periodicity, ar->pdev->pdev_id, ret);
+	}
+
+	if (!test_bit(WMI_TLV_SERVICE_ESP_SUPPORT, ar->ab->wmi_ab.svc_map))
+		return;
+
+	if (ar->ar_extn.esp.air_time_fraction) {
+		ret = ath12k_wmi_pdev_set_param(ar,
+						WMI_PDEV_PARAM_ESP_AIRTIME_FRACTION,
+						ar->ar_extn.esp.air_time_fraction,
+						ar->pdev->pdev_id);
+		if (ret)
+			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+				    "ESP: failed to set airtime fraction %u on pdev %d: %d\n",
+				    ar->ar_extn.esp.air_time_fraction, ar->pdev->pdev_id, ret);
+	}
+
+	if (ar->ar_extn.esp.ppdu_duration) {
+		ret = ath12k_wmi_pdev_set_param(ar,
+						WMI_PDEV_PARAM_ESP_PPDU_DURATION,
+						ar->ar_extn.esp.ppdu_duration,
+						ar->pdev->pdev_id);
+		if (ret)
+			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+				    "ESP: failed to set PPDU duration %u on pdev %d: %d\n",
+				    ar->ar_extn.esp.ppdu_duration, ar->pdev->pdev_id, ret);
+	}
+
+	if (ar->ar_extn.esp.ba_window) {
+		ret = ath12k_wmi_pdev_set_param(ar,
+						WMI_PDEV_PARAM_ESP_BA_WINDOW,
+						ar->ar_extn.esp.ba_window,
+						ar->pdev->pdev_id);
+		if (ret)
+			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+				    "ESP: failed to set BA window %u on pdev %d: %d\n",
+				    ar->ar_extn.esp.ba_window, ar->pdev->pdev_id, ret);
+	}
+}

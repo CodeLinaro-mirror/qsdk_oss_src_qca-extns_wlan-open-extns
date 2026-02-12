@@ -976,4 +976,5 @@ int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arv
 
 void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 {
+	ath12k_reconfig_esp_params_extn(ar);
 }

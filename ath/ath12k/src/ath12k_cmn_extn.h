@@ -11,7 +11,6 @@
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
 #include "rropinfo.h"
 
-
 struct ath12k_base;
 struct ieee80211_240mhz_vendor_oper_extn;
 struct ieee80211_ops_extn;
@@ -19,6 +18,7 @@ struct ieee80211_iface_combination;
 struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
 struct ath12k_skb_cb;
+struct ath12k_sta;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -213,6 +213,26 @@ struct wlan_intf_extn {
 	bool prev_valid;
 	bool curr_valid;
 	struct dcs_wlan_intr_user_cfg dcs_cfg;
+};
+
+/**
+ * struct ath12k_sta_extn - per-STA extension state
+ * @primary_soc_id: PSOC id of the primary link chosen for this STA.
+ * @avg_link_rssi: Averaged RSSI across the STA's links used for primary
+ * link selection.
+ */
+struct ath12k_sta_extn {
+	s8 primary_soc_id;
+	s8 avg_link_rssi;
+};
+
+/**
+ * struct ath12k_link_sta_extn - per-link STA extension state
+ * @rssi_assoc: RSSI captured during association for this link; used as the base
+ *		RSSI when deriving per-link averages and primary link selection.
+ */
+struct ath12k_link_sta_extn {
+	s8 rssi_assoc;
 };
 
 /**
@@ -727,8 +747,18 @@ int ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 						 struct sk_buff *skb,
 						 u32 pdev_id);
+
 void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 						 struct sk_buff *skb,
 						 u32 pdev_id);
+
+int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
+                                         struct ath12k_vif *ahvif,
+                                         struct ath12k_sta *ahsta,
+                                         unsigned long valid_links,
+                                         u8 *primary_link_id);
+
+void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
+		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

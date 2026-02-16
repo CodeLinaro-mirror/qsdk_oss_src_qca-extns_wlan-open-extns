@@ -11,6 +11,7 @@
 #ifdef CPTCFG_EXT_IPA_STATS
 #include "dp_ipa_stats.h"
 #endif
+#include "../../ini.h"
 
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
@@ -30,6 +31,12 @@ static const int deBruijnIdx[32] = {
 	26, 12, 18, 6, 11, 5, 10, 9
 };
 
+/* Enable/Disable vlan from INI File */
+static void ath12k_dp_ipa_vlan_enable(struct ath12k_base *ab)
+{
+	g_ipa_config->ipa_vlan_support = ath12k_cfg_get(ab, ATH12K_CFG_DP_IPA_VLAN_ENABLE);
+}
+
 static bool ath12k_dp_ipa_is_alt_tx_required(struct ath12k_base *ab)
 {
 	int num_radio = ab->qmi.num_radios;
@@ -39,6 +46,12 @@ static bool ath12k_dp_ipa_is_alt_tx_required(struct ath12k_base *ab)
 	else
 		return false;
 }
+
+bool ath12k_ipa_is_vlan_enabled(void)
+{
+	return ipa_config_is_vlan_enabled();
+}
+EXPORT_SYMBOL(ath12k_ipa_is_vlan_enabled);
 
 /* IPA config update */
 void ath12k_dp_ipa_component_config_update(void)
@@ -975,6 +988,37 @@ static void dp_ipa_set_tx_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 	}
 }
 
+static void dp_ipa_set_rx_alt_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ipa_ctx->ab);
+	struct hal_srng *reo_srng;
+	u64 hp_addr = ipa_ctx->ipa_uc_rx_alt_rsc.rx_ready_doorbell_paddr;
+	int ring_id;
+
+	if (!ath12k_ipa_is_vlan_enabled())
+		return;
+
+	ring_id = dp->reo_dst_ring[IPA_ALT_REO_DEST_RING].ring_id;
+	reo_srng = &ipa_ctx->ab->hal.srng_list[ring_id];
+
+	ath12k_info(ipa_ctx->ab, "Setting up the RX ready DB address to reo_ring_id:%d ring_id:%d, reo_srng->ring_id:%d Base_addr:%x LSB_ADDR:%x MSB_ADDR:%x DB_MAP_addr:%llx",
+			   IPA_ALT_REO_DEST_RING,
+			   ring_id,
+			   reo_srng->ring_id,
+			   HAL_SEQ_WCSS_UMAC_REO_REG,
+			   HAL_REO2SW3_RING_HP_LSB_ADDR,
+			   HAL_REO2SW3_RING_HP_MSB_ADDR,
+			   hp_addr);
+
+	ath12k_hif_write32(ipa_ctx->ab, HAL_SEQ_WCSS_UMAC_REO_REG +
+			   HAL_REO2SW3_RING_HP_LSB_ADDR,
+			   hp_addr & HAL_ADDR_LSB_REG_MASK);
+	ath12k_hif_write32(ipa_ctx->ab, HAL_SEQ_WCSS_UMAC_REO_REG +
+			   HAL_REO2SW3_RING_HP_MSB_ADDR,
+			   hp_addr >> HAL_ADDR_MSB_REG_SHIFT);
+
+}
+
 static void dp_ipa_set_rx_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ipa_ctx->ab);
@@ -1007,9 +1051,11 @@ void dp_ipa_map_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	struct ipa_dp_tx_rsc *tx_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_rsc;
 	struct ipa_dp_rx_rsc *rx_rsc = (struct ipa_dp_rx_rsc *)&ipa_ctx->ipa_uc_rx_rsc;
+	struct ipa_dp_rx_rsc *rx_alt_rsc = (struct ipa_dp_rx_rsc *)&ipa_ctx->ipa_uc_rx_alt_rsc;
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ipa_ctx->ab);
 	u32 rx_ready_doorbell_dmaaddr;
 	u32 tx_comp_doorbell_dmaaddr;
+	u32 rx_alt_ready_doorbell_dmaaddr;
 	int ret;
 
 	tx_rsc->tx_comp_doorbell_vaddr = ioremap(tx_rsc->tx_comp_doorbell_paddr, 4);
@@ -1048,6 +1094,30 @@ void dp_ipa_map_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 			return;
 		}
 		rx_rsc->rx_ready_doorbell_paddr = rx_ready_doorbell_dmaaddr;
+
+		if (ath12k_ipa_is_vlan_enabled()) {
+			ret = ath12k_smmu_map(ipa_ctx->ab,
+						rx_alt_rsc->rx_ready_doorbell_paddr,
+						&rx_alt_ready_doorbell_dmaaddr,
+						sizeof(u32));
+			if (ret) {
+				ath12k_err(ipa_ctx->ab,
+					"IPA: SMMU map alt rx_ready_doorbell failed: %d\n", ret);
+				/* Unmap the TX doorbell we just mapped above */
+				ath12k_smmu_unmap(ipa_ctx->ab,
+						tx_rsc->tx_comp_doorbell_paddr,
+						sizeof(u32));
+				iounmap(tx_rsc->tx_comp_doorbell_vaddr);
+				tx_rsc->tx_comp_doorbell_vaddr = NULL;
+
+				/* Unmap the RX doorbell we just mapped above */
+				ath12k_smmu_unmap(ipa_ctx->ab,
+						rx_rsc->rx_ready_doorbell_paddr,
+						sizeof(u32));
+				return;
+			}
+			rx_alt_rsc->rx_ready_doorbell_paddr = rx_alt_ready_doorbell_dmaaddr;
+		}
 	}
 
 	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
@@ -1075,6 +1145,7 @@ static void dp_ipa_unmap_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ct
 
 	struct ipa_dp_tx_rsc *tx_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_rsc;
 	struct ipa_dp_rx_rsc *rx_rsc = (struct ipa_dp_rx_rsc *)&ipa_ctx->ipa_uc_rx_rsc;
+	struct ipa_dp_rx_rsc *rx_alt_rsc = (struct ipa_dp_rx_rsc *)&ipa_ctx->ipa_uc_rx_alt_rsc;
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ipa_ctx->ab);
 	int ret;
 
@@ -1103,9 +1174,16 @@ static void dp_ipa_unmap_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ct
 					sizeof(u32));
 		if (WARN_ON(ret != 0))
 			ath12k_err(ipa_ctx->ab, "IPA: SMMU unmap tx_comp_doorbell failed: %d\n", ret);
+
+		if (ath12k_ipa_is_vlan_enabled()) {
+			ret = ath12k_smmu_unmap(ipa_ctx->ab,
+						rx_alt_rsc->rx_ready_doorbell_paddr,
+						sizeof(u32));
+			if (WARN_ON(ret != 0))
+				ath12k_err(ipa_ctx->ab, "IPA: SMMU unmap alt rx_ready_doorbell_paddr failed: %d\n", ret);
+		}
 	}
 }
-
 
 int dp_ipa_set_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
@@ -1113,6 +1191,7 @@ int dp_ipa_set_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 
 	dp_ipa_set_tx_doorbell_paddr(ipa_ctx);
 	dp_ipa_set_rx_doorbell_paddr(ipa_ctx);
+	dp_ipa_set_rx_alt_doorbell_paddr(ipa_ctx);
 
 	return 0;
 }
@@ -1130,6 +1209,17 @@ static inline void dp_ipa_set_pipe_db(struct ath12k_wlan_ipa_priv *ipa_ctx,
 		struct ipa_dp_tx_rsc *tx_alt_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_alt_rsc;
 		tx_alt_rsc->tx_comp_doorbell_paddr = out->tx1_uc_db_pa;
 	}
+}
+
+static inline void dp_ipa_set_rx_alt_pipe_db(struct ath12k_wlan_ipa_priv *ipa_ctx,
+			       struct ipa_wdi_conn_out_params *out)
+{
+	struct ipa_dp_rx_rsc *rx_alt_rsc = (struct ipa_dp_rx_rsc *)&ipa_ctx->ipa_uc_rx_alt_rsc;
+
+	if (!ath12k_ipa_is_vlan_enabled())
+		return;
+
+	rx_alt_rsc->rx_ready_doorbell_paddr = out->rx1_uc_db_pa;
 }
 
 /* Done with DB address */
@@ -1322,6 +1412,122 @@ static int ath12k_ipa_get_shared_mem_info(struct ath12k_base *ab,
 	ath12k_dma_get_sgtable_dma_addr((struct sg_table *)&shared_mem->sgtable);
 
 	return 0;
+}
+
+/* Allocate Intermediate RX ALT refill ring for Refilling buffers from IPA and HOST */
+static int dp_ipa_setup_rx_alt_refill_buf_ring(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	int ring_id;
+	int ret = 0;
+
+	if (!ath12k_ipa_is_vlan_enabled())
+		return -EOPNOTSUPP;
+
+	ret = ath12k_dp_srng_setup(ab, &dp->rx_refill_buf_ring3.refill_buf_ring,
+				   HAL_RXDMA_BUF, 3, 0, IPA_RX_REFILL_BUF_RING);
+
+	if (ret) {
+		ath12k_err(ab, "Failed to setup rx_refill_buf_ring3 for IPA\n");
+		return ret;
+	}
+
+	ring_id = dp->rx_refill_buf_ring3.refill_buf_ring.ring_id;
+	ret = ath12k_dp_tx_htt_srng_setup(ab, ring_id, 0, HAL_RXDMA_BUF);
+	if (ret) {
+		ath12k_err(ab, "HTT srng setup failed for rx_refill_buf_ring3\n");
+		return ret;
+	}
+
+	return 0;
+}
+
+/**
+ * dp_ipa_rx_alt_ring_resource_setup() - setup IPA 2nd RX ring resources
+ * @soc: data path SoC handle
+ *
+ * Return: none
+ */
+static
+void dp_ipa_rx_alt_ring_resource_setup(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct hal_srng *srng;
+	struct hal_srng_params params;
+	struct ipa_dp_rx_rsc *rx_rsc = &ab->ath12k_base_extn.ipa_ctx->ipa_uc_rx_alt_rsc;
+	int ring_id;
+	struct device *dev = ab->dev;
+	struct iommu_domain *domain = ath12k_smmu_get_domain(ab);
+	struct scatterlist *sg;
+	int i, ret;
+	unsigned long base_pa_addr, offset;
+
+	if (!ath12k_ipa_is_vlan_enabled())
+		return;
+
+	ath12k_info(ab, "ENTER: %s", __func__);
+
+	/* IPA REO_DEST ring - HAL_REO_DST REO2SW3 */
+	ring_id = dp->reo_dst_ring[IPA_ALT_REO_DEST_RING].ring_id;
+	srng = &ab->hal.srng_list[ring_id];
+	memset(&params, 0, sizeof(params));
+	ath12k_hal_srng_get_params(ab, srng, &params);
+	rx_rsc->ipa_reo_ring_base_paddr = params.ring_base_paddr;
+	rx_rsc->ipa_reo_ring_base_vaddr = params.ring_base_vaddr;
+	rx_rsc->ipa_reo_ring_size = (params.num_entries * srng->entry_size) << 2;
+
+
+	offset = (unsigned long)((unsigned long)(srng->u.dst_ring.tp_addr_direct) - (unsigned long)ab->mem);
+	base_pa_addr = (unsigned long)ab->ath12k_base_extn.mem_pa;
+	rx_rsc->ipa_reo_tp_paddr = (dma_addr_t)(offset + base_pa_addr);
+
+	if (domain)
+		rx_rsc->reo_pa = iommu_iova_to_phys(domain, rx_rsc->ipa_reo_ring_base_paddr);
+	else
+		rx_rsc->reo_pa = rx_rsc->ipa_reo_ring_base_paddr;
+
+	ret = dma_get_sgtable(dev, &rx_rsc->sgtable_reo,
+				rx_rsc->ipa_reo_ring_base_vaddr,
+				rx_rsc->reo_pa, rx_rsc->ipa_reo_ring_size);
+	if (ret)
+	{
+		ath12k_err(ab, "Unable to get DMA sgtable");
+		return;
+	}
+
+	for_each_sg((&rx_rsc->sgtable_reo)->sgl, sg, (&rx_rsc->sgtable_reo)->nents, i)
+	{
+		if (!sg)
+			break;
+		sg->dma_address = sg_phys(sg);
+	}
+	i = 0;
+
+
+	/* IPA RX REFILL BUF ring - HAL_RXDMA_BUF SW2RXDMA_BUF3 */
+	ret = dp_ipa_setup_rx_alt_refill_buf_ring(ab);
+	ring_id = dp->rx_refill_buf_ring3.refill_buf_ring.ring_id;
+	srng = &ab->hal.srng_list[ring_id];
+	memset(&params, 0, sizeof(params));
+	ath12k_hal_srng_get_params(ab, srng, &params);
+	rx_rsc->ipa_rx_refill_buf_ring_base_paddr = params.ring_base_paddr;
+	rx_rsc->ipa_rx_refill_buf_ring_base_vaddr = params.ring_base_vaddr;
+	rx_rsc->ipa_rx_refill_buf_ring_size = (params.num_entries * srng->entry_size) << 2;
+	rx_rsc->ipa_rx_refill_buf_hp_paddr = ath12k_hal_srng_get_hp_addr(ab, srng);
+
+	ath12k_ipa_get_shared_mem_info(ab, &rx_rsc->sgtable_refill,
+			rx_rsc->ipa_rx_refill_buf_ring_base_vaddr,
+			rx_rsc->ipa_rx_refill_buf_ring_base_paddr,
+			rx_rsc->ipa_rx_refill_buf_ring_size);
+
+	if (domain) {
+		rx_rsc->refill_pa = iommu_iova_to_phys(domain, rx_rsc->ipa_rx_refill_buf_ring_base_paddr);
+		rx_rsc->ipa_rx_refill_buf_hp_paddr = iommu_iova_to_phys(domain, rx_rsc->ipa_rx_refill_buf_hp_paddr);
+	} else {
+		rx_rsc->refill_pa = rx_rsc->ipa_rx_refill_buf_ring_base_paddr;
+	}
+	i = 0;
+
 }
 
 static void ath12k_dp_ipa_tx_alt_ring_resource_setup(struct ath12k_base *ab)
@@ -1553,6 +1759,10 @@ void dp_ipa_get_resources(struct ath12k_base *ab)
 		rx_rsc->refill_pa = rx_rsc->ipa_rx_refill_buf_ring_base_paddr;
 	}
 	i = 0;
+
+	/* Setup ALT RX Ring */
+	dp_ipa_rx_alt_ring_resource_setup(ab);
+
 
 	return;
 }
@@ -2093,6 +2303,61 @@ ath12k_dp_ipa_wdi_alt_tx_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
 }
 
 void
+dp_ipa_wdi_rx_alt_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
+			  struct ipa_wdi_pipe_setup_info_smmu *rx_smmu)
+{
+	struct ipa_dp_rx_rsc *rx_rsc = &ipa_ctx->ipa_uc_rx_alt_rsc;
+	bool over_gsi = ipa_ctx->over_gsi;
+	ipa_wdi_hdl_t hdl = ipa_ctx->hdl;
+
+	if (!ath12k_ipa_is_vlan_enabled())
+		return;
+
+	/*TODO: need to handle this get proper value for RX tlv packet */
+	u32 rx_pkt_tlv_size = 128;
+
+	if (over_gsi) {
+		if (hdl == DP_IPA_HDL_FIRST)
+			((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->client = IPA_CLIENT_WLAN2_PROD1;
+		else if (hdl == DP_IPA_HDL_SECOND)
+			((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->client = IPA_CLIENT_WLAN1_PROD1;
+		else if (hdl == DP_IPA_HDL_THIRD)
+			((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->client = IPA_CLIENT_WLAN3_PROD1;
+	} else {
+			((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->client = IPA_CLIENT_WLAN1_PROD1;
+	}
+
+	memcpy(&(((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->transfer_ring_base),
+		     &rx_rsc->sgtable_reo,
+		     sizeof(struct sg_table));
+	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->transfer_ring_size =
+		rx_rsc->ipa_reo_ring_size;
+	/* REO Tail Pointer Address */
+	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->transfer_ring_doorbell_pa =
+		rx_rsc->ipa_reo_tp_paddr;
+	dp_ipa_set_smmu_txr_rn_db_addr(ipa_ctx->ab, rx_smmu);
+
+	memcpy(&(((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->event_ring_base),
+		     &rx_rsc->sgtable_refill.sgtable,
+		     sizeof(struct sg_table));
+	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->event_ring_size =
+		rx_rsc->ipa_rx_refill_buf_ring_size;
+
+	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->event_ring_doorbell_pa =
+		rx_rsc->ipa_rx_refill_buf_hp_paddr;
+
+	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->pkt_offset =
+		rx_pkt_tlv_size + L3_HEADER_PADDING;
+
+	/* Set Chip ID, and pass to IPA */
+	if (ipa_ctx->ab->ag->mlo_capable)
+		((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->mlo_chip_id =
+			ipa_ctx->ab->device_id;
+	else
+		((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->mlo_chip_id = 0xFF;
+}
+
+void
 dp_ipa_wdi_rx_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
 			  struct ipa_wdi_pipe_setup_info_smmu *rx_smmu)
 {
@@ -2182,6 +2447,8 @@ int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	struct ipa_ep_cfg *tx_cfg;
 	struct ipa_ep_cfg *rx_cfg;
+	struct ipa_ep_cfg *rx_cfg_alt;
+	struct ipa_wdi_pipe_setup_info_smmu *rx_alt_smmu = NULL;
 	struct ipa_wdi_pipe_setup_info *tx = NULL;
 	struct ipa_wdi_pipe_setup_info *rx = NULL;
 	struct ipa_wdi_pipe_setup_info_smmu *tx_smmu = NULL;
@@ -2261,6 +2528,26 @@ int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 	if (is_smmu_enabled)
 		dp_ipa_wdi_rx_smmu_params(ipa_ctx, rx_smmu);
 
+
+	/* RX 2nd PIPE Setup */
+	if (ath12k_ipa_is_vlan_enabled()) {
+		if (is_smmu_enabled) {
+			rx_alt_smmu = &pipe_in->u_rx1.rx_smmu;
+			pipe_in->is_rx1_used = true;
+			dp_ipa_wdi_rx_alt_smmu_params(ipa_ctx, rx_alt_smmu);
+			rx_cfg_alt = &rx_alt_smmu->ipa_ep_cfg;
+			rx_cfg_alt->nat.nat_en = IPA_BYPASS_NAT;
+			rx_cfg_alt->hdr.hdr_len = DP_IPA_UC_WLAN_TX_VLAN_HDR_LEN;
+			rx_cfg_alt->hdr.hdr_ofst_pkt_size_valid = 1;
+			rx_cfg_alt->hdr.hdr_ofst_pkt_size = 0;
+			rx_cfg_alt->hdr.hdr_additional_const_len = 0;
+			rx_cfg_alt->mode.mode = IPA_BASIC;
+			rx_cfg_alt->hdr_ext.hdr_little_endian = true;
+			rx_cfg_alt->hdr.hdr_ofst_metadata_valid = 0;
+			rx_cfg_alt->hdr.hdr_metadata_reg_valid = 1;
+		}
+	}
+
 	pipe_in->notify = ath12k_dp_ipa_w2i;
 	pipe_in->priv = ipa_ctx;
 	pipe_in->hdl = ipa_ctx->hdl;
@@ -2283,6 +2570,7 @@ int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 			(unsigned int)pipe_out.rx_uc_db_pa);
 
 	dp_ipa_set_pipe_db(ipa_ctx, &pipe_out);
+	dp_ipa_set_rx_alt_pipe_db(ipa_ctx, &pipe_out);
 
 	ipa_ctx->is_db_ddr_mapped =
 		((struct ipa_wdi_conn_out_params *)&(pipe_out))->is_ddr_mapped;
@@ -2548,6 +2836,8 @@ out:
 static int dp_ipa_register_is_ipa_ready(struct ath12k_base *ab)
 {
 	int ret = 0;
+
+	ath12k_dp_ipa_vlan_enable(ab);
 	/* setup the IPA ring resources and call into in the
 	 * IPA driver for readiness status
 	 */
@@ -2619,6 +2909,7 @@ static void dp_ipa_cleanup_rx_refill_buf_ring(struct ath12k_base *ab)
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
 
 	ath12k_dp_srng_cleanup(ab, &dp->rx_refill_buf_ring2.refill_buf_ring);
+	ath12k_dp_srng_cleanup(ab, &dp->rx_refill_buf_ring3.refill_buf_ring);
 }
 
 static u32 dp_ipa_set_default_routing(u32 reo_dest)
@@ -2998,6 +3289,17 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, uint8_t session_id, bo
 	return 0;
 }
 
+/**
+ * dp_ipa_set_wdi_vlan_hdr_type() - Set wdi vlan hdr type for IPA
+ * @hdr_info: Header info
+ *
+ * Return: None
+ */
+static inline void
+dp_ipa_set_wdi_vlan_hdr_type(struct ipa_wdi_hdr_info *hdr_info)
+{
+	hdr_info->hdr_type = IPA_HDR_L2_802_1Q;
+}
 
 int dp_ipa_setup_iface(char *ifname,
 		       u8 *mac_addr,
@@ -3012,6 +3314,9 @@ int dp_ipa_setup_iface(char *ifname,
 	struct ipa_wdi_hdr_info hdr_info = { 0 };
 	struct dp_ipa_uc_tx_hdr uc_tx_hdr;
 	struct dp_ipa_uc_tx_hdr uc_tx_hdr_v6;
+	struct dp_ipa_uc_tx_vlan_hdr uc_tx_vlan_hdr;
+	struct dp_ipa_uc_tx_vlan_hdr uc_tx_vlan_hdr_v6;
+
 	int ret = -EINVAL;
 
 	ether_addr_copy(uc_tx_hdr.eth.h_source, mac_addr);
@@ -3042,6 +3347,37 @@ int dp_ipa_setup_iface(char *ifname,
 		hdr_info.hdr = (u8 *)&uc_tx_hdr_v6;
 		memcpy(&(in.hdr_info[IPA_IP_v6]),
 		&hdr_info, sizeof(struct ipa_wdi_hdr_info));
+	}
+
+	if (ath12k_ipa_is_vlan_enabled()) {
+		/* Add vlan specific headers if vlan support is enabled */
+		memset(&hdr_info, 0, sizeof(struct ipa_wdi_hdr_info));
+		in.is_rx1_used = true;
+		ether_addr_copy(uc_tx_vlan_hdr.eth.h_source, mac_addr);
+		/* IPV4 Vlan header */
+		uc_tx_vlan_hdr.eth.h_vlan_proto = htons(ETH_P_8021Q);
+		uc_tx_vlan_hdr.eth.h_vlan_encapsulated_proto = htons(ETH_P_IP);
+
+		hdr_info.hdr = (uint8_t *)&uc_tx_vlan_hdr;
+		hdr_info.hdr_len = DP_IPA_UC_WLAN_TX_VLAN_HDR_LEN;
+		dp_ipa_set_wdi_vlan_hdr_type(&hdr_info);
+
+		hdr_info.dst_mac_addr_offset = DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET;
+		memcpy(&((in.hdr_info)[IPA_IP_v4_VLAN]),
+		     &hdr_info, sizeof(struct ipa_wdi_hdr_info));
+
+		/* IPV6 Vlan header */
+		if (is_ipv6_enabled) {
+			memcpy(&uc_tx_vlan_hdr_v6, &uc_tx_vlan_hdr,
+				     DP_IPA_UC_WLAN_TX_VLAN_HDR_LEN);
+			uc_tx_vlan_hdr_v6.eth.h_vlan_proto =
+					htons(ETH_P_8021Q);
+			uc_tx_vlan_hdr_v6.eth.h_vlan_encapsulated_proto =
+					htons(ETH_P_IPV6);
+			hdr_info.hdr = (uint8_t *)&uc_tx_vlan_hdr_v6;
+			memcpy(&((in.hdr_info)[IPA_IP_v6_VLAN]),
+				&hdr_info, sizeof(struct ipa_wdi_hdr_info));
+		}
 	}
 
 	in.mld_enabled = is_mlo;
@@ -3108,6 +3444,29 @@ void wlan_ipa_cleanup_iface(struct wlan_ipa_iface_context *iface_context,
 	iface_context->ipa_ctx->num_iface--;
 }
 
+/* Sends WMI config to filter VLAN packets */
+static int ath12k_dp_rx_vlan_pkt_type_filter(struct ath12k *ar,
+				 enum ath12k_routing_pkt_type pkt_type,
+				 enum ath12k_dp_rx_routing_reo_dest_ring dst_ring)
+{
+	struct ath12k_wmi_pkt_route_param param;
+	int ret;
+
+	if (pkt_type != ATH12K_PKT_TYPE_VLAN)
+		return -EINVAL;
+
+	param.opcode = ATH12K_WMI_PKTROUTE_ADD;
+	param.meta_data = pkt_type + ATH12K_RX_PROTOCOL_TAG_START_OFFSET;
+	param.dst_ring = dst_ring;
+	param.dst_ring_handler = ATH12K_WMI_PKTROUTE_USE_CCE;
+	param.route_type_bmap = 1 << pkt_type;
+
+	ret = ath12k_wmi_send_pdev_pkt_route(ar, &param);
+	if (ret)
+		ath12k_warn(ar->ab, "failed to configure vlan pkt route %d", ret);
+
+	return ret;
+}
 
 int wlan_ipa_setup_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
 			 struct dp_ipa_net_device_priv *net_dev_priv,
@@ -3121,7 +3480,8 @@ int wlan_ipa_setup_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	u8 sessid;
 	bool ipv6_en;
 	char *ifname;
-	int i;
+	int i, ret = 0;
+	struct ath12k *ar = NULL;
 
 	for (i = 0; i < WLAN_IPA_MAX_IFACE; i++) {
 		iface_context = &(ipa_ctx->iface_context[i]);
@@ -3178,6 +3538,14 @@ int wlan_ipa_setup_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	iface_context->session_id = session_id;
 	ether_addr_copy(iface_context->mac_addr, mac_addr);
 	ath12k_wlan_ipa_setup_iface_alt_pipe(iface_context, is_2g_iface);
+
+	ar = ath12k_mac_get_ar_by_vdev_id(ipa_ctx->ab, session_id);
+	if (ath12k_ipa_is_vlan_enabled()) {
+		ret = ath12k_dp_rx_vlan_pkt_type_filter(ar, ATH12K_PKT_TYPE_VLAN, ATH12K_REO2SW3_RING);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to configure VLAN pkt route: %d\n", ret);
+		}
+	}
 
 	spin_unlock_bh(&iface_context->interface_lock);
 

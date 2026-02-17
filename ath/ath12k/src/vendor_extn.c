@@ -1956,6 +1956,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                 ret = 0;
                 break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_VDEV_TSF:
+		if (!ar) {
+			ath12k_err(NULL, "No radio, use link ID \n");
+			return -EINVAL;
+		}
 		reinit_completion(&ar->tsf_report_done);
 		ret = ath12k_wmi_vdev_tsf_tstamp_action_cmd(ar, arvif->vdev_id);
 		if (ret) {

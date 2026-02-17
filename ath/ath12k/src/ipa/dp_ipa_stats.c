@@ -6,6 +6,125 @@
 
 #include "dp_ipa_stats.h"
 
+static void ath12k_dp_ipa_stats_update_ucast(struct ath12k_dp_ipa_stats_vif_stats *stats)
+{
+	stats->ucast.bytes = stats->total.bytes - stats->bcast.bytes - stats->mcast.bytes;
+	stats->ucast.packets = stats->total.packets - stats->bcast.packets -
+			       stats->mcast.packets;
+}
+
+void ath12k_dp_ipa_tx_rx_mcbc_stats(struct ath12k_dp_ipa_stats_vif_stats *stats,
+				    bool is_mcast,
+				    bool is_bcast,
+				    u64 skb_len)
+{
+	if (is_mcast) {
+		stats->mcast.bytes += skb_len;
+		stats->mcast.packets++;
+	}
+
+	if (is_bcast) {
+		stats->bcast.bytes += skb_len;
+		stats->bcast.packets++;
+	}
+
+	ath12k_dp_ipa_stats_update_ucast(stats);
+}
+
+void ath12k_dp_ipa_tx_mcbc_stats(struct sk_buff *skb,
+				 struct ath12k_pdev_dp *dp_pdev)
+{
+	struct ath12k_link_vif *arvif;
+	struct ath12k_dp_ipa_stats_vif_hw_stats *link_vif_stats;
+	struct ath12k_skb_cb *skb_cb = ATH12K_SKB_CB(skb);
+	struct ieee80211_hdr *hdr = NULL;
+
+	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(skb_cb->vif);
+	bool is_mcast, is_bcast;
+	u64 skb_len = skb->len;
+	struct ethhdr *eth = NULL;
+	u8 *dst_addr;
+
+	if (!dp_pdev) {
+		ath12k_err(NULL, "Got dp_pdev NULL");
+		return;
+	}
+
+	if (!dp_pdev->ar->fw_stats.en_vdev_stats_ol) {
+		ath12k_info(NULL, "Vdev offload stats disabled");
+		return;
+	}
+
+	if (skb_cb->flags & ATH12K_SKB_HW_80211_ENCAP) {
+		eth = (struct ethhdr *)skb->data;
+		dst_addr = eth->h_dest;
+	} else {
+		hdr = (void *)skb->data;
+		dst_addr = hdr->addr1;
+	}
+
+	is_mcast = is_multicast_ether_addr(dst_addr);
+	is_bcast = false;
+
+	if (is_mcast) {
+		rcu_read_lock();
+		arvif = rcu_dereference(ahvif->link[skb_cb->link_id]);
+		link_vif_stats = arvif->extn.stats;
+		is_bcast = is_broadcast_ether_addr(dst_addr);
+		if (is_bcast)
+			is_mcast = false;
+
+		ath12k_dp_ipa_tx_rx_mcbc_stats(&link_vif_stats->tx.stats,
+					       is_mcast, is_bcast,
+					       skb_len);
+		rcu_read_unlock();
+	}
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_tx_mcbc_stats);
+
+void ath12k_dp_ipa_rx_error_stats(struct ath12k_pdev_dp *dp_pdev,
+				  struct ath12k_skb_rxcb *rxcb, u8 link_id)
+{
+	struct ath12k_dp_link_peer *link_peer;
+	struct ath12k_vif *ahvif;
+	struct ath12k *ar;
+	struct ath12k_wbm_rx_stats *err;
+
+	if (!dp_pdev)
+		return;
+
+	ar = dp_pdev->ar;
+	if (!ar && !ar->fw_stats.en_vdev_stats_ol)
+		return;
+
+	rcu_read_lock();
+	link_peer = ath12k_dp_link_peer_find_by_peerid_index(dp_pdev->dp, dp_pdev,
+							     rxcb->peer_id);
+	if (!link_peer)
+		return;
+	ahvif = ath12k_vif_to_ahvif(link_peer->vif);
+
+	if (!ahvif)
+		return;
+	struct ath12k_link_vif *arvif = rcu_dereference(ahvif->link[link_id]);
+
+	if (!arvif)
+		return;
+	err = &arvif->extn.stats->rx.err;
+	switch (rxcb->err_rel_src) {
+	case HAL_WBM_REL_SRC_MODULE_REO:
+		err->reo_error[rxcb->err_code]++;
+		break;
+	case HAL_WBM_REL_SRC_MODULE_RXDMA:
+		err->rxdma_error[rxcb->err_code]++;
+		break;
+	default:
+		break;
+	}
+	rcu_read_unlock();
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_rx_error_stats);
+
 void ath12k_dp_ipa_htt_vdev_txrx_stats_handler(struct ath12k_base *ab,
 					       struct sk_buff *skb)
 {
@@ -84,6 +203,8 @@ void ath12k_dp_ipa_htt_vdev_txrx_stats_handler(struct ath12k_base *ab,
 				HTT_VDEV_GET_STATS_U64(vdev_tlv->msdu_ttl_cnt_lo,
 						       vdev_tlv->msdu_ttl_cnt_hi);
 
+			ath12k_dp_ipa_stats_update_ucast(&link_vif_stats->tx.stats);
+			ath12k_dp_ipa_stats_update_ucast(&link_vif_stats->rx.stats);
 		}
 
 next:

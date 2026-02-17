@@ -125,6 +125,34 @@ void ath12k_dp_ipa_rx_error_stats(struct ath12k_pdev_dp *dp_pdev,
 }
 EXPORT_SYMBOL(ath12k_dp_ipa_rx_error_stats);
 
+static inline void
+ath12k_dp_ipa_stats_ieee80211_rx_stats(struct net_device *dev,
+					u64 packets, u64 bytes)
+{
+	struct pcpu_sw_netstats *tstats = this_cpu_ptr(netdev_tstats(dev));
+
+	u64_stats_update_begin(&tstats->syncp);
+
+	u64_stats_set(&tstats->rx_packets, packets);
+	u64_stats_set(&tstats->rx_bytes, bytes);
+
+	u64_stats_update_end(&tstats->syncp);
+}
+
+static inline void
+ath12k_dp_ipa_stats_ieee80211_tx_stats(struct net_device *dev,
+					u64 packets, u64 bytes)
+{
+	struct pcpu_sw_netstats *tstats = this_cpu_ptr(netdev_tstats(dev));
+
+	u64_stats_update_begin(&tstats->syncp);
+
+	u64_stats_set(&tstats->tx_packets, packets);
+	u64_stats_set(&tstats->tx_bytes, bytes);
+
+	u64_stats_update_end(&tstats->syncp);
+}
+
 void ath12k_dp_ipa_htt_vdev_txrx_stats_handler(struct ath12k_base *ab,
 					       struct sk_buff *skb)
 {
@@ -132,6 +160,9 @@ void ath12k_dp_ipa_htt_vdev_txrx_stats_handler(struct ath12k_base *ab,
 	struct ath12k_link_vif *arvif;
 	struct ath12k_dp_ipa_stats_vif_hw_stats *link_vif_stats;
 	struct ath12k_dp_ipa_stats_vif_stats *tx_stats, *rx_stats;
+	struct ieee80211_vif *vif = NULL;
+	struct wireless_dev *wdev = NULL;
+	struct net_device *net_dev = NULL;
 	u32 *tx_err;
 	u32 *data = (u32 *)skb->data;
 	u32 vdev_id;
@@ -205,6 +236,28 @@ void ath12k_dp_ipa_htt_vdev_txrx_stats_handler(struct ath12k_base *ab,
 
 			ath12k_dp_ipa_stats_update_ucast(&link_vif_stats->tx.stats);
 			ath12k_dp_ipa_stats_update_ucast(&link_vif_stats->rx.stats);
+
+			vif = ath12k_ahvif_to_vif(arvif->ahvif);
+			if (!vif) {
+				ath12k_err(ab,
+					   "ol vif stats error in getting vif from arvif\n");
+				goto next;
+			}
+
+			wdev = ieee80211_vif_to_wdev(vif);
+			net_dev = wdev ? wdev->netdev : NULL;
+			if (!net_dev) {
+				ath12k_err(ab,
+					   "Net device is Null");
+				goto next;
+			}
+
+			ath12k_dp_ipa_stats_ieee80211_rx_stats(net_dev,
+							       rx_stats->total.packets,
+							       rx_stats->total.bytes);
+			ath12k_dp_ipa_stats_ieee80211_tx_stats(net_dev,
+							       tx_stats->total.packets,
+							       tx_stats->total.bytes);
 		}
 
 next:

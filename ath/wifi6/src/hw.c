@@ -236,7 +236,7 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 		ATH12K_REO2PPE_RING_MASK_0,
 		0, 0
 	},
-	.wbm2sw6_ppeds_tx_cmpln = {
+	.ppeds_tx_cmpln = {
 		ATH12K_PPE_WBM2SW_RELEASE_RING_MASK_0,
 		0, 0, 0, 0, 0, 0, 0
 	},
@@ -392,7 +392,9 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		.support_umac_reset = false,
 		.umac_irq_line_reset = false,
 		.umac_reset_ipc = 0,
+#ifdef CPTCFG_ATH12K_PPE_DS_SUPPORT
 		.ds_support = false,
+#endif
 		.cfr_support = true,
 		.cfr_dma_hdr_size = sizeof(struct ath12k_cfir_enh_dma_hdr),
 		.cfr_num_stream_bufs = 255,

@@ -236,7 +236,7 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 		ATH12K_REO2PPE_RING_MASK_0,
 		0, 0
 	},
-	.wbm2sw6_ppeds_tx_cmpln = {
+	.ppeds_tx_cmpln = {
 		ATH12K_PPE_WBM2SW_RELEASE_RING_MASK_0,
 		0, 0, 0, 0, 0, 0, 0
 	},

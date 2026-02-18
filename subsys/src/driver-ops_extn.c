@@ -355,14 +355,16 @@ static int ieee80211_mesh_peer_he_mcsnssmap_update(struct ieee80211_he_cap_elem 
 	}
 
 	switch (bw) {
-	case MESH_BW_80_80:
-		mcsnss_map->rx_mcs_80p80 = calc_mcs_nss;
-		mcsnss_map->tx_mcs_80p80 = calc_mcs_nss;
-		*he_cap_len += 4;
+	case MESH_BW_320:
 		fallthrough;
 	case MESH_BW_160:
 		mcsnss_map->rx_mcs_160 = calc_mcs_nss;
 		mcsnss_map->tx_mcs_160 = calc_mcs_nss;
+		*he_cap_len += 4;
+		fallthrough;
+	case MESH_BW_80_80:
+		mcsnss_map->rx_mcs_80p80 = calc_mcs_nss;
+		mcsnss_map->tx_mcs_80p80 = calc_mcs_nss;
 		*he_cap_len += 4;
 		fallthrough;
 	default:
@@ -462,6 +464,22 @@ static int ieee80211_mesh_peer_update_cap(struct station_parameters *params,
 	mesh_vht_cap = (struct ieee80211_vht_cap *)params->link_sta_params.vht_capa;
 	mesh_he_cap = (struct ieee80211_he_cap_elem *)params->link_sta_params.he_capa;
 	mesh_eht_cap = (struct ieee80211_eht_cap_elem *)params->link_sta_params.eht_capa;
+
+	if (mesh_eht_cap)
+		mesh_eht_cap->fixed.phy_cap_info[0] &=
+			~IEEE80211_EHT_PHY_CAP0_320MHZ_IN_6GHZ;
+
+	if (mesh_he_cap) {
+		mesh_he_cap->phy_cap_info[0] &= ~(
+			IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G |
+			IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G |
+			IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G);
+
+		if (band == NL80211_BAND_2GHZ) {
+			mesh_he_cap->phy_cap_info[0] &=
+				~IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_IN_2G;
+		}
+        }
 
 	/* Update the PHY capabilities based on the BW configured */
 	switch (bw) {

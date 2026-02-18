@@ -8,6 +8,7 @@
 #define ATH12K_DP_IPA_STATS_H
 
 #include "dp_ipa.h"
+#include "../../vendor.h"
 
 #define HAL_STATS_TLV_HDR_TAG	GENMASK(11, 0)
 #define HAL_STATS_TLV_HDR_LEN	GENMASK(23, 12)
@@ -60,4 +61,13 @@ void ath12k_dp_ipa_tx_rx_mcbc_stats(struct ath12k_dp_ipa_stats_vif_stats *stats,
 				    bool is_bcast,
 				    u64 skb_len);
 
+int ath12k_dp_ipa_prepare_vif_vendor_event(struct sk_buff *vendor_event,
+					   struct ath12k_vif *ahvif,
+					   struct ath12k_telemetry_command *cmd);
+
+int ath12k_dp_ipa_get_dp_vif_attr_len(struct ath12k_telemetry_command *cmd);
+
+int ath12k_dp_ipa_get_common_nl_event_attr_size(void);
+
 #endif /* ATH12K_DP_IPA_STATS_H */
+

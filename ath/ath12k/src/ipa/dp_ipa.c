@@ -480,26 +480,27 @@ static int __dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 	 * Assuming single frag for now
 	 */
 	frag_addr = ATH12K_SKB_CB(skb)->paddr;
-	ipa_update_mem_map_table(ab, &mem_map_table,
-				 frag_addr,
-				 size);
-	if (ATH12K_SKB_CB(skb)->flags & (1 << ATH12K_SKB_IPA_MAP_UNMAP)){
-		ath12k_err(ab, "buffer is allready mappe with IPA");
-		return 0;
-	}
-
+	ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, size);
 
 	if (create) {
+		/* Skip if already mapped */
+		if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP)
+			return 0;
+
 		/* Assert if PA is zero */
 		BUG_ON(mem_map_table.pa == 0);
-		ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 
-		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1,
-							   &mem_map_table);
+		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
+		if (!ret)
+			ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 	} else {
-		ATH12K_SKB_CB(skb)->flags &= ~(1 << ATH12K_SKB_IPA_MAP_UNMAP);
-		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1,
-							    &mem_map_table);
+		/* Skip if not mapped */
+		if (!(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
+			return 0;
+
+		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
+		if (!ret)
+			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
 	}
 	BUG_ON(ret);
 
@@ -515,25 +516,41 @@ static int __dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 
 static int dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 {
-	u32 index;
 	int ret = 0;
 	struct sk_buff *skb;
-	u32 buf_len;
+	struct ath12k_rx_desc_info *rx_desc;
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	int i, j;
 
 	if (!ipa_is_ready()) {
 		ath12k_err(ab, "IPA is not READY");
 		return 0;
 	}
 
-	for (index = 0; index < ab->ath12k_base_extn.rx_buf_cnt; index++) {
-		skb = (struct sk_buff *)ab->ath12k_base_extn.rx_buf_pool[index];
-		if (!skb)
+	/* Iterate RX descriptor pages and entries to locate active SKB's
+	 * Unmap only buffers that were mapped to IPA, we don't free the buffer.
+	 */
+	spin_lock_bh(&dp->rx_desc_lock);
+	for (i = 0; i < ATH12K_NUM_RX_SPT_PAGES; i++) {
+		rx_desc = dp->rxbaddr[i];
+		if (!rx_desc)
 			continue;
-		buf_len = skb_end_pointer(skb) - skb->data;
-		ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb, buf_len,
-							 create,
-							 ab->ath12k_base_extn.ipa_ctx->hdl);
+
+		for (j = 0; j < ATH12K_MAX_SPT_ENTRIES; j++) {
+			skb = rx_desc[j].skb;
+			if (!skb)
+				continue;
+
+			/* Unmap only if previously mapped to IPA */
+			if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP) {
+				ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb,
+									 DP_RX_BUFFER_SIZE,
+									 0,
+									 ab->ath12k_base_extn.ipa_ctx->hdl);
+			}
+		}
 	}
+	spin_unlock_bh(&dp->rx_desc_lock);
 
 	return ret;
 }
@@ -1683,7 +1700,8 @@ int dp_ipa_cleanup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	int ret = 0;
 
-	ret = ipa_wdi_disconn_pipes();
+	ath12k_info(ab,"disconn_pipes_per_inst is called");
+	ret = ipa_wdi_disconn_pipes_per_inst(ipa_ctx->hdl);
 	if (ret) {
 		ath12k_err(ipa_ctx->ab, "ipa_wdi_disconn_pipes: IPA pipe cleanup failed ret:%d",
 			ret);
@@ -1746,6 +1764,7 @@ int wlan_ipa_uc_ol_init(struct ath12k_wlan_ipa_priv *ipa_ctx)
 		}
 		ath12k_info(ipa_ctx->ab, "TX buffers mapped to IPA");
 
+		/* TODO: Re-visit this when defered loading of IPA is needed
 		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 1);
 		if (ret) {
 			ath12k_err(ipa_ctx->ab, "Failure to map Rx buffers for IPA(status=%d)",
@@ -1753,6 +1772,7 @@ int wlan_ipa_uc_ol_init(struct ath12k_wlan_ipa_priv *ipa_ctx)
 			goto free_res;
 		}
 		ath12k_info(ipa_ctx->ab, "RX buffers mapped to IPA");
+		*/
 
 		dp_ipa_set_doorbell_paddr(ipa_ctx);
 		ret = wlan_ipa_init_perf_level(ipa_ctx);
@@ -1818,6 +1838,15 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		iounmap(ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_vaddr);
 
 	if (true == ipa_ctx->uc_loaded) {
+		/* Unmap RX buffers first after disabling IPA pipes */
+		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
+		if (ret)
+			ath12k_err(ab, "Failure to unmap Rx buffers for IPA(status=%d)",
+				ret);
+		else
+			ath12k_info(ab, "RX buffers unmapped to IPA");
+
+		/* Unmap TX buffers and free TX pool */
 		ret = dp_ipa_tx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
 		if (ret)
 			ath12k_err(ab, "Failure to unmap Tx buffers for IPA(status=%d)",
@@ -1825,12 +1854,9 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		else
 			ath12k_info(ab, "TX buffers unmapped to IPA");
 
-		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
-		if (ret)
-			ath12k_err(ab, "Failure to unmap Rx buffers for IPA(status=%d)",
-				ret);
-		else
-			ath12k_info(ab, "RX buffers unmapped to IPA");
+		ath12k_dp_ipa_uc_detach(ab);
+
+		/* Cleanup IPA pipes and ring doorbell address*/
 		ret = dp_ipa_cleanup(ipa_ctx);
 		if (ret)
 			ath12k_err(ab, "Failure to cleanup IPA pipes (status=%d)",
@@ -2023,6 +2049,8 @@ EXPORT_SYMBOL(ath12k_ipa_plugin_register_ops);
 
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab)
 {
+	ath12k_info(ab, "De-register IPA_OFFLAD hdl:%d",ab->ath12k_base_extn.ipa_ctx->hdl);
+	wlan_ipa_uc_ol_deinit(ab);
 	g_ipa_is_ready = false;
 	ab->ath12k_base_extn.ipa_ctx->ipa_ops = NULL;
 	ath12k_dp_ipa_detach(ab);

@@ -3505,7 +3505,7 @@ void
 ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
 				 u8 *mac_addr)
 {
-	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_dp_link_peer *dp_link_peer;
 	struct ath12k_link_vif *arvif;
 	struct ieee80211_vif *vif;
 	struct wireless_dev *wdev;
@@ -3515,6 +3515,7 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 	struct ath12k_ipa *ipa_ctx;
 	struct ath12k_ipa_iface_context *if_ctx;
 	bool mlo;
+	int link_id;
 
 	rcu_read_lock();
 
@@ -3536,21 +3537,32 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 		goto exit;
 	}
 
+	mlo = if_ctx->is_mlo_vdev;
 	vif = arvif->ahvif->vif;
 	wdev = ieee80211_vif_to_wdev(vif);
 	dev = wdev->netdev;
 
 	dp = ath12k_ab_to_dp(ab);
 	dp_pdev = ath12k_dp_to_dp_pdev(dp, arvif->ar->pdev_idx);
-	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
+	dp_link_peer = ath12k_dp_link_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
 
-	if (dp_peer) {
-		mlo = if_ctx->is_mlo_vdev;
+	if (!dp_link_peer || !dp_link_peer->dp_peer) {
+		ath12k_err(ab, "dp_link_peer=%p dp_peer=%p", dp_link_peer,
+			   dp_link_peer->dp_peer);
+		goto exit;
+	}
+
+	if (!dp_link_peer->mlo || dp_link_peer->primary_link) {
+		link_id = mlo ? dp_link_peer->link_id : -1;
+
+		ath12k_info(ab, "send rx_unexpected_4addr NL to hostapd mac=%pM link_id=%d",
+			    dp_link_peer->dp_peer->addr, link_id);
+		if (!cfg80211_rx_unexpected_4addr_frame(dev, dp_link_peer->dp_peer->addr,
+							GFP_ATOMIC, link_id))
+			ath12k_err(ab, "failed to send rx_unexpected_4addr NL");
+
 		ath12k_ipa_enqueue_evt(WLAN_CLIENT_CONNECT_EX, arvif, mac_addr,
 				       mlo);
-
-		ath12k_info(ab, "send rx_unexpected_4addr to hostapd");
-		cfg80211_rx_unexpected_4addr_frame(dev, dp_peer->addr, GFP_ATOMIC, -1);
 	}
 exit:
 	rcu_read_unlock();

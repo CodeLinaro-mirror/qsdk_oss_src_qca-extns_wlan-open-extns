@@ -106,7 +106,7 @@ struct ipa_header {
 #define WLAN_IPA_IS_CONFIG_ENABLED(ipa_cfg, mask) \
 	(((ipa_cfg)->ipa_config & (mask)) == (mask))
 
-#define WLAN_IPA_AST_META_DATA_MASK htonl(0x000000FF)
+#define WLAN_IPA_AST_META_DATA_MASK htonl(0x0000001F)
 #define DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET	0
 
 
@@ -864,6 +864,7 @@ void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
 #define DP_IPA_SKB_CB_DEST_CHIP_ID	7
 #define DP_IPA_SKB_CB_DEST_CHIP_PMAC	8
 #define DP_IPA_SKB_CB_BCMC_MASK			0x2
+#define DP_IPA_SKB_CB_VDEV_ID_MASK	0x1F
 
 /**
  * ath12k_dp_ipa_skb_get_vdev_id() - Get vdev ID from skb control buffer
@@ -875,7 +876,7 @@ void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
  */
 static inline u8 ath12k_dp_ipa_skb_get_vdev_id(struct sk_buff *skb)
 {
-	return (u8)skb->cb[DP_IPA_SKB_CB_VDEV_ID];
+	return (u8)skb->cb[DP_IPA_SKB_CB_VDEV_ID] & DP_IPA_SKB_CB_VDEV_ID_MASK;
 }
 
 /**

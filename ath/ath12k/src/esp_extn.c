@@ -94,7 +94,7 @@ int ath12k_vendor_set_esp_params_extn(struct wiphy *wiphy,
 	struct nlattr *esp_params;
 	struct ath12k_vif *ahvif;
 	struct ath12k *ar;
-	u32 value;
+	u8 value;
 	int ret;
 
 	if (!params[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_PARAMS])
@@ -187,8 +187,8 @@ int ath12k_vendor_set_esp_params_extn(struct wiphy *wiphy,
 		return -EOPNOTSUPP;
 	}
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_AIRTIME]) {
-		value = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_AIRTIME]);
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_AIRTIME_BE]) {
+		value = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_AIRTIME_BE]);
 		if (value > 255) {
 			ath12k_err(ar->ab, "ESP: Invalid airtime %u (max 255)\n",
 				   value);
@@ -206,8 +206,8 @@ int ath12k_vendor_set_esp_params_extn(struct wiphy *wiphy,
 				   "ESP: Failed to set airtime fraction: %d\n", ret);
 			return ret;
 		}
-	} else if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_PPDU_DUR]) {
-		value = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_PPDU_DUR]);
+	} else if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_PPDU_DUR_BE]) {
+		value = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_PPDU_DUR_BE]);
 		if (value > 255) {
 			ath12k_err(ar->ab, "ESP: Invalid PPDU duration %u (max 255)\n",
 				   value);
@@ -225,8 +225,8 @@ int ath12k_vendor_set_esp_params_extn(struct wiphy *wiphy,
 				   "ESP: Failed to set PPDU duration: %d\n", ret);
 			return ret;
 		}
-	} else if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_BA_WINDOW]) {
-		value = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_BA_WINDOW]);
+	} else if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_BA_WINDOW_BE]) {
+		value = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_BA_WINDOW_BE]);
 		if (value > 7) {
 			ath12k_err(ar->ab,
 				   "ESP: Invalid BA window %u (max 7, 3 bits)\n",
@@ -260,6 +260,7 @@ void ath12k_esp_airtime_update_work_extn(struct wiphy *wiphy,
 	struct wireless_dev *wdev;
 	struct nlattr *esp_attr;
 	int vendor_buffer_len;
+	u8 airtime_be;
 	int ret;
 
 	if (list_empty(&ar->arvifs)) {
@@ -323,9 +324,16 @@ void ath12k_esp_airtime_update_work_extn(struct wiphy *wiphy,
 		goto out;
 	}
 
+	/*
+	 * Bits 0 to 7 represents air time of BE AC. Strip that and
+	 * scale it to 255.
+	 */
+	airtime_be = ar->ar_extn.esp.fw_esp_air_time & 0xFF;
+	airtime_be = (airtime_be * 255) / 100;
+
 	ret = nla_put_u32(vendor_event,
-			  QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_AIRTIME,
-			  ar->ar_extn.esp.fw_esp_air_time);
+			  QCA_WLAN_VENDOR_ATTR_CONFIG_ESP_AIRTIME_BE,
+			  airtime_be);
 	if (ret) {
 		ath12k_warn(ar->ab, "Error(%d): Failed to put ESP airtime.\n",
 			    ret);

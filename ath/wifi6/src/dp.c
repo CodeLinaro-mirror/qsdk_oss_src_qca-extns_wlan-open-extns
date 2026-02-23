@@ -106,7 +106,7 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		refill_srng = &dp->ab->hal.srng_list[rx_ring->refill_buf_ring.ring_id];
 		req_entries = ath12k_dp_get_req_entries_from_buf_ring(dp->ab, refill_srng, &list);
 		if (req_entries)
-			ath12k_dp_rx_bufs_replenish(dp, refill_srng, &list);
+			ath12k_dp_rx_bufs_replenish(dp, refill_srng, &list, false);
 	}
 
 done:

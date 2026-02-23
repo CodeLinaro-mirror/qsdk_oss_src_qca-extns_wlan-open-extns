@@ -889,6 +889,13 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		}
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCN_TX_POWER:
+		if ((s32)value < 0 || (s32)value > 255) {
+			ath12k_warn(ar->ab,
+				    "Ignoring invalid BCN tx power %d (valid range 0..255)\n",
+				    (s32)value);
+			ret = -EINVAL;
+			break;
+		}
 		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
 				WMI_VDEV_PARAM_MGMT_TX_POWER, value);
 		if (!ret) {

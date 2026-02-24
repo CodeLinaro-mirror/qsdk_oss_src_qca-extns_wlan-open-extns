@@ -29,6 +29,7 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.mon_pdev_rx_htt_srng_setup = ath12k_wifi6_dp_mon_pdev_rx_htt_srng_setup,
 	.mon_pdev_rx_attach = ath12k_dp_mon_pdev_rx_attach,
 	.setup_mon_link_desc = ath12k_wifi6_mon_setup_mon_link_desc,
+	.cleanup_mon_link_desc = ath12k_wifi6_mon_cleanup_mon_link_desc,
 	.mon_pdev_rx_mpdu_list_init = NULL,
 	.mon_rx_srng_process = ath12k_wifi6_dp_mon_rx_quad_ring_process,
 	.update_telemetry_stats = NULL,
@@ -521,7 +522,19 @@ int ath12k_wifi6_mon_setup_mon_link_desc(struct ath12k_pdev_dp *dp_pdev)
 	return 0;
 }
 
+void ath12k_wifi6_mon_cleanup_mon_link_desc(struct ath12k_pdev_dp *dp_pdev)
+{
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
 
+	if (!ath12k_dp_mon_rxdma1_enable(dp))
+		return;
+
+	ath12k_dp_link_desc_cleanup(ab, dp_mon_pdev->mon_data.link_desc_banks,
+				    HAL_RXDMA_MONITOR_DESC,
+				    &dp_mon_pdev->dp_mon->rxdma_mon_desc_ring);
+}
 
 struct sk_buff *
 ath12k_wifi6_dp_mon_rx_alloc_status_buf(struct ath12k_dp *dp)

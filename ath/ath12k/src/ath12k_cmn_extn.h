@@ -525,6 +525,11 @@ ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 {
 	return -1;
 }
+
+static inline void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
+{
+}
+
 #else
 
 struct ath12k_pci_extn {
@@ -798,5 +803,12 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 
 void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
+
+/**
+ * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery
+ * @ar: Pointer to the ath12k radio structure
+ */
+void ath12k_extn_reconfig_extn_params(struct ath12k *ar);
+
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

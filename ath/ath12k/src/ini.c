@@ -899,6 +899,58 @@ ath12k_cfg_parse_256m_band_section(struct ath12k_base *ab,
 }
 
 /**
+ * ath12k_cfg_parse_512m_band_section - Parse 512M memory+band specific section
+ * @ab: reference to ath12k_base
+ * @ini_buf: ini buffer reference
+ * @pdev_idx: pdev index
+ * Return: void
+ */
+#elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
+static void
+ath12k_cfg_parse_512m_band_section(struct ath12k_base *ab,
+				    char *ini_buf,
+				    u32 pdev_idx)
+{
+	enum ath12k_pdev_band_type pdev_band;
+	const char *section_name = NULL;
+
+	pdev_band = ath12k_cfg_get_pdev_band_type(ab, pdev_idx);
+
+	switch (pdev_band) {
+	case WLAN_2GHZ_PDEV:
+		section_name = ATH12K_CFG_512M_2G_SECTION;
+		break;
+	case WLAN_5GHZ_PDEV:
+		section_name = ATH12K_CFG_512M_5G_SECTION;
+		break;
+	case WLAN_5GHZ_LOW_BAND_PDEV:
+		section_name = ATH12K_CFG_512M_5G_LOW_SECTION;
+		break;
+	case WLAN_5GHZ_HIGH_BAND_PDEV:
+		section_name = ATH12K_CFG_512M_5G_HIGH_SECTION;
+		break;
+	case WLAN_6GHZ_PDEV:
+		section_name = ATH12K_CFG_512M_6G_SECTION;
+		break;
+	case WLAN_6GHZ_LOW_BAND_PDEV:
+		section_name = ATH12K_CFG_512M_6G_LOW_SECTION;
+		break;
+	case WLAN_6GHZ_HIGH_BAND_PDEV:
+		section_name = ATH12K_CFG_512M_6G_HIGH_SECTION;
+		break;
+	default:
+		break;
+	}
+
+	if (section_name) {
+		ath12k_dbg(ab, ATH12K_DBG_INI,
+			   "Parsing 512M+band section for pdev %d: %s\n",
+			   pdev_idx, section_name);
+		ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
+	}
+}
+
+/**
  * ath12k_cfg_parse_generic_band_section - Parse generic band section
  * @ab: reference to ath12k_base
  * @ini_buf: ini buffer reference
@@ -962,6 +1014,10 @@ static void ath12k_cfg_parse_section_store(struct ath12k_base *ab,
 	ath12k_dbg(ab, ATH12K_DBG_INI,
 			"Parsing memory section: %s\n", ATH12K_CFG_256M_SECTION);
 	ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_256M_SECTION);
+#elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
+	ath12k_dbg(ab, ATH12K_DBG_INI,
+			"Parsing memory section: %s\n", ATH12K_CFG_512M_SECTION);
+	ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_512M_SECTION);
 #endif
 }
 
@@ -1267,6 +1323,8 @@ void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 	for (i = 0; i < ab->num_radios; i++) {
 #if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
 		ath12k_cfg_parse_256m_band_section(ab, ini_buf, i);
+#elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
+		ath12k_cfg_parse_512m_band_section(ab, ini_buf, i);
 #else
 		ath12k_cfg_parse_generic_band_section(ab, ini_buf, i);
 #endif

@@ -129,7 +129,7 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 			 sta->addr, valid_links, num_links);
 
 	if (num_links != 3) {
-		ath12k_dbg(NULL, ATH12K_DBG_MAC, "not a 3 link association\n");
+		ath12k_dbg_level(NULL, ATH12K_DBG_MAC, ATH12K_DBG_L2, "not a 3 link association\n");
 		return -1;
 	}
 
@@ -144,25 +144,25 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 		target_type = ar->ab->hw_rev;
 		switch (target_type) {
 		case ATH12K_HW_IPQ5332_HW10:
-			ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "target: IPQ5332\n");
+			ath12k_dbg_level(ar->ab, ATH12K_DBG_MAC, ATH12K_DBG_L2, "target: IPQ5332\n");
 			found_qca5332 = true;
 			break;
 
 		case ATH12K_HW_QCN9274_HW10:
 		case ATH12K_HW_QCN9274_HW20:
 			found_qcn9224 = true;
-			ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "target: QCN9274\n");
+			ath12k_dbg_level(ar->ab, ATH12K_DBG_MAC, ATH12K_DBG_L2, "target: QCN9274\n");
 			break;
 
 		case ATH12K_HW_QCN6432_HW10:
 			found_qcn6432 = true;
-			ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "target:QCN6432\n");
+			ath12k_dbg_level(ar->ab, ATH12K_DBG_MAC, ATH12K_DBG_L2, "target:QCN6432\n");
 			forced_psoc_id = ath12k_get_ab_device_id(ar->ab);
 			break;
 
 		case ATH12K_HW_IPQ5424_HW10:
 			found_qca5424 = true;
-			ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "target:IPQ5424\n");
+			ath12k_dbg_level(ar->ab, ATH12K_DBG_MAC, ATH12K_DBG_L2, "target:IPQ5424\n");
 			forced_psoc_id = ath12k_get_ab_device_id(ar->ab);
 			break;
 

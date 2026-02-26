@@ -351,6 +351,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 					  u8 *primary_link_id)
 {
 	struct ath12k_link_vif *arvif = NULL;
+	struct ath12k_link_vif *assoc_arvif = NULL;
 	struct ieee80211_sta *sta = ath12k_ahsta_to_sta(ahsta);
 	u16 total_ml_sta_count = 0;
 	u32 total_cap, cap;
@@ -389,6 +390,19 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 				&primary_psoc) == 0) {
 		goto exit_pri_link_selection;
 	}
+
+	for_each_set_bit(link_id, &valid_links, IEEE80211_MLD_MAX_NUM_LINKS) {
+		arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
+		if (!arvif || !arvif->ar)
+			continue;
+		if (ahsta->assoc_link_id == link_id) {
+			assoc_arvif = arvif;
+			break;
+		}
+	}
+
+	if (!assoc_arvif)
+		goto exit_pri_link_selection;
 
 	/* Derive other Link RSSI and have average avg_link_rssi for ahsta */
 	ath12k_peer_calculate_avg_rssi(ah, ahvif, ahsta, valid_links);

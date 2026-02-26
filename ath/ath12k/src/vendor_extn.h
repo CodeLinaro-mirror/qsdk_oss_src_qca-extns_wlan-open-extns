@@ -147,7 +147,7 @@ static inline
 void ath12k_compute_link_vif_mac(u8 *mac_addr,
 				 const u8 *base,
 				 u8 vif_id,
-				 bool use_byte0);
+				 bool use_byte0)
 {
 }
 
@@ -155,7 +155,7 @@ static inline
 void ath12k_compute_6ghz_mbssid_mac(u8 *mac,
 				    u8 grp_id,
 				    u8 grp_size,
-				    u8 mbssid_idx);
+				    u8 mbssid_idx)
 {
 }
 

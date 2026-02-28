@@ -48,4 +48,16 @@ struct ath12k_dp_ipa_stats_vif_hw_stats {
 void ath12k_dp_ipa_htt_vdev_txrx_stats_handler(struct ath12k_base *ab,
 					       struct sk_buff *skb);
 
+void ath12k_dp_ipa_rx_error_stats(struct ath12k_pdev_dp *dp_pdev,
+				  struct ath12k_skb_rxcb *rxcb,
+				  u8 link_id);
+
+void ath12k_dp_ipa_tx_mcbc_stats(struct sk_buff *skb,
+				 struct ath12k_pdev_dp *dp_pdev);
+
+void ath12k_dp_ipa_tx_rx_mcbc_stats(struct ath12k_dp_ipa_stats_vif_stats *stats,
+				    bool is_mcast,
+				    bool is_bcast,
+				    u64 skb_len);
+
 #endif /* ATH12K_DP_IPA_STATS_H */

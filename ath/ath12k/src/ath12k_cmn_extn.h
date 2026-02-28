@@ -22,6 +22,12 @@ struct ath12k_vif_extn {
 	spinlock_t data_lock;
 };
 
+struct ath12k_link_vif_extn {
+#ifdef CPTCFG_EXT_IPA_STATS
+	struct ath12k_dp_ipa_stats_vif_hw_stats *stats;
+#endif
+};
+
 struct sta_240mhz_info {
 	struct ieee80211_240mhz_vendor_oper_extn params_240MHz_extn;
 	u8 mac_addr[ETH_ALEN];

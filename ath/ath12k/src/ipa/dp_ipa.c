@@ -1703,7 +1703,7 @@ int dp_ipa_cleanup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	int ret = 0;
 
-	ath12k_info(ab,"disconn_pipes_per_inst is called");
+	ath12k_info(ipa_ctx->ab,"disconn_pipes_per_inst is called");
 	ret = ipa_wdi_disconn_pipes_per_inst(ipa_ctx->hdl);
 	if (ret) {
 		ath12k_err(ipa_ctx->ab, "ipa_wdi_disconn_pipes: IPA pipe cleanup failed ret:%d",

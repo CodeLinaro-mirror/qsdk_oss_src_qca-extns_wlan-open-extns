@@ -497,6 +497,58 @@ void ath12k_me_snoop_list_flush_extn(struct ath12k_me_snoop_list *list)
 	}
 }
 
+static const char *__snoop_filter_to_str(u8 mode)
+{
+    switch (mode) {
+    case BR_MCAST_SRCLIST_NONE:    return "None";
+    case BR_MCAST_SRCLIST_EXCLUDE: return "Exclude";
+    case BR_MCAST_SRCLIST_INCLUDE: return "Include";
+    case BR_MCAST_SRCLIST_IGNORE:  return "Any";
+    default:                       return "Unknown";
+    }
+}
+
+int ath12k_me_snoop_print_extn(struct ath12k_base *ab, struct ath12k_me_db *db)
+{
+	struct ath12k_me_peer_grp *grp;
+	struct ath12k_me_peer *peer;
+	u16 entries = 0;
+	const char *str;
+	int i;
+
+	if (!db)
+		return -ENOENT;
+
+	ath12k_info(ab, "=== Snoop Print ===\n");
+
+	rcu_read_lock();
+	for (i = 0; i < ARRAY_SIZE(db->snoop.hash_db); i++) {
+		hlist_for_each_entry_rcu(grp, &db->snoop.hash_db[i], hlist) {
+			list_for_each_entry_rcu(peer, &grp->peers, list) {
+				if (is_zero_ether_addr(peer->mac_addr))
+					continue;
+
+				if (grp->is_v6)
+					str = "grp: %pI6 peer: %pM filter: %s nsrcs: %u is_v6: %d\n";
+				else
+					str = "grp: %pI4 peer: %pM filter: %s nsrcs: %u is_v6: %d\n";
+
+				ath12k_info(ab, str,
+					   grp->is_v6 ? (void *)&grp->grp_id.in6 : (void *)&grp->grp_id.ip,
+					   peer->mac_addr,
+					   __snoop_filter_to_str(peer->filter), peer->nsrcs,
+					   grp->is_v6);
+
+				entries++;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	ath12k_info(ab, "Total snoop entries: %u\n", entries);
+	return 0;
+}
+
 /**
  * ath12k_me_snoop_list_init(): Initialize snoop list
  * @list - Snoop list

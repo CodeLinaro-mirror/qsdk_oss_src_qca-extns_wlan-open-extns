@@ -1289,3 +1289,27 @@ void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 		  jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
 }
 EXPORT_SYMBOL(ieee80211_mesh_peer_timeout_check);
+
+/**
+ * Vendor mesh operations structure - provides function pointers
+ * for mesh peer management operations
+ */
+static const struct ieee80211_vendor_mesh_ops vendor_mesh_ops = {
+       .add_local_peer = ieee80211_vendor_mesh_add_local_peer,
+       .authorize_peer = ieee80211_vendor_mesh_authorize_peer,
+       .delete_local_peer = ieee80211_vendor_mesh_delete_local_peer,
+};
+
+/**
+ * ieee80211_get_vendor_mesh_ops - Get vendor mesh operations
+ *
+ * Returns a pointer to the structure containing function pointers
+ * for vendor mesh operations.
+ *
+ * Return: Pointer to ieee80211_vendor_mesh_ops structure
+ */
+const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void)
+{
+       return &vendor_mesh_ops;
+}
+EXPORT_SYMBOL(ieee80211_get_vendor_mesh_ops);

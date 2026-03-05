@@ -75,6 +75,9 @@
 #define ATH12K_CFG_FILE_NAME_MAX 128
 #define ATH12K_MAX_CFG 0xffffffff
 
+/* Buffer size for ini_config debugfs read output */
+#define ATH12K_EXTN_INI_CONFIG_BUF_SIZE	4096
+
 #define ATH12K_CFG_ALL \
 	ATH12K_CFG_DP \
 	ATH12K_CFG_CP \
@@ -407,4 +410,15 @@ int ath12k_ini_section_parse(const char *ath12k_ini_path, void *context,
  */
 bool ath12k_valid_ini_check(const char *path);
 
+/**
+ * ath12k_extn_ini_debugfs_register - Create ini_config debugfs entry for SoC
+ * @ab: ath12k_base reference
+ */
+void ath12k_extn_ini_debugfs_register(struct ath12k_base *ab);
+
+/**
+ * ath12k_extn_ini_debugfs_unregister - Remove ini_config debugfs entry for SoC
+ * @ab: ath12k_base reference
+ */
+void ath12k_extn_ini_debugfs_unregister(struct ath12k_base *ab);
 #endif /* ATH12K_INI_H */

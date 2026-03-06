@@ -43,7 +43,7 @@ static int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 					      struct ath12k_sta *ahsta,
 					      unsigned long valid_links,
 					      int *psoc_id);
-static int ath12k_get_total_peers_ab(struct ath12k_base *ab);
+static int ath12k_get_total_stations_ab(struct ath12k_base *ab);
 static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab);
 
 void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
@@ -89,10 +89,10 @@ static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab)
 	return total_ml_peers;
 }
 
-static int ath12k_get_total_peers_ab(struct ath12k_base *ab)
+static int ath12k_get_total_stations_ab(struct ath12k_base *ab)
 {
 	int i;
-	int total_peers = 0;
+	int total_stations = 0;
 	struct ath12k_pdev *pdev;
 	struct ath12k *ar;
 
@@ -100,11 +100,19 @@ static int ath12k_get_total_peers_ab(struct ath12k_base *ab)
 		pdev = &ab->pdevs[i];
 		if (pdev) {
 			ar = pdev->ar;
-			total_peers += ar->num_peers;
+			total_stations += ar->num_stations;
 		}
 	}
 
-	return total_peers;
+	if (total_stations) {
+		/* Subtract 1 to exclude the station being added/evaluated from the count.
+		 * This ensures we only count existing stations when making primary UMAC
+		 * selection decisions for a new MLO association.
+		 */
+		return total_stations - 1;
+	}
+
+	return total_stations;
 }
 
 int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
@@ -429,7 +437,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 		plink_preferable[psoc_id] = true;
 		chan_width = arvif->chanctx.def.width;
 		ml_ch_width[psoc_id] = ath12k_mac_get_chan_width(chan_width);
-		if (!ath12k_get_total_peers_ab(arvif->ar->ab)) {
+		if (!ath12k_get_total_stations_ab(arvif->ar->ab)) {
 			/* If this PSOC has no stations */
 			ml_no_sta[psoc_id] = true;
 			psoc_w_nosta++;

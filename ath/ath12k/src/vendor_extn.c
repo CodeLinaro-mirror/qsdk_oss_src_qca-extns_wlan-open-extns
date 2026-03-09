@@ -129,6 +129,7 @@ ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_FLAGS] = { .type = NLA_U32 },
 	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED] = { .type = NLA_FLAG },
 };
 
 const struct nla_policy
@@ -5344,32 +5345,23 @@ void ath12k_vendor_send_event(struct ath12k_base *ab,
 }
 
 /*
- * Derive 6 GHz MBSSID MAC address by modifying only the lower 4 bits
- * of the last octet. The algorithm supports grouping via grp_id/grp_size
- * and keeps the base MAC for grp_id 0, mbssid_idx 0.
+ * Only the 5th octet may vary when ATH12K_MBSSID_MAX_INTERFACES == 16.
+ * Preserve the upper nibble and modify the lower nibble for each vif.
  */
-void ath12k_compute_6ghz_mbssid_mac(u8 mac[ETH_ALEN], u8 grp_id,
-				    u8 grp_size, u8 mbssid_idx)
+void ath12k_compute_mbssid_mac(u8 mac[ETH_ALEN], u8 vif_id)
 {
-	u8 mask, base_low, block_start, idx_in_block, new_low;
+	if (vif_id >= ATH12K_MBSSID_MAX_INTERFACES) {
+		ath12k_err(NULL, "Invalid BSS ID for multiple BSSID group\n");
+		return;
+	}
 
 	/* Ensure locally administered and unicast */
 	mac[0] &= ~0x01;
+	/* Currently vendor MAC address with MBSSID is supported only for 6 GHz
+	 * hence the 0th byte has lower octet set to 0x02.*/
 	mac[0] |= 0x02;
 
-	mask = (grp_size - 1) & 0x0F;
-	base_low = mac[5] & 0x0F;
-	block_start = (base_low & ~mask);
-	block_start = (block_start + ((grp_id & 0x0F) * grp_size)) & 0x0F;
-
-	idx_in_block = mbssid_idx & mask;
-
-	if ((grp_id & 0x0F) == 0)
-		new_low = block_start | ((base_low + idx_in_block) & mask);
-	else
-		new_low = block_start | idx_in_block;
-
-	mac[5] = (mac[5] & 0xF0) | new_low;
+	mac[5] = (mac[5] & 0xF0) | (((mac[5] & 0x0F) + vif_id) & 0x0F);
 }
 
 void ath12k_compute_link_vif_mac(u8 *mac_addr,
@@ -5421,11 +5413,10 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 	struct ath12k_link_vif *arvif;
 	u8 mac_addr[ETH_ALEN], *base_addr;
 	u8 radio_idx, vif_id = 0xff;
-	u8 grp_id = 0xff, grp_size = 0;
 	u32 flags = 0;
 	enum nl80211_iftype iftype = NL80211_IFTYPE_UNSPECIFIED;
 	u8 pdev_bitmap;
-	bool byte0 = true;
+	bool byte0 = true, mbssid_enabled = false;
 	int ret;
 
 	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX,
@@ -5472,10 +5463,13 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 	}
 
 	/* Optional MBSSID group parameters from userspace */
-	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID])
-		grp_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_ID]);
-	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE])
-		grp_size = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_GRP_SIZE]);
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED]) {
+		mbssid_enabled = nla_get_flag(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED]);
+		if (vif_id >= ATH12K_MBSSID_MAX_INTERFACES) {
+			ath12k_err(NULL, "Invalid BSS ID for multiple BSSID group\n");
+			return -EINVAL;
+		}
+	}
 
 	/* Get hw/ah to know which byte index to use for VIF ID */
 	hw = wiphy_to_ieee80211_hw(wiphy);
@@ -5486,34 +5480,14 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 		return -EINVAL;
 
 	base_addr = wiphy->addresses[radio_idx].addr;
-	/*
-	 * 6 GHz MBSSID: per spec, only the last octet may vary and
-	 * only the lower 4 bits encode the BSSID index (0..15).
-	 * Preserve upper 4 bits of the last octet and modify lower 4.
-	 */
-	if (ar->supports_6ghz && iftype == NL80211_IFTYPE_AP && grp_size) {
-		u8 group_size = grp_size;
-
-		if (grp_size < 2 || grp_size > 8 ||
-		    vif_id >= grp_size || grp_id >= 8) {
-			ath12k_err(NULL, "Check group size:%d id:%d idx:%d\n",
-				   grp_size, grp_id, vif_id);
+	if (iftype == NL80211_IFTYPE_AP && mbssid_enabled) {
+		if (!ar->supports_6ghz) {
+			ath12k_err(NULL,
+				   "Static MAC address with MBSSID enabled is allowed only in 6 GHz\n");
 			return -EINVAL;
 		}
-
-		/* Check grp_size is pwr of 2 or not */
-		while (group_size != 1) {
-			if (group_size % 2 != 0) {
-				ath12k_err(NULL, "group size:%d not pwr of 2\n",
-					   grp_size);
-				return -EINVAL;
-			}
-			group_size = group_size / 2;
-		}
-
 		ether_addr_copy(mac_addr, base_addr);
-		ath12k_compute_6ghz_mbssid_mac(mac_addr, grp_id,
-					       grp_size, vif_id);
+		ath12k_compute_mbssid_mac(mac_addr, vif_id);
 
 		vif_id = ((16 + (mac_addr[5] & 0x0F)) - (base_addr[5] & 0x0F)) % 16;
 	} else {

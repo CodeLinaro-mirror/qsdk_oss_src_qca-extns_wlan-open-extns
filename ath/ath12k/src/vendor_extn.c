@@ -679,6 +679,44 @@ static int ath12k_get_vdev_bcast_rate(struct ath12k_link_vif *arvif, u64 *value)
 	return 0;
 }
 
+/**
+ * ath12k_vendor_get_mintxpower - Get min tx power supported @ar
+ * @ar: pointer to ath12k structure
+ * @value: pointer to store the retrieved min tx power
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_vendor_get_mintxpower(struct ath12k *ar, u64 *value)
+{
+	s32 svalue = (s32)ar->min_tx_power;
+
+	if(svalue < S8_MIN || svalue > S8_MAX)
+		return -ERANGE;
+
+	*value = (s8)ar->min_tx_power;
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_get_maxtxpower - Get max tx power supported by @ar
+ * @ar: pointer to ath12k structure
+ * @value: pointer to store the retrieved max tx power
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_vendor_get_maxtxpower(struct ath12k *ar, u64 *value)
+{
+	s32 svalue = (s32)ar->max_tx_power;
+
+	if(svalue < S8_MIN || svalue > S8_MAX)
+		return -ERANGE;
+
+	*value = (s8)ar->max_tx_power;
+
+	return 0;
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 {
@@ -4273,6 +4311,12 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_MAX_MTU_SIZE:
                 *value = arvif->vap_cfg.max_mtu_size;
                 ret = 0;
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_MINTXPOWER:
+		ret = ath12k_vendor_get_mintxpower(ar, value);
+                break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_MAXTXPOWER:
+		ret = ath12k_vendor_get_maxtxpower(ar, value);
                 break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_VDEV_TSF:
 		if (!ar) {

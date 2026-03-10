@@ -51,7 +51,6 @@ void ath12k_dp_ipa_tx_mcbc_stats(struct sk_buff *skb,
 	}
 
 	if (!dp_pdev->ar->fw_stats.en_vdev_stats_ol) {
-		ath12k_info(NULL, "Vdev offload stats disabled");
 		return;
 	}
 

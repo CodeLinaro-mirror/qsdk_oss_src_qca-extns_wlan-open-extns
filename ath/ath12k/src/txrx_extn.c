@@ -1060,6 +1060,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	struct ath12k_vif *ahvif;
 	struct ath12k_link_vif *arvif = NULL;
 	struct ieee80211_vif *vif = NULL;
+	struct ieee80211_bss_conf *bss_conf;
 	int buf_len;
 	struct ath12k_hw *ah;
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wdev->wiphy);
@@ -1098,13 +1099,25 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		return -EINVAL;
 	}
 
+	rcu_read_lock();
+
 	if (link_id == INVALID_LINK_ID || !ieee80211_vif_is_mld(vif)) {
 		effective_link_id = 0;
+		beacon_interval = vif->bss_conf.beacon_int;
 	} else {
 		effective_link_id = link_id;
+		bss_conf = rcu_dereference(vif->link_conf[effective_link_id]);
+		if (bss_conf) {
+			beacon_interval = bss_conf->beacon_int;
+		}
 	}
 
-	rcu_read_lock();
+	if (beacon_interval == 0 || beacon_interval > 1000) {
+		ath12k_err(NULL, "Invalid bcn int %u, using default 100\n",
+			    beacon_interval);
+		beacon_interval = 100;
+	}
+
 	if (effective_link_id == 0) {
 		arvif = &ahvif->deflink;
 	} else {
@@ -1140,8 +1153,6 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 
 	/* Get raw_pkt_ctx from ar_extn structure */
 	raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
-
-	beacon_interval = vif->bss_conf.beacon_int;
 
 	/* Scan radio does not support beacon.
 	* Need this delay for host FW message processing,

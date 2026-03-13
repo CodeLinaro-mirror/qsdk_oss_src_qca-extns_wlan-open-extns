@@ -8,6 +8,9 @@
 #include <linux/iommu.h>
 #include "../../wmi.h"
 #include "../../dp_peer.h"
+#ifdef CPTCFG_EXT_IPA_STATS
+#include "dp_ipa_stats.h"
+#endif
 
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 
@@ -480,26 +483,27 @@ static int __dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 	 * Assuming single frag for now
 	 */
 	frag_addr = ATH12K_SKB_CB(skb)->paddr;
-	ipa_update_mem_map_table(ab, &mem_map_table,
-				 frag_addr,
-				 size);
-	if (ATH12K_SKB_CB(skb)->flags & (1 << ATH12K_SKB_IPA_MAP_UNMAP)){
-		ath12k_err(ab, "buffer is allready mappe with IPA");
-		return 0;
-	}
-
+	ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, size);
 
 	if (create) {
+		/* Skip if already mapped */
+		if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP)
+			return 0;
+
 		/* Assert if PA is zero */
 		BUG_ON(mem_map_table.pa == 0);
-		ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 
-		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1,
-							   &mem_map_table);
+		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
+		if (!ret)
+			ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 	} else {
-		ATH12K_SKB_CB(skb)->flags &= ~(1 << ATH12K_SKB_IPA_MAP_UNMAP);
-		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1,
-							    &mem_map_table);
+		/* Skip if not mapped */
+		if (!(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
+			return 0;
+
+		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
+		if (!ret)
+			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
 	}
 	BUG_ON(ret);
 
@@ -515,25 +519,41 @@ static int __dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 
 static int dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 {
-	u32 index;
 	int ret = 0;
 	struct sk_buff *skb;
-	u32 buf_len;
+	struct ath12k_rx_desc_info *rx_desc;
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	int i, j;
 
 	if (!ipa_is_ready()) {
 		ath12k_err(ab, "IPA is not READY");
 		return 0;
 	}
 
-	for (index = 0; index < ab->ath12k_base_extn.rx_buf_cnt; index++) {
-		skb = (struct sk_buff *)ab->ath12k_base_extn.rx_buf_pool[index];
-		if (!skb)
+	/* Iterate RX descriptor pages and entries to locate active SKB's
+	 * Unmap only buffers that were mapped to IPA, we don't free the buffer.
+	 */
+	spin_lock_bh(&dp->rx_desc_lock);
+	for (i = 0; i < ATH12K_NUM_RX_SPT_PAGES; i++) {
+		rx_desc = dp->rxbaddr[i];
+		if (!rx_desc)
 			continue;
-		buf_len = skb_end_pointer(skb) - skb->data;
-		ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb, buf_len,
-							 create,
-							 ab->ath12k_base_extn.ipa_ctx->hdl);
+
+		for (j = 0; j < ATH12K_MAX_SPT_ENTRIES; j++) {
+			skb = rx_desc[j].skb;
+			if (!skb)
+				continue;
+
+			/* Unmap only if previously mapped to IPA */
+			if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP) {
+				ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb,
+									 DP_RX_BUFFER_SIZE,
+									 0,
+									 ab->ath12k_base_extn.ipa_ctx->hdl);
+			}
+		}
 	}
+	spin_unlock_bh(&dp->rx_desc_lock);
 
 	return ret;
 }
@@ -1683,7 +1703,8 @@ int dp_ipa_cleanup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	int ret = 0;
 
-	ret = ipa_wdi_disconn_pipes();
+	ath12k_info(ipa_ctx->ab,"disconn_pipes_per_inst is called");
+	ret = ipa_wdi_disconn_pipes_per_inst(ipa_ctx->hdl);
 	if (ret) {
 		ath12k_err(ipa_ctx->ab, "ipa_wdi_disconn_pipes: IPA pipe cleanup failed ret:%d",
 			ret);
@@ -1746,6 +1767,7 @@ int wlan_ipa_uc_ol_init(struct ath12k_wlan_ipa_priv *ipa_ctx)
 		}
 		ath12k_info(ipa_ctx->ab, "TX buffers mapped to IPA");
 
+		/* TODO: Re-visit this when defered loading of IPA is needed
 		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 1);
 		if (ret) {
 			ath12k_err(ipa_ctx->ab, "Failure to map Rx buffers for IPA(status=%d)",
@@ -1753,6 +1775,7 @@ int wlan_ipa_uc_ol_init(struct ath12k_wlan_ipa_priv *ipa_ctx)
 			goto free_res;
 		}
 		ath12k_info(ipa_ctx->ab, "RX buffers mapped to IPA");
+		*/
 
 		dp_ipa_set_doorbell_paddr(ipa_ctx);
 		ret = wlan_ipa_init_perf_level(ipa_ctx);
@@ -1818,6 +1841,15 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		iounmap(ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_vaddr);
 
 	if (true == ipa_ctx->uc_loaded) {
+		/* Unmap RX buffers first after disabling IPA pipes */
+		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
+		if (ret)
+			ath12k_err(ab, "Failure to unmap Rx buffers for IPA(status=%d)",
+				ret);
+		else
+			ath12k_info(ab, "RX buffers unmapped to IPA");
+
+		/* Unmap TX buffers and free TX pool */
 		ret = dp_ipa_tx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
 		if (ret)
 			ath12k_err(ab, "Failure to unmap Tx buffers for IPA(status=%d)",
@@ -1825,12 +1857,9 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		else
 			ath12k_info(ab, "TX buffers unmapped to IPA");
 
-		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
-		if (ret)
-			ath12k_err(ab, "Failure to unmap Rx buffers for IPA(status=%d)",
-				ret);
-		else
-			ath12k_info(ab, "RX buffers unmapped to IPA");
+		ath12k_dp_ipa_uc_detach(ab);
+
+		/* Cleanup IPA pipes and ring doorbell address*/
 		ret = dp_ipa_cleanup(ipa_ctx);
 		if (ret)
 			ath12k_err(ab, "Failure to cleanup IPA pipes (status=%d)",
@@ -2023,6 +2052,8 @@ EXPORT_SYMBOL(ath12k_ipa_plugin_register_ops);
 
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab)
 {
+	ath12k_info(ab, "De-register IPA_OFFLAD hdl:%d",ab->ath12k_base_extn.ipa_ctx->hdl);
+	wlan_ipa_uc_ol_deinit(ab);
 	g_ipa_is_ready = false;
 	ab->ath12k_base_extn.ipa_ctx->ipa_ops = NULL;
 	ath12k_dp_ipa_detach(ab);
@@ -2994,10 +3025,11 @@ int ath12k_wlan_ipa_send_msg(struct ath12k_wlan_ipa_priv *ipa_ctx,
 
 	if (ipa_send_msg(&meta, msg, ath12k_wlan_ipa_msg_free_fn)) {
 		ath12k_err(ab, "%s: Evt: %d fail\n", msg->name, meta.msg_type);
+		ipa_ctx->stats.failed_msg++;
 		kfree(msg);
 		return -EIO;
 	}
-	ipa_ctx->stats.num_send_msg++;
+	ipa_ctx->stats.send_msg++;
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_wlan_ipa_send_msg);
@@ -3042,10 +3074,11 @@ int ath12k_wlan_ipa_send_msg_ex(struct ath12k_wlan_ipa_priv *ipa_ctx,
 
 	if (ipa_send_msg(&meta, msg_ex, ath12k_wlan_ipa_msg_free_fn)) {
 		ath12k_err(ab, "%s: Evt: %d fail\n", msg_ex->name, meta.msg_type);
+		ipa_ctx->stats.failed_msg++;
 		kfree(msg_ex);
 		return -EIO;
 	}
-	ipa_ctx->stats.num_send_msg++;
+	ipa_ctx->stats.send_msg++;
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_wlan_ipa_send_msg_ex);
@@ -3536,7 +3569,7 @@ void
 ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
 				 u8 *mac_addr)
 {
-	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_dp_link_peer *dp_link_peer;
 	struct ath12k_link_vif *arvif;
 	struct ieee80211_vif *vif;
 	struct wireless_dev *wdev;
@@ -3546,6 +3579,7 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 	struct ath12k_wlan_ipa_priv *ipa_ctx;
 	struct wlan_ipa_iface_context *if_ctx;
 	bool mlo;
+	int link_id;
 
 	rcu_read_lock();
 
@@ -3567,21 +3601,32 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 		goto exit;
 	}
 
+	mlo = if_ctx->is_mlo_vdev;
 	vif = arvif->ahvif->vif;
 	wdev = ieee80211_vif_to_wdev(vif);
 	dev = wdev->netdev;
 
 	dp = ath12k_ab_to_dp(ab);
 	dp_pdev = ath12k_dp_to_dp_pdev(dp, arvif->ar->pdev_idx);
-	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
+	dp_link_peer = ath12k_dp_link_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
 
-	if (dp_peer) {
-		mlo = if_ctx->is_mlo_vdev;
+	if (!dp_link_peer || !dp_link_peer->dp_peer) {
+		ath12k_err(ab, "dp_link_peer=%p dp_peer=%p", dp_link_peer,
+			   dp_link_peer->dp_peer);
+		goto exit;
+	}
+
+	if (!dp_link_peer->mlo || dp_link_peer->primary_link) {
+		link_id = mlo ? dp_link_peer->link_id : -1;
+
+		ath12k_info(ab, "send rx_unexpected_4addr NL to hostapd mac=%pM link_id=%d",
+			    dp_link_peer->dp_peer->addr, link_id);
+		if (!cfg80211_rx_unexpected_4addr_frame(dev, dp_link_peer->dp_peer->addr,
+							GFP_ATOMIC, link_id))
+			ath12k_err(ab, "failed to send rx_unexpected_4addr NL");
+
 		ath12k_ipa_enqueue_evt(WLAN_CLIENT_CONNECT_EX, arvif, mac_addr,
 				       mlo);
-
-		ath12k_info(ab, "send rx_unexpected_4addr to hostapd");
-		cfg80211_rx_unexpected_4addr_frame(dev, dp_peer->addr, GFP_ATOMIC, -1);
 	}
 exit:
 	rcu_read_unlock();
@@ -3640,6 +3685,11 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 	u16 peer_id;
 	u8 vdev_id;
 	struct ieee80211_rx_status *status;
+#ifdef CPTCFG_EXT_IPA_STATS
+	struct ath12k_link_vif *arvif;
+	struct ath12k_dp_ipa_stats_vif_hw_stats *link_vif_stats;
+	bool is_mcast, is_bcast;
+#endif
 
 	skb = (struct sk_buff *)data;
 	if (!skb) {
@@ -3660,6 +3710,8 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 		return;
 	}
 
+	ipa_ctx->stats.rx_excep++;
+
 	ab = ipa_ctx->ab;
 	dp = ath12k_ab_to_dp(ab);
 
@@ -3673,7 +3725,7 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 	if (if_idx >= WLAN_IPA_MAX_IFACE) {
 		ath12k_err(ab, "pkt received before intf setup vdev_id=%d",
 			   vdev_id);
-
+		ipa_ctx->stats.rx_no_iface++;
 		/* TODO: If EAPOL is rx before iface setup, send them to nw stack */
 		goto drop;
 	}
@@ -3687,7 +3739,7 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 
 	if (eth->h_proto == cpu_to_be16(ETH_P_PAE) ||
 		eth->h_proto == cpu_to_be16(ETH_P_WAPI)) {
-
+		ipa_ctx->stats.rx_eapol++;
 		dev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
 		if (!dev) {
 			ath12k_err(ab, "netdev is null for '%s'",
@@ -3758,11 +3810,27 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 	status->link_id = dp_peer->hw_links[dp_pdev->hw_link_id];
 	status->link_valid = true;
 
+#ifdef CPTCFG_EXT_IPA_STATS
+	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
+	if (arvif) {
+		link_vif_stats = arvif->extn.stats;
+		is_bcast = is_broadcast_ether_addr(eth->h_dest);
+		is_mcast = is_bcast ? false : is_multicast_ether_addr(eth->h_dest);
+
+		if (ar->fw_stats.en_vdev_stats_ol && (is_mcast || is_bcast))
+			ath12k_dp_ipa_tx_rx_mcbc_stats(&link_vif_stats->rx.stats,
+						       is_mcast, is_bcast,
+						       skb->len);
+	}
+#endif
+
 	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
+	ipa_ctx->stats.sent_to_mac++;
 
 	rcu_read_unlock();
 	return;
 drop:
+	ipa_ctx->stats.rx_drop_excep++;
 	dev_kfree_skb_any(skb);
 	return;
 }

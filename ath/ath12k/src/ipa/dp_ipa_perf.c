@@ -86,6 +86,7 @@ int wlan_ipa_set_perf_level(struct ath12k_wlan_ipa_priv *ipa_ctx,
 			printk("RM CONS set perf profile failed: %d", ret);
 			return -EFAULT;
 		}
+		ipa_ctx->stats.cons_perf_req++;
 		ret = dp_ipa_set_perf_level(IPA_CLIENT_WLAN1_PROD,
 					    next_bw, ipa_ctx->hdl);
 		if (ret) {
@@ -93,7 +94,7 @@ int wlan_ipa_set_perf_level(struct ath12k_wlan_ipa_priv *ipa_ctx,
 			return -EFAULT;
 		}
 		ipa_ctx->curr_cons_bw = next_bw;
-		ipa_ctx->stats.num_cons_perf_req++;
+		ipa_ctx->stats.prod_perf_req++;
 	}
 
 	return 0;

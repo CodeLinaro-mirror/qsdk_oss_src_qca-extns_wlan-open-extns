@@ -294,7 +294,7 @@ int ath12k_wifi6_dp_rx_ring_setup(struct ath12k_base *ab)
 	ret = ath12k_dp_srng_setup(ab,
 				   &dp->rx_refill_buf_ring.refill_buf_ring,
 				   HAL_RXDMA_BUF, 0, 0,
-				   HAL_RX_REFILL_RING_SIZE);
+				   ath12k_wifi6_dp_get_rx_refill_ring_size(ab));
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rx_refill_buf_ring\n");
 		return ret;
@@ -303,7 +303,7 @@ int ath12k_wifi6_dp_rx_ring_setup(struct ath12k_base *ab)
 	for (i = 0; i < ab->hw_params->num_rxdma_dst_ring; i++) {
 		ret = ath12k_dp_srng_setup(ab, &dp->rxdma_err_dst_ring[i],
 					   HAL_RXDMA_DST, 0, i,
-					   DP_RXDMA_ERR_DST_RING_SIZE);
+					   ath12k_wifi6_dp_get_rx_mon_err_dst_ring_size(ab));
 		if (ret) {
 			ath12k_warn(ab, "failed to setup rxdma_err_dst_ring %d\n", i);
 			return ret;
@@ -581,7 +581,7 @@ int ath12k_wifi6_dp_rxdma_buf_setup(struct ath12k_base *ab)
 	int ret;
 
 	rx_desc_pool = &dp_wifi6->rx_desc_buf;
-	ring_size = HAL_RX_REFILL_RING_SIZE;
+	ring_size = ath12k_wifi6_dp_get_rx_refill_ring_size(ab);
 
 	ret = ath12k_wifi6_rx_desc_pool_init(dp, rx_desc_pool, 0, ring_size);
 	if (ret) {

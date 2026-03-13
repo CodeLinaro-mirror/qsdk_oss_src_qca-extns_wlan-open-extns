@@ -170,6 +170,12 @@ struct dp_srng* ath12k_dp_rxdma_get_mon_buf_ring(struct ath12k_dp *dp)
 	}
 }
 
+static inline
+u32 ath12k_wifi6_dp_get_rx_mon_refill_ring_size(struct ath12k_base *ab)
+{
+	return ab->hal.hal_params->rx_mon_refill_ring_size;
+}
+
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp);
 void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp);

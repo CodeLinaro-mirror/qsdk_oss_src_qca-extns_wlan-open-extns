@@ -72,7 +72,7 @@ int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)
 		ret = ath12k_dp_srng_setup(ab,
 					   &dp_mon->rxdma_mon_buf_ring.refill_buf_ring,
 					   HAL_RXDMA_MONITOR_BUF, 0, 0,
-					   HAL_RX_MON_REFILL_RING_SIZE);
+					   ath12k_wifi6_dp_get_rx_mon_refill_ring_size(ab));
 		if (ret) {
 			ath12k_warn(dp, "failed to setup HAL_RXDMA_MONITOR_BUF %d\n", ret);
 			return ret;
@@ -270,7 +270,7 @@ ath12k_wifi6_dp_mon_buf_setup(struct ath12k_dp *dp)
 	int ret = 0;
 
 	rx_desc_pool = &dp_wifi6->rx_desc_mon;
-	ring_size = HAL_RX_MON_REFILL_RING_SIZE;
+	ring_size = ath12k_wifi6_dp_get_rx_mon_refill_ring_size(ab);
 
 	ret = ath12k_wifi6_rx_desc_pool_init(dp, rx_desc_pool, 0, ring_size);
 	if (ret) {

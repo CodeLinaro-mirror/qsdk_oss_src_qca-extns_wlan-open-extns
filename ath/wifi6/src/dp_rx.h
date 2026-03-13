@@ -90,6 +90,18 @@ void *ath12k_wifi6_dp_get_rx_desc(struct ath12k_dp *dp, u32 cookie)
 	return &rx_desc_pool->mon_desc_pool[index];
 }
 
+static inline
+u32 ath12k_wifi6_dp_get_rx_refill_ring_size(struct ath12k_base *ab)
+{
+	return ab->hal.hal_params->rx_refill_ring_size;
+}
+
+static inline
+u32 ath12k_wifi6_dp_get_rx_mon_err_dst_ring_size(struct ath12k_base *ab)
+{
+	return ab->hal.hal_params->rx_mon_err_dst_ring_size;
+}
+
 void ath12k_wifi6_dp_rx_ring_free(struct ath12k_base *ab);
 int ath12k_wifi6_dp_rx_ring_setup(struct ath12k_base *ab);
 int ath12k_wifi6_dp_rxdma_buf_setup(struct ath12k_base *ab);

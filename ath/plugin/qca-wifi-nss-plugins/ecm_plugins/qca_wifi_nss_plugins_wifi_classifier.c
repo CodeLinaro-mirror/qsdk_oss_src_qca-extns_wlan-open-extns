@@ -28,6 +28,13 @@ static inline uint32_t qca_wifi_nss_plugins_get_wifi_metadata(struct ecm_classif
 	ath_dp_mdata.is_sawf_param_valid = 0;
 
 	skb_mark = ath_get_metadata_info(&ath_dp_mdata);
+
+	if (ath_dp_mdata.ast_param.valid) {
+		wifi_metadata->wifi_mdata.out_ast_info = ath_dp_mdata.ast_param.ast_info;
+		wifi_metadata->wifi_mdata.out_peer_id = ath_dp_mdata.ast_param.hw_peer_id;
+		wifi_metadata->wifi_mdata.out_ast_valid = true;
+	}
+
 	wifi_metadata->wifi_mdata.out_ppe_ds_node_id = ath_dp_mdata.mlo_param.out_ppe_ds_node_id;
 
 	return skb_mark;

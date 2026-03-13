@@ -261,7 +261,7 @@ static int ieee80211_mesh_get_aid(struct ieee80211_sub_if_data *sdata, u16 *aid_
 
 	aid = i * 32 + j + 1;  /* AID starts from 1, not 0 */
 
-	if (aid > 2007)
+	if (aid > IEEE80211_MAX_AID)
 		return -1;  /* AID out of valid range */
 
 	/* Mark AID as used */

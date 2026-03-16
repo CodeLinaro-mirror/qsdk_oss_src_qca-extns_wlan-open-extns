@@ -9,7 +9,7 @@
 #include <linux/mhi.h>
 #include <linux/uuid.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
-
+#include "rropinfo.h"
 
 struct ath12k_base;
 struct ieee80211_240mhz_vendor_oper_extn;
@@ -17,6 +17,12 @@ struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
 struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
+struct ath12k_skb_cb;
+struct ath12k_sta;
+
+#ifndef ATH12K_NUM_CHANS
+#define ATH12K_NUM_CHANS 102
+#endif
 
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
@@ -50,11 +56,15 @@ struct sta_240mhz_info {
 
 /* Maximum wait time for off-channel operations (milliseconds). */
 #define ATH12K_MAX_OFFCHAN_WAIT        50
+/* Off Rx timemout delay for scan radio (ms) */
+#define ATH12K_SCAN_RADIO_OFFCHAN_RX_DELAY	150
 /* Maximum number of custom pkts for tx per request */
 #define ATH12K_MAX_CUSTOM_TX_PKT	20
 /* Checks whether SKB has custom pkt */
 #define ATH12K_IS_CUSTOM_PKT(cb)	(cb->flags & (ATH12K_SKB_CUSTOM_MGMT_TX |\
 						      ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX))
+/* Checks if Tx Params configured by User */
+#define ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN(ar) (ar->ar_extn.raw_pkt_ctx.tx_param.tx_param_configured)
 
 /* Band types used in offchan tx */
 enum band_type {
@@ -73,9 +83,20 @@ enum preamble_type {
 };
 
 /**
+ * struct ath12k_blanking_params - Scan blanking parameters
+ * @valid: Indicates if blanking parameters are valid
+ * @blanking_count: Number of blanking events during scan
+ * @blanking_duration: Total blanking duration in msec
+ */
+struct ath12k_blanking_params {
+	__le32 valid;
+	__le32 blanking_count;
+	__le32 blanking_duration;
+} __packed;
+
+/**
  * struct ath12k_offchan_stat - statistics for off-channel activity
  * @noise_floor:        Noise floor in dBm (signed 16-bit).
- * @blanking_params_valid: Blanking parameters validity flag.
  * @tx_frame_count:        Number of frames transmitted.
  * @rx_frame_count:        Number of frames received.
  * @rx_clear_count:        RX clear time (units: driver-specific ticks).
@@ -83,12 +104,10 @@ enum preamble_type {
  * @dwell_time:            Dwell time on the off-channel (ms).
  * @chanswitch_time_htof:  Time to switch from home to off-channel (us).
  * @chanswitch_time_ftoh:  Time to switch from off-channel to home (us).
- * @blanking_count:        Number of blanking events.
- * @blanking_duration:     Total blanking duration (ms).
+ * @blank_params:          Blanking Param stats
  */
 struct ath12k_offchan_stat {
 	s16 noise_floor;
-	u8  blanking_params_valid;
 	u32 tx_frame_count;
 	u32 rx_frame_count;
 	u32 rx_clear_count;
@@ -96,8 +115,7 @@ struct ath12k_offchan_stat {
 	u32 dwell_time;
 	u32 chanswitch_time_htof;
 	u32 chanswitch_time_ftoh;
-	u32 blanking_count;
-	u32 blanking_duration;
+	struct ath12k_blanking_params blank_params;
 };
 
 /**
@@ -134,13 +152,18 @@ struct ath12k_skb_tx_param {
  * @num_cmpl_pending:     Number of pending completions.
  * @req_freq:             Requested freq(if set) for offchan operation.
  * @custom_tx_status:     Tx completion status of queued packets.
+ * @tracked_skbs:         Array of SKB pointers for completion tracking.
+ * @num_tracked_skbs:     Number of SKBs currently being tracked.
+ * @link_id:              MLO link ID for the operation (stored from user request).
  * @home_chan:            True if currently on the home channel.
+ * @operation_status:     Overall operation status (0=success, 1=failure).
  * @func_type:            Function type for the operation.
  * @num_frames:           Number of frames sent from userspace.
  * @ts_scan_start:        Scan start timestamp
  * @ts_foreign_entry:     Foreign chan entry timestamp
  * @ts_foreign_exit:      Foreign chan exit timestamp
  * @ts_scan_done:         Scan complete timestamp
+ * @raw_ctx_mutex:        Mutex to serialize raw context operations (held until user event)
  */
 struct ath12k_raw_pkt_ctx {
 	struct sk_buff_head  pkt_list;
@@ -153,14 +176,63 @@ struct ath12k_raw_pkt_ctx {
 	atomic_t num_cmpl_pending;
 	u32 req_freq;
 	u32 custom_tx_status[ATH12K_MAX_CUSTOM_TX_PKT];
+	struct sk_buff *tracked_skbs[ATH12K_MAX_CUSTOM_TX_PKT];
+	u8 num_tracked_skbs;
+	u8 link_id;
 	bool home_chan;
+	u8 operation_status;
 	u8 func_type;
 	u8 num_frames;
 	ktime_t ts_scan_start;
 	ktime_t ts_foreign_entry;
 	ktime_t ts_foreign_exit;
 	ktime_t ts_scan_done;
+	struct mutex raw_ctx_mutex;
 
+};
+
+#define DCS_TX_MAX_CU          30
+
+/* DCS user-configured thresholds (from hostapd_cli),
+ * fallback to macros in dcs_extn.h when not set.
+ */
+struct dcs_wlan_intr_user_cfg {
+	u32 intr_detection_threshold;
+	u32 phyerr_penalty;
+	u32 phyerr_threshold;
+	u32 radarerr_threshold;
+	u32 txerr_threshold;
+	u32 sample_size;
+	u8  coch_intr_threshold;
+	u8  user_max_cu;
+};
+
+struct wlan_intf_extn {
+	struct wmi_dcs_wlan_interference_stats prev_stats;
+	struct wmi_dcs_wlan_interference_stats curr_stats;
+	bool prev_valid;
+	bool curr_valid;
+	struct dcs_wlan_intr_user_cfg dcs_cfg;
+};
+
+/**
+ * struct ath12k_sta_extn - per-STA extension state
+ * @primary_soc_id: PSOC id of the primary link chosen for this STA.
+ * @avg_link_rssi: Averaged RSSI across the STA's links used for primary
+ * link selection.
+ */
+struct ath12k_sta_extn {
+	s8 primary_soc_id;
+	s8 avg_link_rssi;
+};
+
+/**
+ * struct ath12k_link_sta_extn - per-link STA extension state
+ * @rssi_assoc: RSSI captured during association for this link; used as the base
+ *		RSSI when deriving per-link averages and primary link selection.
+ */
+struct ath12k_link_sta_extn {
+	s8 rssi_assoc;
 };
 
 /**
@@ -170,6 +242,11 @@ struct ath12k_raw_pkt_ctx {
  * @radio_kobj:    pointer to radio kernel object.
  * @vifs_kobj:     Pointer to vifs kernel object.
  * @vif_entries:   Pointer to 17 sysfs vif entries.
+ * @dcs_config_bitmap: Bitmap of DCS enablement mode.
+ * @rtplinst:      Representative tx power list instances for ATH12K_NUM_CHANS
+ * @wlan_intf: WLAN interference structure.
+ * @intf_detect_cnt: Interefernce detection counter.
+ * @samp_cnt: Sample counter.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -179,6 +256,11 @@ struct ath12k_extn {
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
+	u16 dcs_config_bitmap;
+	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
+	struct wlan_intf_extn wlan_intf;
+	u8 intf_detect_cnt;
+	u8 samp_cnt;
 };
 
 /**
@@ -208,6 +290,8 @@ struct offchan_event_work_with_txn {
  * @scan_dur: Scan duration in milliseconds for off-channel operation
  * @num_frames: Number of frames to transmit
  * @func: Function type (TX_MGMT, TX_DATA, or RX)
+ * @link_id: MLO link ID (0 for non-MLO or default link)
+ * @is_mld: Whether this is an MLO device
  */
 struct ath12k_home_offchan_params {
 	struct wireless_dev *wdev;
@@ -218,6 +302,8 @@ struct ath12k_home_offchan_params {
 	u16 scan_dur;
 	u8 num_frames;
 	u8 func;
+	u8 link_id;
+	bool is_mld;
 };
 
 /**
@@ -248,6 +334,22 @@ struct hal_mon_ppdu_info_extn {
 	u8 sw_frame_group_id;
 	struct hal_rx_frm_type_info frm_type_info;
 };
+
+struct ath12k_dp_rx_scan_radio_stats {
+	u64 rx_ok_bytes;
+	u64 rx_err_bytes;
+	u32 rx_ok_pkts;
+	u32 rx_err_pkts;
+	u32 rx_mgmt_pkts;
+	u32 rx_ctrl_pkts;
+	u32 rx_data_pkts;
+};
+
+struct ath12k_pdev_mon_dp_extn {
+	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
+};
+
+struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
 
 #ifndef CPTCFG_QCN_EXTN
 
@@ -303,7 +405,7 @@ static inline void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 }
 
-static inline int ath12k_custom_tx_extn(struct sk_buff *skb)
+static inline int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	return -1;
 }
@@ -320,14 +422,16 @@ static inline void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 {
 }
 
-static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar,
+static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb,
 						     void *ptr)
 {
 }
 
 static inline void ath12k_update_offchan_stats_extn(struct ath12k *ar,
+						    struct sk_buff *skb,
 						    u32 freq,
-					            struct wmi_chan_info_event *ch_info)
+						    struct wmi_chan_info_event *ch_info,
+						    int channel_idx)
 {
 }
 
@@ -385,7 +489,86 @@ ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 {
 }
 
+static inline void
+ath12k_wmi_dcs_cw_interference_event_extn(struct ath12k_base *ab,
+					  struct sk_buff *skb,
+					  u32 pdev_id)
+{
+}
+
+static inline void
+ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
+					    struct sk_buff *skb,
+					    u32 pdev_id)
+{
+}
+
+static inline void
+ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
+					    struct sk_buff *skb,
+					    u32 pdev_id)
+{
+}
+
+static inline int
+ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
+		    int (*iter)(struct ath12k_base *ab, u16 tag, u16 len,
+				const void *ptr, void *data),
+		    void *data)
+{
+	return -1;
+}
+
+static inline int
+ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
+			    const void *ptr, void *data)
+{
+	return -1;
+}
+
+static inline void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
+{
+}
+
 #else
+
+struct ath12k_pci_extn {
+	/* SMMU DS */
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct dma_iommu_mapping *smmu_mapping;
+	struct iommu_domain *iommu_domain;
+	u8 smmu_s1_enable;
+	dma_addr_t smmu_iova_start;
+	size_t smmu_iova_len;
+	dma_addr_t smmu_iova_ipa_start;
+	dma_addr_t smmu_iova_ipa_current;
+	size_t smmu_iova_ipa_len;
+#endif
+};
+
+struct ath12k_base_extn {
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct ath12k_wlan_ipa *ipa_ctx;
+	/* This is to hold the rx_buffers allocated initially in RXDMA for IPA
+	 * as in UD we make use of common API for allocating RX buffer initially
+	 * and for refilling the buffers.
+	 * IPA ops are not initialized by the time RX buffers allocated initially
+	 * 1. hence store the RX buffers in ath12k_base and once IPA is up map them
+	 * 2. for any further refilling, check if IPA ops are initialized and
+	 *    map the buffer from ath12k_rx_bufs_replinsh
+	 */
+	bool rx_init_buf_mapped;
+	void **rx_buf_pool;
+	u32 rx_buf_cnt;
+	dma_addr_t mem_pa;
+#endif
+};
+
+struct ath12k_dp_extn {
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct dp_rxdma_ring rx_refill_buf_ring2;
+#endif
+};
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 			  const struct ieee80211_ops_extn *ops_extn);
@@ -413,31 +596,28 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 /**
  * ath12k_custom_tx_extn() - Extended custom transmission handler for
  *                           management frames
- * @skb: skb the frame to transmit
+ * @raw_pkt_ctx: Pointer to raw packet context containing SKB queue
  *
  * This function handles the transmission of custom management frames,
  * including both regular and off-channel transmissions.
- * It performs various validation checks,
- * manages the transmission queue, and directly invokes the workq handler.
+ * It walks through all SKBs in the raw packet context queue,
+ * performs various validation checks, and queues them to WMI.
  *
- * Return: 0 on success (frame queued for transmission)
- *         -EINVAL if arvif or ar is NULL
- *         -EOPNOTSUPP if called on monitor interface
- *         -EPERM if device is in recovery, crash flush, or bridge mode
- *         -EAGAIN if CAC is running or CSA is active
- *         -EBUSY if queue is full or probe response threshold exceeded
+ * Return: 0 on success (frames queued for transmission)
+ *         -EINVAL if raw_pkt_ctx is NULL
+ *         -ENODATA if no packets were processed
  */
-int ath12k_custom_tx_extn(struct sk_buff *skb);
+int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
 
 /*
  * ath12k_wmi_prepare_tx_params_extn() - Prepare tx params for WMI command
- * @ar: Pointer to the ath12k structure
+ * @skb_cb: Pointer to the skb_cb
  * @ptr: Pointer to the WMI buffer
  *
  * This function prepares the tx params for the WMI command by:
  * Setting the appropriate fields in the tx_param_dword0 and tx_param_dword1 values
  */
-void ath12k_wmi_prepare_tx_params_extn(struct ath12k *ar, void *ptr);
+void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb, void *ptr);
 
 /**
  * ath12k_custom_tx_free_extn() - Free custom management TX skb and
@@ -456,6 +636,7 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
 /**
  * ath12k_update_offchan_stats_extn - Update off-channel statistics
  * @ar: ath12k radio instance
+ * @skb: Point to skb containing chaninfo event buffer
  * @freq: Frequency in MHz from chan_info event
  * @ch_info: Channel info event data
  *
@@ -464,8 +645,11 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status);
  *
  * Return: Void
  */
-void ath12k_update_offchan_stats_extn(struct ath12k *ar, u32 freq,
-				      struct wmi_chan_info_event *ch_info);
+void ath12k_update_offchan_stats_extn(struct ath12k *ar,
+				      struct sk_buff *skb,
+				      u32 freq,
+				      struct wmi_chan_info_event *ch_info,
+				      int channel_idx);
 
 /**
  * ath12k_update_offchan_ts_extn - Update offchan timestamps based on scan events
@@ -594,6 +778,37 @@ void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 
                    int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);
+void ath12k_wmi_dcs_cw_interference_event_extn(struct ath12k_base *ab,
+					       struct sk_buff *skb,
+					       u32 pdev_id);
+int ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
+			int (*iter)(struct ath12k_base *ab, u16 tag, u16 len,
+				    const void *ptr, void *data),
+			void *data);
+int ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
+				const void *ptr, void *data);
+void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
+						 struct sk_buff *skb,
+						 u32 pdev_id);
+
+void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
+						 struct sk_buff *skb,
+						 u32 pdev_id);
+
+int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
+                                         struct ath12k_vif *ahvif,
+                                         struct ath12k_sta *ahsta,
+                                         unsigned long valid_links,
+                                         u8 *primary_link_id);
+
+void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
+		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
+
+/**
+ * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery
+ * @ar: Pointer to the ath12k radio structure
+ */
+void ath12k_extn_reconfig_extn_params(struct ath12k *ar);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

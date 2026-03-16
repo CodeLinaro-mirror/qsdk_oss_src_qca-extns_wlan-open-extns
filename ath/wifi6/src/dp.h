@@ -44,12 +44,13 @@ struct ath12k_dp_rx_desc_pool {
 	u8 buf_alignment;
 };
 
+#define MAX_RXDMA_PER_PDEV     2
 
 struct ath12k_dp_wifi6 {
 	struct ath12k_dp *dp;
 	struct ath12k_dp_rx_desc_pool rx_desc_buf;
 	struct ath12k_dp_rx_desc_pool rx_desc_mon;
-	struct ath12k_dp_rx_desc_pool rx_desc_status;
+	struct ath12k_dp_rx_desc_pool rx_desc_status[MAX_RXDMA_PER_PDEV];
 };
 
 static inline struct ath12k_dp_wifi6 *ath12k_get_dp_wifi6(struct ath12k_dp *dp)

@@ -18,7 +18,8 @@ struct ieee80211_supported_band;
 struct cfg80211_bss;
 struct cfg80211_chan_def;
 struct ieee80211_link_sta;
-
+struct wireless_dev;
+struct net_device;
 
 struct bw240MHz_parameters_extn {
 	struct ieee80211_240mhz_vendor_oper_extn *eht_240mhz_cap;
@@ -135,6 +136,22 @@ ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 	return;
 }
 
+static inline void
+ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
+				  struct wireless_dev *wdev,
+				  struct net_device *dev,
+				  u32 *hw_reconf_flags)
+{
+	return;
+}
+
+static inline void
+ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
+				  u32 *hw_reconf_flags)
+{
+	return;
+}
+
 #else
 
 u8 *
@@ -184,6 +201,14 @@ ieee80211_update_eht_cap_from_240mhz_nl(struct ieee80211_sub_if_data *sdata,
 
 void ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 					  struct ieee80211_conn_settings *conn);
+
+void ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
+				       struct wireless_dev *wdev,
+				       struct net_device *dev,
+				       u32 *hw_reconf_flags);
+
+void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
+				       u32 *hw_reconf_flags);
 
 #endif /* CPTCFG_QCN_EXTN */
 

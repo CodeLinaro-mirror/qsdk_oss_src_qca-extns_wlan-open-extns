@@ -527,8 +527,6 @@ const struct hal_ops hal_qcn9074_ops = {
 	.get_idle_link_rbm = ath12k_wifi6_hal_get_idle_link_rbm,
 	.hal_mon_ops_init = ath12k_wifi6_hal_mon_ops_init,
 	.get_hw_hptp = ath12k_wifi6_hal_get_hw_hptp,
-
-	.rx_reo_ent_buf_paddr_get = ath12k_wifi6_hal_rx_reo_ent_buf_paddr_get,
 	.rx_msdu_list_get = ath12k_wifi6_hal_rx_msdu_list_get,
 	.rx_desc_get_mpdu_start_tag = ath12k_wifi6_hal_rx_desc_get_mpdu_start_tag_qcn9074,
 };

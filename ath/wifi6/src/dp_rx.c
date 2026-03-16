@@ -120,7 +120,6 @@ int ath12k_wifi6_dp_rx_htt_setup(struct ath12k_base *ab)
 		}
 	}
 
-/*
 	ret = ath12k_dp_mon_rx_htt_setup(dp);
 	if (ret) {
 		ath12k_warn(ab, "Failed to setup rxdma monitor rings\n");
@@ -132,7 +131,6 @@ int ath12k_wifi6_dp_rx_htt_setup(struct ath12k_base *ab)
 		ath12k_warn(ab, "failed to setup rxdma ring selection config\n");
 		return ret;
 	}
-*/
 
 	return 0;
 }
@@ -155,14 +153,13 @@ void ath12k_wifi6_dp_pdev_free(struct ath12k_base *ab)
 	for (i = 0; i < ab->num_radios; i++) {
 		ar = ab->pdevs[i].ar;
 		ath12k_fw_stats_free(&ar->fw_stats);
-/*
+
 		if (ar->dp.dp_mon_pdev_configured) {
 			ath12k_dp_mon_pdev_rx_free(&ar->dp);
 			ath12k_dp_mon_pdev_deinit(&ar->dp);
 
 			ar->dp.dp_mon_pdev_configured = false;
 		}
-*/
 	}
 
 }
@@ -199,7 +196,6 @@ int ath12k_wifi6_dp_pdev_alloc(struct ath12k_base *ab)
 		dp_pdev->dp_hw = &ar->ah->dp_hw;
 		dp_pdev->hw_link_id = ar->hw_link_id;
 
-/*
 		if (!dp_pdev->dp_mon_pdev_configured) {
 			ret = ath12k_dp_mon_pdev_init(dp_pdev);
 			if (ret) {
@@ -217,7 +213,6 @@ int ath12k_wifi6_dp_pdev_alloc(struct ath12k_base *ab)
 
 			dp_pdev->dp_mon_pdev_configured = true;
 		}
-*/
 	}
 
 	spin_lock_bh(&dp->dp_lock);
@@ -230,10 +225,10 @@ int ath12k_wifi6_dp_pdev_alloc(struct ath12k_base *ab)
 	dp->num_radios = ab->num_radios;
 
 
-/*	return ret;
+	return ret;
 err:
 	ath12k_wifi6_dp_pdev_free(ab);
-*/
+
 out:
 	return ret;
 }

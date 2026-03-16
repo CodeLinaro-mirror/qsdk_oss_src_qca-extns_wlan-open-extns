@@ -32,6 +32,18 @@ ath12k_wifi_mac_config_policy[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MAX + 1];
 extern const struct nla_policy
 ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1];
 
+extern const struct nla_policy
+ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
+
+extern const struct nla_policy
+ath12k_rrop_info_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+
+extern const struct nla_policy
+ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
+
+extern const struct nla_policy
+ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
+
 #if LINUX_VERSION_IS_LESS(6,6,116)
 #define MAX(x,y) (x > y ? x : y)
 #endif
@@ -135,7 +147,7 @@ static inline
 void ath12k_compute_link_vif_mac(u8 *mac_addr,
 				 const u8 *base,
 				 u8 vif_id,
-				 bool use_byte0);
+				 bool use_byte0)
 {
 }
 
@@ -143,10 +155,44 @@ static inline
 void ath12k_compute_6ghz_mbssid_mac(u8 *mac,
 				    u8 grp_id,
 				    u8 grp_size,
-				    u8 mbssid_idx);
+				    u8 mbssid_idx)
 {
 }
 
+int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	return -1;
+}
+
+static int ath12k_get_dp_rx_scan_radio_stats_len(void)
+{
+	return 0;
+}
+
+static int ath12k_fill_rx_scan_radio_stats(struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats)
+{
+	return 0;
+}
+
+int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len)
+{
+	return -1;
+}
+
+int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	return -1;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -209,6 +255,31 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 			    const void *data,
 			    int data_len);
 
+int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len);
+
+int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data,
+				      int data_len);
+
+int ath12k_get_dp_rx_scan_radio_stats_len(void);
+
+int ath12k_fill_rx_scan_radio_stats(
+		struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats);
+
+int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len);
+
+int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len);
 #endif /* CPTCFG_QCN_EXTN */
 
 typedef enum _CLI_DPD_STATUS {

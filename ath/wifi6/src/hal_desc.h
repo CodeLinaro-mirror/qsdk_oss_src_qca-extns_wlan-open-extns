@@ -465,29 +465,7 @@ enum hal_tlv_tag {
 #define RX_MPDU_DESC_INFO0_MORE_FRAG_FLAG	BIT(31)
 
 /* Peer Metadata classification */
-
-/* Version 0 */
-#define RX_MPDU_DESC_META_DATA_V0_PEER_ID	GENMASK(15, 0)
-#define RX_MPDU_DESC_META_DATA_V0_VDEV_ID	GENMASK(23, 16)
-
-/* Version 1 */
-#define RX_MPDU_DESC_META_DATA_V1_PEER_ID		GENMASK(13, 0)
-#define RX_MPDU_DESC_META_DATA_V1_LOGICAL_LINK_ID	GENMASK(15, 14)
-#define RX_MPDU_DESC_META_DATA_V1_VDEV_ID		GENMASK(23, 16)
-#define RX_MPDU_DESC_META_DATA_V1_LMAC_ID		GENMASK(25, 24)
-#define RX_MPDU_DESC_META_DATA_V1_DEVICE_ID		GENMASK(28, 26)
-
-/* Version 1A */
-#define RX_MPDU_DESC_META_DATA_V1A_PEER_ID		GENMASK(13, 0)
-#define RX_MPDU_DESC_META_DATA_V1A_VDEV_ID		GENMASK(21, 14)
-#define RX_MPDU_DESC_META_DATA_V1A_LOGICAL_LINK_ID	GENMASK(25, 22)
-#define RX_MPDU_DESC_META_DATA_V1A_DEVICE_ID		GENMASK(28, 26)
-
-/* Version 1B */
-#define RX_MPDU_DESC_META_DATA_V1B_PEER_ID	GENMASK(13, 0)
-#define RX_MPDU_DESC_META_DATA_V1B_VDEV_ID	GENMASK(21, 14)
-#define RX_MPDU_DESC_META_DATA_V1B_HW_LINK_ID	GENMASK(25, 22)
-#define RX_MPDU_DESC_META_DATA_V1B_DEVICE_ID	GENMASK(28, 26)
+#define RX_MPDU_DESC_META_DATA_PEER_ID		GENMASK(31, 0)
 
 struct rx_mpdu_desc {
 	__le32 info0; /* %RX_MPDU_DESC_INFO */
@@ -628,36 +606,6 @@ struct rx_msdu_desc {
  * da_idx_timeout
  *		Indicates, an unsuccessful MAC destination address search due
  *		to the expiration of search timer for this MSDU.
- */
-
-#define RX_MSDU_EXT_DESC_INFO0_REO_DEST_IND	GENMASK(4, 0)
-#define RX_MSDU_EXT_DESC_INFO0_SERVICE_CODE	GENMASK(13, 5)
-#define RX_MSDU_EXT_DESC_INFO0_PRIORITY_VALID	BIT(14)
-#define RX_MSDU_EXT_DESC_INFO0_DATA_OFFSET	GENMASK(26, 15)
-#define RX_MSDU_EXT_DESC_INFO0_SRC_LINK_ID	GENMASK(29, 27)
-
-struct rx_msdu_ext_desc {
-	__le32 info0;
-} __packed;
-
-/* rx_msdu_ext_desc
- *
- * reo_destination_indication
- *		The ID of the REO exit ring where the MSDU frame shall push
- *		after (MPDU level) reordering has finished.
- *
- * service_code
- *		Opaque service code between PPE and Wi-Fi
- *
- * priority_valid
- *
- * data_offset
- *		The offset to Rx packet data within the buffer (including
- *		Rx DMA offset programming and L3 header padding inserted
- *		by Rx OLE).
- *
- * src_link_id
- *		Set to the link ID of the PMAC that received the frame
  */
 
 #define HAL_REO_DEST_RING_INFO0_BUFFER_TYPE		BIT(0)
@@ -1890,13 +1838,6 @@ struct hal_wbm_buffer_ring {
 	struct ath12k_buffer_addr buf_addr_info;
 };
 
-enum hal_mon_end_reason {
-	HAL_MON_STATUS_BUFFER_FULL,
-	HAL_MON_FLUSH_DETECTED,
-	HAL_MON_END_OF_PPDU,
-	HAL_MON_PPDU_TRUNCATED,
-};
-
 #define HAL_SW_MONITOR_RING_INFO0_RXDMA_PUSH_REASON	GENMASK(1, 0)
 #define HAL_SW_MONITOR_RING_INFO0_RXDMA_ERROR_CODE	GENMASK(6, 2)
 #define HAL_SW_MONITOR_RING_INFO0_MPDU_FRAGMENT_NUMBER	GENMASK(10, 7)
@@ -2120,7 +2061,6 @@ struct hal_rx_mpdu_link_ptr {
 struct hal_rx_msdu_details {
 	struct ath12k_buffer_addr buf_addr_info;
 	struct rx_msdu_desc rx_msdu_info;
-	struct rx_msdu_ext_desc rx_msdu_ext_info;
 } __packed;
 
 #define HAL_RX_MSDU_LNK_INFO0_RX_QUEUE_NUMBER		GENMASK(15, 0)

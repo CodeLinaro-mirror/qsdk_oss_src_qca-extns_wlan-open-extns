@@ -12,6 +12,7 @@
 #include "dp_rx.h"
 #include "dp.h"
 #include "hal.h"
+#include "dp_mon.h"
 
 static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 					struct ath12k_ext_irq_grp *irq_grp,
@@ -20,10 +21,10 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 	struct napi_struct *napi = &irq_grp->napi;
 	int grp_id = irq_grp->grp_id;
 	int work_done = 0;
-	int i = 0;
+	int i = 0, j = 0;
 	int tot_work_done = 0;
-	u8 rx_mask;
 	struct hal_srng *refill_srng;
+	u8 ring_mask, rx_mask;
 
 	rx_mask = dp->hw_params->ring_mask->rx[grp_id];
 
@@ -53,8 +54,8 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		if (budget <= 0)
 			goto done;
 	}
-/*
- *	if (dp->hw_params->ring_mask->rx_mon_status[grp_id]) {
+
+	if (dp->hw_params->ring_mask->rx_mon_status[grp_id]) {
 		ring_mask = dp->hw_params->ring_mask->rx_mon_status[grp_id];
 		for (i = 0; i < dp->num_radios; i++) {
 			for (j = 0; j < dp->hw_params->num_rxdma_per_pdev; j++) {
@@ -72,10 +73,8 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 			}
 		}
 	}
-	 */
 
-/*
- *	if (dp->hw_params->ring_mask->rx_mon_dest[grp_id]) {
+	if (dp->hw_params->ring_mask->rx_mon_dest[grp_id]) {
 		ring_mask = dp->hw_params->ring_mask->rx_mon_dest[grp_id];
 		for (i = 0; i < dp->num_radios; i++) {
 			for (j = 0; j < dp->hw_params->num_rxdma_per_pdev; j++) {
@@ -94,29 +93,7 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 			}
 		}
 	}
-	 */
 
-/*
- *	if (dp->hw_params->ring_mask->tx_mon_dest[grp_id]) {
-		ring_mask = dp->hw_params->ring_mask->tx_mon_dest[grp_id];
-		for (i = 0; i < dp->num_radios; i++) {
-			for (j = 0; j < dp->hw_params->num_rxdma_per_pdev; j++) {
-				int id = i * dp->hw_params->num_rxdma_per_pdev + j;
-
-				if (ring_mask & BIT(id)) {
-					work_done =
-					ath12k_dp_tx_mon_process_ring(dp, id, napi,
-								      budget);
-					budget -= work_done;
-					tot_work_done += work_done;
-
-					if (budget <= 0)
-						goto done;
-				}
-			}
-		}
-	}
-	 */
 	if (dp->hw_params->ring_mask->reo_status[grp_id]) {
 		ath12k_wifi6_dp_rx_process_reo_status(dp);
 	}
@@ -129,15 +106,8 @@ static int ath12k_wifi6_dp_service_srng(struct ath12k_dp *dp,
 		refill_srng = &dp->ab->hal.srng_list[rx_ring->refill_buf_ring.ring_id];
 		req_entries = ath12k_dp_get_req_entries_from_buf_ring(dp->ab, refill_srng, &list);
 		if (req_entries)
-			ath12k_dp_rx_bufs_replenish(dp, refill_srng, &list);
+			ath12k_dp_rx_bufs_replenish(dp, refill_srng, &list, false);
 	}
-
-/*
- *	if (dp->hw_params->ring_mask->host2rxmon[grp_id])
-		ath12k_dp_mon_rx_process_low_thres(dp);
-
-*/
-	// TODO: Implement handler for other interrupts
 
 done:
 	return tot_work_done;
@@ -157,7 +127,12 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 	dp->idle_link_rbm =
 			ath12k_hal_get_idle_link_rbm(&ab->hal, ab->device_id);
 
-	ret = ath12k_wbm_idle_ring_setup(ab, &n_link_desc);
+	/* For QCN9074, monitor link desc ring will be used,
+	 * setting n_link_desc to minimum value */
+	n_link_desc = HAL_LINK_DESC_SIZE;
+
+	ret = ath12k_dp_srng_setup(ab, &dp->wbm_idle_ring,
+                                    HAL_WBM_IDLE_LINK, 0, 0, n_link_desc);
 	if (ret) {
 		ath12k_warn(ab, "failed to setup wbm_idle_ring: %d\n", ret);
 		goto fail_irq_cleanup;
@@ -187,19 +162,18 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 		goto fail_dp_rx_free;
 	}
 
-/*
 	ret = ath12k_dp_mon_rx_alloc(dp);
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rxdma rings ret = %d\n", ret);
 		goto fail_dp_mon_rx_free;
 	}
-*/
+
+	ath12k_hif_irq_enable(dp->ab);
+
 	return 0;
 
-/*
- * fail_dp_mon_rx_free:
+fail_dp_mon_rx_free:
 	ath12k_dp_mon_rx_free(dp);
-*/
 
 fail_dp_rx_free:
 	ath12k_wifi6_dp_rx_ring_free(ab);
@@ -225,9 +199,7 @@ static void ath12k_wifi6_dp_op_device_deinit(struct ath12k_dp *dp)
 	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
 				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
 	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
-/*
 	ath12k_dp_mon_rx_free(dp);
-*/
 	ath12k_wifi6_dp_rx_ring_free(ab);
 
 	ath12k_hif_ext_irq_cleanup(dp->ab);
@@ -400,6 +372,8 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 		ath12k_warn(dp, "dp_mon_init failed %d\n", ret);
 		goto dp_err;
 	}
+
+	ath12k_wifi6_dp_mon_ops_register(dp);
 
 	return dp;
 dp_err:

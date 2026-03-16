@@ -19,8 +19,15 @@
 #include "../ini.h"
 #include "../cmn_defs.h"
 #include "../telemetry_agent_if.h"
+#include "dcs_extn.h"
+#include "rropinfo.h"
+#include "dp_stats_extn.h"
 
-
+#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
+#define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
+#define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
+#define ATH12K_CONFIG_MAX_TX_ENCAP_TYPE 2
+#define ATH12K_CONFIG_MAX_RX_DECAP_TYPE 2
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -107,6 +114,41 @@ ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH] = { .type = NLA_U32 },
 	[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA] = { .type = NLA_BINARY,
 						.len = QCA_WLAN_MAX_CTL_SIZE },
+};
+
+const struct nla_policy
+ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_ENABLE] = {.type = NLA_U16},
+	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_PENALTY] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_RADAR_ERR_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_TX_ERR_THRESHOLD] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_BITMAP] = {.type = NLA_U32},
+};
+
+const struct nla_policy
+ath12k_rrop_info_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX] = {.type = NLA_U8 },
+};
+
+const struct nla_policy
+ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_TYPE] = {.type = NLA_U16},
+	[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP] = {.type = NLA_U32},
+};
+
+const struct nla_policy
+ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID] = { .type = NLA_U8 },
 };
 
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
@@ -310,6 +352,72 @@ static int ath12k_vendor_event_iface_reload(struct wiphy *wiphy, u8 radio_idx)
 	        return 0;
 }
 
+static int ath12k_set_ampdu_aggr_size_arvif(struct ath12k_link_vif *arvif, u32 value)
+{
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	struct set_custom_aggr_size_params params = {0};
+	int ret;
+
+	if (!arvif || !arvif->ar)
+		return -ENODEV;
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	params.vdev_id = arvif->vdev_id;
+	params.aggr_type = WMI_VDEV_CUSTOM_AGGR_TYPE_AMPDU;
+	params.ac = 0;
+	params.tx_aggr_size = value;
+	params.rx_aggr_size = 0;
+	params.tx_aggr_size_disable = false;
+	params.rx_aggr_size_disable = true;
+	params.tx_ac_enable = true;
+
+	ret = ath12k_wmi_send_aggr_size_cmd(ar, &params);
+	if (ret) {
+		ath12k_warn(ar->ab,
+				"AMPDU aggr size set failed vdev_id %d value %u ret %d\n",
+				params.vdev_id, value, ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int ath12k_set_amsdu_aggr_size_arvif(struct ath12k_link_vif *arvif, u32 value)
+{
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	struct set_custom_aggr_size_params params = {0};
+	int ret;
+
+	if (!arvif || !arvif->ar)
+		return -ENODEV;
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	params.vdev_id = arvif->vdev_id;
+	params.aggr_type = WMI_VDEV_CUSTOM_AGGR_TYPE_AMSDU;
+	params.ac = 0;
+	params.tx_aggr_size = value;
+	params.rx_aggr_size = 0;
+	params.tx_aggr_size_disable = false;
+	params.rx_aggr_size_disable = true;
+	params.tx_ac_enable = true;
+
+	ret = ath12k_wmi_send_aggr_size_cmd(ar, &params);
+	if (ret) {
+		ath12k_warn(ar->ab,
+				"AMSDU aggr size set failed vdev_id %d value %u ret %d\n",
+				params.vdev_id, value, ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
@@ -475,55 +583,137 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MGMT_TX_POWER to firmware");
 		}
 		break;
-        case QCA_WLAN_VENDOR_GLOBAL_RSSI_MIN_THRESH:
-	case QCA_WLAN_VENDOR_GLOBAL_RSSI_MAX_THRESH:
-	case QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MIN_THRESH:
-	case QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MAX_THRESH:
+        case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_MIN_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_MAX_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ACKRSSI_MIN_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ACKRSSI_MAX_THRESH:
 		if ((int32_t)value > 0 || (int32_t)value < -100) {
 			ath12k_err(NULL, "Invalid RSSI/ACKRSSI threshold value %d. Valid range: -100 to 0 dBm\n",
 				   (int32_t)value);
 			ret = -EINVAL;
 		} else {
-			if (param == QCA_WLAN_VENDOR_GLOBAL_RSSI_MIN_THRESH)
+			if (param == QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_MIN_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_RSSI_MIN, value);
-			else if (param == QCA_WLAN_VENDOR_GLOBAL_RSSI_MAX_THRESH)
+			else if (param == QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_MAX_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_RSSI_MAX, value);
-			else if (param == QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MIN_THRESH)
+			else if (param == QCA_WLAN_VENDOR_VDEV_PARAM_ACKRSSI_MIN_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_ACKRSSI_MIN, value);
-			else if (param == QCA_WLAN_VENDOR_GLOBAL_ACKRSSI_MAX_THRESH)
+			else if (param == QCA_WLAN_VENDOR_VDEV_PARAM_ACKRSSI_MAX_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_ACKRSSI_MAX, value);
 
 			if (ret)
 				ath12k_err(NULL, "Failed to set RSSI/ACKRSSI threshold, param: %d\n", param);
 		}
 		break;
-	case QCA_WLAN_VENDOR_GLOBAL_TXRATE_MIN_THRESH:
-	case QCA_WLAN_VENDOR_GLOBAL_TXRATE_MAX_THRESH:
-	case QCA_WLAN_VENDOR_GLOBAL_RXRATE_MIN_THRESH:
-	case QCA_WLAN_VENDOR_GLOBAL_RXRATE_MAX_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TXRATE_MIN_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TXRATE_MAX_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RXRATE_MIN_THRESH:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RXRATE_MAX_THRESH:
 		if ((int32_t)value < 0) {
 			ath12k_err(NULL, "Invalid rate threshold value %d. Rate must be positive\n",
 				   (int32_t)value);
 			ret = -EINVAL;
 		} else {
-			if (param == QCA_WLAN_VENDOR_GLOBAL_TXRATE_MIN_THRESH)
+			if (param == QCA_WLAN_VENDOR_VDEV_PARAM_TXRATE_MIN_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_TXRATE_MIN, value);
-			else if (param == QCA_WLAN_VENDOR_GLOBAL_TXRATE_MAX_THRESH)
+			else if (param == QCA_WLAN_VENDOR_VDEV_PARAM_TXRATE_MAX_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_TXRATE_MAX, value);
-			else if (param == QCA_WLAN_VENDOR_GLOBAL_RXRATE_MIN_THRESH)
+			else if (param == QCA_WLAN_VENDOR_VDEV_PARAM_RXRATE_MIN_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_RXRATE_MIN, value);
-			else if (param == QCA_WLAN_VENDOR_GLOBAL_RXRATE_MAX_THRESH)
+			else if (param == QCA_WLAN_VENDOR_VDEV_PARAM_RXRATE_MAX_THRESH)
 				ret = ath12k_telemetry_set_threshold(THRESHOLD_RXRATE_MAX, value);
 
 			if (ret)
 				ath12k_err(NULL, "Failed to set rate threshold, param: %d\n", param);
 		}
 		break;
-	case QCA_WLAN_VENDOR_GLOBAL_RSSI_RATE_BREACH_MASK:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_RATE_BREACH_MASK:
 		ret = ath12k_telemetry_set_breach_mask(value);
 		if (ret)
 			ath12k_err(NULL, "Failed to set RSSI/Rate breach mask\n");
 		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
+		if (value > ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE) {
+			ath12k_err(NULL, "Valid AMPDU Aggregation Size is in the range 0-255");
+			return -EINVAL;
+		} else {
+			ret = ath12k_set_ampdu_aggr_size_arvif(arvif, value);
+			if (!ret) {
+				arvif->vap_cfg.ampdu_aggr_size = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_CUSTOM_AGGR_TYPE_AMPDU to firmware");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_AMSDU:
+		if (value > ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE) {
+			ath12k_err(NULL, "Valid AMPDU Aggregation Size is in the range 0-7");
+			return -EINVAL;
+		} else {
+			ret = ath12k_set_amsdu_aggr_size_arvif(arvif, value);
+			if (!ret) {
+				arvif->vap_cfg.amsdu_aggr_size = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_CUSTOM_AGGR_TYPE_AMSDU to firmware");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
+		if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
+			ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
+			ret = -EINVAL;
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_BA_MODE,
+					value);
+			if (!ret) {
+				arvif->vap_cfg.ba_bufsize = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_ENCAP_TYPE:
+		if (value > ATH12K_CONFIG_MAX_TX_ENCAP_TYPE) {
+			ath12k_err(NULL, "Value out of range\n");
+			ret = -EINVAL;
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_TX_ENCAP_TYPE,
+					value);
+			if (!ret) {
+				arvif->vap_cfg.tx_encap_type = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_PARAM_TX_ENCAP_TYPE to firmware\n");
+			}
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_DECAP_TYPE:
+		if (value > ATH12K_CONFIG_MAX_RX_DECAP_TYPE) {
+			ath12k_err(NULL, "Value out of range\n");
+			ret = -EINVAL;
+		} else {
+			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					WMI_VDEV_PARAM_RX_DECAP_TYPE,
+					value);
+			if (!ret) {
+				arvif->vap_cfg.rx_decap_type = value;
+			} else {
+				ath12k_err(NULL,
+						"Failed to send WMI_VDEV_PARAM_RX_DECAP_TYPE to firmware\n");
+			}
+		}
+		break;
+
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -557,13 +747,8 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 			return -EINVAL;
 		}
 
-		/*
-		 * Firmware accounts the very first frame (without retry bit set) also
-		 * in the retry count. Increase the user provided tx retry count by 1
-		 * to match the number of tx frames with retry bit set in the air.
-		 */
 		ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_MGMT_RETRY_LIMIT,
-						value + 1, ar->pdev->pdev_id);
+						value, ar->pdev->pdev_id);
 		if (ret) {
 			ath12k_err(ar->ab, "Failed to set tx retry limit for mgmt frame: %d\n",
 				   ret);
@@ -1095,6 +1280,7 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                  }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_BLOCK_INTERBSS:
+		 value = !!value;
                  if (value == ar->radio_cfg.block_interbss) {
                          ret = 0;
                  } else {
@@ -1144,6 +1330,7 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 			 }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_SET_PROMISC_MODE_CMDID:
+		 value = !!value;
                  if (value == ar->radio_cfg.promisc_mode) {
                          ret = 0;
                  } else {
@@ -1302,6 +1489,7 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                 }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_CCK_TX_ENABLE:
+		value = !!value;
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_CCK_TX_ENABLE,
                                                 value, ar->pdev->pdev_id);
                  if (!ret) {
@@ -1327,6 +1515,13 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
         case QCA_WLAN_VENDOR_RADIO_PARAM_ANTENNA_GAIN_HALF_DB:
 #define MAX_ANTENNA_GAIN 30
                 if ((value >= 0) && (value <= (MAX_ANTENNA_GAIN * 2))) {
+			band = ath12k_get_band_based_on_freq(ar->chan_info.low_freq);
+			if (band == NL80211_BAND_2GHZ) {
+				value = value | ANTENNA_GAIN_2G_MASK;
+			} else {
+				value = value | ANTENNA_GAIN_5G_MASK;
+			}
+
                         ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANTENNA_GAIN_HALF_DB,
                                         value, ar->pdev->pdev_id);
                         if (!ret) {
@@ -1581,6 +1776,15 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                            "GPIO %u output set to %u\n", gpio_pin, gpio_value);
                 break;
         }
+        case QCA_WLAN_VENDOR_RADIO_PARAM_MSDU_TTL:
+                ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_MSDU_TTL_CMDID,
+                                               value, ar->pdev->pdev_id);
+                if (!ret) {
+                        ar->radio_cfg.msdu_ttl = value;
+                } else {
+                        ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MSDU_TTL_CMDID to firmware");
+                }
+                break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -1696,6 +1900,19 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
         return ret;
 }
 
+static int ath12k_vendor_get_rssi_rate_threshold(u8 type, u64 *value)
+{
+	int threshold = ath12k_get_rssi_rate_threshold(type);
+
+	if (threshold == -ENOTCONN) {
+		ath12k_err(NULL, "Telemetry agent not loaded\n");
+		return -ENOTCONN;
+	}
+
+	*value = threshold;
+	return 0;
+}
+
 /* Get link-vif level parameters */
 static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                                           u32 param, u64 *value)
@@ -1749,6 +1966,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                 ret = 0;
                 break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_VDEV_TSF:
+		if (!ar) {
+			ath12k_err(NULL, "No radio, use link ID \n");
+			return -EINVAL;
+		}
 		reinit_completion(&ar->tsf_report_done);
 		ret = ath12k_wmi_vdev_tsf_tstamp_action_cmd(ar, arvif->vdev_id);
 		if (ret) {
@@ -1772,11 +1993,70 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		*value = arvif->vap_cfg.bcn_tx_power;
 		ret = 0;
 		break;
-        case QCA_WLAN_VENDOR_GLOBAL_GET_RSSI_RATE_THRESHOLDS:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_MIN_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_RSSI_MIN, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_MAX_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_RSSI_MAX, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ACKRSSI_MIN_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_ACKRSSI_MIN, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ACKRSSI_MAX_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_ACKRSSI_MAX, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TXRATE_MIN_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_TXRATE_MIN, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TXRATE_MAX_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_TXRATE_MAX, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RXRATE_MIN_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_RXRATE_MIN, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RXRATE_MAX_THRESH:
+		ret = ath12k_vendor_get_rssi_rate_threshold(THRESHOLD_RXRATE_MAX, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_RATE_BREACH_MASK:
+		ret = ath12k_get_rssi_rate_breach_mask();
+		if (ret == -ENOTCONN) {
+			ath12k_err(NULL, "Telemetry agent not loaded\n");
+		} else {
+			*value = ret;
+			ret = 0;
+		}
+		break;
+        case QCA_WLAN_VENDOR_VDEV_PARAM_GET_RSSI_RATE_THRESHOLDS:
 		ret = ath12k_telemetry_print_thresholds();
 		if (ret)
 			ath12k_err(NULL, "Failed to print RSSI/Rate thresholds\n");
 		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
+		*value = arvif->vap_cfg.ampdu_aggr_size;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_AMSDU:
+		*value = arvif->vap_cfg.amsdu_aggr_size;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
+		*value = arvif->vap_cfg.ba_bufsize;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_ENCAP_TYPE:
+		*value = arvif->vap_cfg.tx_encap_type;
+		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_DECAP_TYPE:
+		*value = arvif->vap_cfg.rx_decap_type;
+		ret = 0;
+		break;
+
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -1884,6 +2164,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 *value = ar->radio_cfg.txpowlimit2G;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_TXPOWER_LIMIT5G:
+		*value = ar->radio_cfg.txpowlimit5G;
+		ret = 0;
+		break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_TXPOWER_SCALE:
                 *value = ar->radio_cfg.txpower_scale;
                 ret = 0;
@@ -1904,6 +2188,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 *value = ar->radio_cfg.burst_mode;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_MCAST_BCAST_ECHO:
+		*value = ar->radio_cfg.mcast_bcast_echo;
+		ret = 0;
+		break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_ENABLE_AMSDU:
                 *value = ar->radio_cfg.amsdu_mask;
                 ret = 0;
@@ -1999,6 +2287,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                           "Temperature read: %d°C (0x%x)\n",
                           (s32)*value, *value);
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_MSDU_TTL:
+                *value = ar->radio_cfg.msdu_ttl;
+                ret = 0;
                 break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
@@ -2102,6 +2394,103 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	}
 
 	return 0;
+}
+
+int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data, int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	u8 radio_id;
+	struct ath12k *ar = NULL;
+	struct sk_buff *skb;
+	struct nlattr *nla_attr;
+	struct nlattr *rtplinst_attr;
+	bool info_available = false;
+	int i;
+	int count = 0;
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_CONFIG_MAX, data,
+		      data_len, ath12k_rrop_info_policy, NULL)) {
+		ath12k_err(NULL,
+			   "QCA_WLAN_VENDOR_ATTR_CONFIG_MAX parsing failed");
+		return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX])
+		return -EINVAL;
+
+	radio_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+	if (radio_id >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio id %d", radio_id);
+		return -EINVAL;
+	}
+
+	ar = ath12k_ah_to_ar(ah, radio_id);
+
+	if (!ar) {
+		ath12k_err(NULL, "RROPINFO: failed to resolve ar from wdev\n");
+		return -EINVAL;
+	}
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
+	if (!skb) {
+		ath12k_err(NULL, "RROPINFO: Reply skb alloc failed\n");
+		return -ENOMEM;
+	}
+
+	nla_attr = nla_nest_start(skb, QCA_WLAN_VENDOR_ATTR_RROP_INFO_RTPL);
+	if (!nla_attr) {
+		ath12k_err(NULL, "RROPINFO: nla nest start failed for RTPL info\n");
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < ATH12K_NUM_CHANS; i++) {
+		const struct rtplinst_extn *ci = &ar->ar_extn.rtplinst[i];
+
+		if ((ci->primary_freq == 0) &&
+		    (ci->txpower_throughput == 0) &&
+		    (ci->txpower_range == 0))
+			continue;
+
+		info_available = true;
+
+		rtplinst_attr = nla_nest_start(skb, i);
+		if (!rtplinst_attr) {
+			ath12k_err(NULL, "RROPINFO: nla nest start failed for RTPL instance %d\n", i);
+			kfree_skb(skb);
+			return -EINVAL;
+		}
+
+		if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_RTPLINST_PRIMARY_FREQUENCY,
+				ci->primary_freq) ||
+		    nla_put_s32(skb, QCA_WLAN_VENDOR_ATTR_RTPLINST_TXPOWER_THROUGHPUT,
+				ci->txpower_throughput) ||
+		    nla_put_s32(skb, QCA_WLAN_VENDOR_ATTR_RTPLINST_TXPOWER_RANGE,
+				ci->txpower_range)) {
+			ath12k_err(NULL, "RROPINFO: failed to put RTPL instance %d\n", i);
+			kfree_skb(skb);
+			return -EINVAL;
+		}
+
+		nla_nest_end(skb, rtplinst_attr);
+		count++;
+		ath12k_dbg(NULL, ATH12K_DBG_CFG, "RROPINFO: rtplinst[%d]: freq=%u th=%d range=%d\n",
+			   i, ci->primary_freq, ci->txpower_throughput, ci->txpower_range);
+	}
+
+	nla_nest_end(skb, nla_attr);
+
+	if (!info_available) {
+		kfree_skb(skb);
+		return -EINVAL;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_CFG, "RROPINFO: reply sent with %d instances\n", count);
+	return cfg80211_vendor_cmd_reply(skb);
 }
 
 /**
@@ -2493,7 +2882,10 @@ static struct ath12k *ath12k_get_radio_by_index(struct wiphy *wiphy,
 }
 
 /*
- * ath12k_vendor_ctl_table- Set CTL table
+ * ath12k_vendor_ctl_table- Set CTL table It provides
+ * simplified power values intended for helping external Auto channel Selection
+ * applications compare potential Tx power performance between channels, other
+ * operating conditions remaining identical.
  * @wiphy: Pointer to wiphy
  * @wdev: wireless wdev
  * @data: vendor data
@@ -2540,6 +2932,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	}
 
 	ctl_cmd_len = nla_get_u16(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH]);
+	ctl_cmd_len += sizeof(uint32_t);
 	ctl_tlv_len = TLV_HDR_SIZE + roundup(ctl_cmd_len, sizeof(u32));
 	len = sizeof(*cmd) + ctl_tlv_len;
 	wmi = ar->wmi;
@@ -2561,7 +2954,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	band = nla_get_u32(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_BAND]);
 	ctl_data = nla_data(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA]);
 	ctl_array[0] = cpu_to_le32(band);
-	memcpy(&ctl_array[1], ctl_data, ctl_cmd_len - sizeof(band));
+	memcpy(&ctl_array[1], ctl_data, ctl_cmd_len);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 		   "WMI CTL TABLE: pdev %d ctl len %d\n",
@@ -2574,4 +2967,435 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	}
 
 	return 0;
+}
+
+int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	int ret, link_id = 0, cmd_type, dcs_enable;
+	struct ath12k *ar;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
+	struct dcs_wlan_intr_user_cfg *cfg;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_DCS_MAX, data, data_len,
+			ath12k_vendor_dcs_config_policy, NULL);
+
+	if (ret) {
+		ath12k_err(NULL, "Invalid attribute in dcs_handler %d\n", ret);
+		return ret;
+	}
+
+	if (wdev->valid_links) { /* MLO case */
+		if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID])
+			return -EINVAL;
+		link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID]);
+		if (!(wdev->valid_links & BIT(link_id)))
+			return -ENOLINK;
+	} else { /* NON-MLO case */
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID])
+			return -EINVAL;
+		link_id = 0;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE])
+		return -EINVAL;
+
+	cmd_type = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE]);
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_ENABLE])
+		return -EINVAL;
+
+	dcs_enable = nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_DCS_ENABLE]);
+
+	if (dcs_enable & ~ATH12K_DCS_VALID_INTF_BITMAP) {
+		ath12k_err(NULL, "Invalid DCS enable bitmap: 0x%x\n", dcs_enable);
+		return -EINVAL;
+	}
+
+	ar = ath12k_get_ar_from_wdev(wdev, link_id);
+	if (!ar)
+		return -ENODATA;
+
+	ath12k_mac_set_intf_detect(ar, dcs_enable);
+
+	/* Store thresholds into wlan_intf_extn.dcs_cfg directly (hostapd manages defaults) */
+	if (cmd_type == ATH12K_WLAN_INTR_CMD) {
+		cfg = &ar->ar_extn.wlan_intf.dcs_cfg;
+
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_THRESHOLD])
+			cfg->intr_detection_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW])
+			cfg->sample_size =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_DETECTION_WINDOW]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_PENALTY])
+			cfg->phyerr_penalty =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_PENALTY]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_THRESHOLD])
+			cfg->phyerr_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_PHY_ERR_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_RADAR_ERR_THRESHOLD])
+			cfg->radarerr_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_RADAR_ERR_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_TX_ERR_THRESHOLD])
+			cfg->txerr_threshold =
+				nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_TX_ERR_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD])
+			cfg->coch_intr_threshold =
+				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU])
+			cfg->user_max_cu =
+				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU]);
+	}
+	return 0;
+}
+
+int ath12k_get_dp_rx_scan_radio_stats_len(void)
+{
+	struct ath12k_dp_rx_scan_radio_stats stats;
+	int total_size = 0;
+
+	total_size += nla_total_size(sizeof(stats.rx_ok_bytes));
+	total_size += nla_total_size(sizeof(stats.rx_err_bytes));
+	total_size += nla_total_size(sizeof(stats.rx_ok_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_err_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_mgmt_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_ctrl_pkts));
+	total_size += nla_total_size(sizeof(stats.rx_data_pkts));
+	total_size = nla_total_size_nested(total_size);
+	return total_size;
+}
+
+int ath12k_fill_rx_scan_radio_stats(
+		struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_scan_radio_stats *rx_scan_radio_stats)
+{
+	struct nlattr *attr;
+
+	if (!rx_scan_radio_stats)
+		return -EINVAL;
+
+	attr = nla_nest_start(vendor_event,
+			      QCA_VENDOR_ATTR_WLAN_TELEMETRY_RX_MON_SCAN_STATS);
+	if (!attr) {
+		ath12k_err(NULL, "nla nest failure: Device reo error");
+		return -EINVAL;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_PKTS,
+			rx_scan_radio_stats->rx_ok_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_BYTES,
+			      rx_scan_radio_stats->rx_ok_bytes, NL80211_ATTR_PAD)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_OK_BYTES);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_PKTS,
+			rx_scan_radio_stats->rx_err_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_BYTES,
+			      rx_scan_radio_stats->rx_err_bytes, NL80211_ATTR_PAD)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_ERR_BYTES);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_MGMT_PKTS,
+			rx_scan_radio_stats->rx_mgmt_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_MGMT_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_CTRL_PKTS,
+			rx_scan_radio_stats->rx_ctrl_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_CTRL_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event, QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_DATA_PKTS,
+			rx_scan_radio_stats->rx_data_pkts)) {
+		ath12k_err(NULL, "nla put failed: rx_scan_radio stats %d",
+			   QCA_WLAN_VENDOR_ATTR_RX_MON_SCAN_STATS_RX_DATA_PKTS);
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	nla_nest_end(vendor_event, attr);
+
+	return 0;
+}
+
+int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len)
+{
+	u16 intf_type_bitmap;
+	u32 intf_bitmap = 0;
+	int ret, link_id = 0;
+	struct ath12k *ar;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
+
+	ath12k_err(NULL, "Inside ath12k_vendor_dcs_sim_handler");
+
+	if (!wdev)
+		return -EINVAL;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX, data, data_len,
+			ath12k_vendor_dcs_sim_policy, NULL);
+
+	if (ret) {
+		ath12k_err(NULL, "Invalid attribute in dcs_sim handler %d\n", ret);
+		return ret;
+	}
+
+	if (wdev->valid_links) { /* MLO case */
+		if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID])
+			return -EINVAL;
+		link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID]);
+		if (!(wdev->valid_links & BIT(link_id)))
+			return -ENOLINK;
+	} else { /* NON-MLO case */
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_LINK_ID])
+			return -EINVAL;
+		link_id = 0;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_TYPE])
+		return -EINVAL;
+
+	intf_type_bitmap = nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_TYPE]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP])
+		intf_bitmap = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_INTERFERENCE_BITMAP]);
+
+	rcu_read_lock();
+	ar = ath12k_get_ar_from_wdev(wdev, link_id);
+
+	if (!ar) {
+		ath12k_err(NULL, "Invalid ar from wdev\n");
+		goto exit;
+	}
+
+	ath12k_vendor_send_intf_notify_extn(ar, intf_type_bitmap, intf_bitmap);
+	rcu_read_unlock();
+	return 0;
+exit:
+	rcu_read_unlock();
+	return -1;
+}
+
+static int ath12k_vendor_send_reg_params_update(struct wiphy *wiphy,
+						u8 cmd, u8 opclass,
+						u16 hw_value,
+						int max_reg_power,
+						u8 num_opclasses,
+						u8 *opclass_lst,
+						u8 *chansize_lst,
+						u8 **channel_lists)
+{
+	struct sk_buff *skb;
+	struct nlattr *nla_attr;
+	int i, j, temp;
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
+	if (!skb)
+		return -ENOMEM;
+
+	if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS) {
+		if (nla_put_u8(skb,
+			       QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_NUM_OPCLASS,
+			       num_opclasses))
+			goto fail;
+		else
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "Number of opclasses is %d",
+				   num_opclasses);
+	} else if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_CHAN_NUM) {
+		if (nla_put_u8(skb,
+			       QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_CHAN_NUM,
+			       hw_value))
+			goto fail;
+		else
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "hw_value is %d", hw_value);
+	} else if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_TXPOWER) {
+		if (nla_put_s32(skb,
+				QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_TXPOWER,
+				max_reg_power))
+			goto fail;
+		else
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "max_reg_power is %d", max_reg_power);
+	} else if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST) {
+		temp = QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_OPCLASS_LIST;
+		nla_attr = nla_nest_start(skb, temp);
+		if (!nla_attr)
+			goto fail;
+
+		for (i = 0; i < num_opclasses; i++) {
+			if (nla_put_u8(skb, i, opclass_lst[i]))
+				goto fail;
+			else
+				ath12k_dbg(NULL, ATH12K_DBG_REG,
+					   "opclasslist[%d] is %d",
+					   i, opclass_lst[i]);
+		}
+		nla_nest_end(skb, nla_attr);
+	}
+
+	if (opclass) {
+		for (i = 0; i < num_opclasses; i++) {
+			if (opclass == opclass_lst[i]) {
+				j = i;
+				break;
+			}
+		}
+
+		if (i == num_opclasses)
+			goto fail;
+
+		temp = QCA_WLAN_VENDOR_ATTR_REG_PARAMS_UPDATE_OPCLASS_CHAN;
+		nla_attr = nla_nest_start(skb, temp);
+		if (!nla_attr)
+			goto fail;
+
+		for (i = 0; i < chansize_lst[j]; i++) {
+			if (nla_put_u8(skb, i, channel_lists[j][i]))
+				goto fail;
+			else
+				ath12k_dbg(NULL, ATH12K_DBG_REG,
+					   "channellist[%d] is %d",
+					   i, channel_lists[j][i]);
+		}
+		nla_nest_end(skb, nla_attr);
+	}
+
+	return cfg80211_vendor_cmd_reply(skb);
+
+fail:
+	kfree_skb(skb);
+	return -EMSGSIZE;
+}
+
+int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
+	enum nl80211_band band;
+	int ret_val = 0;
+	u8 cmd = 0;
+	u8 opclass = 0;
+	u8 link_id, num_op = 0;
+	u8 *op_lst  = NULL, *chansize = NULL, **chan_lst = NULL;
+	u16 hw_value = 0;
+	int max_reg_power = 0;
+	int curr_reg_power;
+	bool need_clean = false;
+
+	if (!wdev || !data || !data_len) {
+		ath12k_err(NULL, "Invalid input to REG PARAMS handler");
+		return -EINVAL;
+	}
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX, data,
+		      data_len, ath12k_reg_params_policy, NULL)) {
+		ath12k_err(NULL, "Failed to parse REG PARAMS vendor attributes");
+		return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID]) {
+		ath12k_err(NULL, "Missing mandatory Link_id attributes");
+		return -EINVAL;
+	}
+
+	link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID]);
+
+	if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
+		return -EINVAL;
+
+	if (!wdev->links[link_id].ap.chandef.chan) {
+		ath12k_err(NULL, "No channel defined for link_id %u\n", link_id);
+		return -EINVAL;
+	}
+
+	band = wdev->links[link_id].ap.chandef.chan->band;
+	curr_reg_power = wdev->links[link_id].ap.chandef.chan->max_reg_power;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD])
+		cmd = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN])
+		opclass = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN]);
+
+	if ((cmd >= QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS &&
+	     cmd <= QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST) || opclass) {
+		if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_CHAN_NUM) {
+			hw_value = wdev->links[link_id].ap.chandef.chan->hw_value;
+		}
+
+		if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_TXPOWER) {
+			max_reg_power = curr_reg_power;
+		}
+
+		if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS ||
+		    cmd == QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST ||
+		    opclass) {
+			ret_val = ath12k_get_opclasses_and_channels(NULL,
+								    &num_op,
+								    &op_lst,
+								    &chansize,
+								    &chan_lst,
+								    band);
+			need_clean = true;
+			if (ret_val) {
+				ath12k_err(NULL,
+					   "Failed to retrieve opclass list and channel");
+				goto clean;
+			}
+		}
+
+		ret_val = ath12k_vendor_send_reg_params_update(wiphy, cmd, opclass,
+							       hw_value,
+							       max_reg_power,
+							       num_op, op_lst,
+							       chansize,
+							       chan_lst);
+
+	} else {
+		ret_val = -EINVAL;
+	}
+
+	if (need_clean)
+		goto clean;
+	return ret_val;
+
+clean:
+	ath12k_free_opclasses_and_channels(num_op, op_lst,
+					   chansize, chan_lst);
+	return ret_val;
 }

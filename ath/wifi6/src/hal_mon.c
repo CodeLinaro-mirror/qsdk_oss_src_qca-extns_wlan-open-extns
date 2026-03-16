@@ -712,6 +712,8 @@ ath12k_wifi6_hal_mon_rx_parse_mpdu_start(const void *tlv_data, u32 userid,
 	ppdu_info->userstats[userid].enc_type =
 				HAL_RX_GET_ENCRYPT_TYPE(rx_mpdu_start);
 
+	ppdu_info->userstats[userid].ampdu_id = ppdu_id;
+
 	if (ppdu_info->ppdu_info_extn.sw_frame_group_id ==
 	    HAL_MPDU_SW_FRAME_GROUP_NULL_DATA) {
 		ppdu_info->frame_control_info_valid =
@@ -905,8 +907,8 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 		break;
 	}
 	case HAL_RX_PPDU_END_USER_STATS:
-               ath12k_wifi6_hal_mon_rx_parse_ppdu_end_usr_stats(tlv_data,
-								userid, ppdu_info);
+		ath12k_wifi6_hal_mon_rx_parse_ppdu_end_usr_stats(tlv_data,
+								 userid, ppdu_info);
 		break;
 	case HAL_RX_PPDU_END_USER_STATS_EXT:
 		break;
@@ -1059,6 +1061,26 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 
 	return HAL_RX_MON_STATUS_PPDU_NOT_DONE;
 }
+
+void
+ath12k_wifi6_dp_mon_rx_next_link_desc_get(struct hal_rx_msdu_link *msdu_link,
+					  struct hal_rx_buf_info *buf_info)
+{
+	struct ath12k_buffer_addr *buf_addr_info;
+
+	buf_addr_info = &msdu_link->buf_addr_info;
+
+	buf_info->paddr = (((u64)le32_get_bits(buf_addr_info->info1,
+					       WIFI6_BUFFER_ADDR_INFO1_ADDR)) << 32) |
+					le32_get_bits(buf_addr_info->info0,
+						      WIFI6_BUFFER_ADDR_INFO0_ADDR);
+
+	buf_info->sw_cookie = le32_get_bits(buf_addr_info->info1,
+					    WIFI6_BUFFER_ADDR_INFO1_SW_COOKIE);
+	buf_info->rbm = le32_get_bits(buf_addr_info->info1,
+				      WIFI6_BUFFER_ADDR_INFO1_RET_BUF_MGR);
+}
+
 
 const struct hal_mon_ops hal_qcn9074_mon_ops = {
 	.get_mon_mpdu_start_wmask = NULL,

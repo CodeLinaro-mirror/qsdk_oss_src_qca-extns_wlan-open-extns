@@ -160,6 +160,13 @@ static const struct ath12k_hw_ops qcn9074_ops = {
 #define ATH12K_REO2PPE_RING_MASK_0 0x1
 #define ATH12K_PPE_WBM2SW_RELEASE_RING_MASK_0 0x1
 
+#define ATH12K_RX_MON_STATUS_RING_MASK_0 0x1
+#define ATH12K_RX_MON_STATUS_RING_MASK_1 0x2
+#define ATH12K_RX_MON_STATUS_RING_MASK_2 0x4
+#define ATH12K_RX_MON_DEST_RING_MASK_0 0x1
+#define ATH12K_RX_MON_DEST_RING_MASK_1 0x2
+#define ATH12K_RX_MON_DEST_RING_MASK_2 0x4
+
 /* To support 8 MSI DP grouping */
 static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 	.tx  = {
@@ -172,12 +179,19 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 		0, 0, 0,
 		ATH12K_HOST2RXMON_RING_MASK_0,
 	},
-	.rx_mon_dest = {
+	.rx_mon_status = {
+		0, 0, 0,
+		ATH12K_RX_MON_STATUS_RING_MASK_0,
+		ATH12K_RX_MON_STATUS_RING_MASK_1,
+		ATH12K_RX_MON_STATUS_RING_MASK_2,
 		0, 0,
-		ATH12K_RX_MON_RING_MASK_0,
-		ATH12K_RX_MON_RING_MASK_1,
-		ATH12K_RX_MON_RING_MASK_2,
-		0, 0, 0
+	},
+	.rx_mon_dest = {
+		0, 0, 0,
+		ATH12K_RX_MON_DEST_RING_MASK_0,
+		ATH12K_RX_MON_DEST_RING_MASK_1,
+		ATH12K_RX_MON_DEST_RING_MASK_2,
+		0, 0,
 	},
 	.rx = {
 		0, 0, 0,
@@ -233,10 +247,6 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074_msi8 = {
 	},
 };
 
-#define ATH12K_RX_MON_STATUS_RING_MASK_0 0x1
-#define ATH12K_RX_MON_STATUS_RING_MASK_1 0x2
-#define ATH12K_RX_MON_STATUS_RING_MASK_2 0x4
-
 static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074 = {
 	.tx  = {
 		ATH12K_TX_RING_MASK_0,
@@ -244,10 +254,20 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074 = {
 		ATH12K_TX_RING_MASK_2,
 	},
 	.rx_mon_status = {
-		0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
 		ATH12K_RX_MON_STATUS_RING_MASK_0,
 		ATH12K_RX_MON_STATUS_RING_MASK_1,
 		ATH12K_RX_MON_STATUS_RING_MASK_2,
+		0,
+	},
+	.rx_mon_dest = {
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		ATH12K_RX_MON_DEST_RING_MASK_0,
+		ATH12K_RX_MON_DEST_RING_MASK_1,
+		ATH12K_RX_MON_DEST_RING_MASK_2,
+		0,
 	},
 	.rx = {
 		0, 0, 0, 0,
@@ -312,7 +332,7 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		.supports_monitor = true,
 
 		.idle_ps = false,
-		.cold_boot_calib = false,
+		.cold_boot_calib = true,
 		.download_calib = true,
 		.supports_suspend = false,
 		.reoq_lut_support = false,
@@ -381,6 +401,7 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		 */
 		.cfr_stream_buf_size = 16716,
 		.mlo_3_link_tx_support = false,
+		.quad_ring_monitor_support = true,
 		.board_magic = "QCA-ATH11K-BOARD",
 	},
 };
@@ -402,7 +423,6 @@ static const struct ieee80211_ops ath12k_ops_wifi6 = {
 	.remove_interface		= ath12k_mac_op_remove_interface,
 	.update_vif_offload		= ath12k_mac_op_update_vif_offload,
 	.config                         = ath12k_mac_op_config,
-	.sta_set_4addr			= ath12k_mac_op_sta_set_4addr,
 	.link_info_changed              = ath12k_mac_op_link_info_changed,
 	.vif_cfg_changed		= ath12k_mac_op_vif_cfg_changed,
 	.change_vif_links               = ath12k_mac_op_change_vif_links,

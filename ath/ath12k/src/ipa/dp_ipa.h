@@ -838,6 +838,12 @@ int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ct
 				       struct dp_ipa_net_device_priv *net_dev_priv,
 				       u8 session_id);
 
+void ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
+					u8 *mac_addr);
+
+void ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
+				      u8 *mac_addr);
+
 #ifndef ETH_P_WAPI
 #define ETH_P_WAPI 0x88B4
 #endif

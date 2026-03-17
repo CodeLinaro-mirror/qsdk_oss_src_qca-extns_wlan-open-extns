@@ -443,6 +443,10 @@ struct ath12k_ipa_uc_fw_stats {
 	u32 rx_resered;
 };
 
+struct ipa_wifi_ops {
+	bool (*tx)(struct ath12k_base *ab, struct sk_buff *skb, bool is_mcbc);
+};
+
 struct ath12k_ipa_iface_context {
 	struct ath12k_ipa *ipa_ctx;
 
@@ -675,6 +679,7 @@ struct ath12k_ipa {
 	u32 curr_cons_bw;
 	bool is_db_ddr_mapped;
 	bool ipa_first_tx_db_access;
+	const struct ipa_wifi_ops *wifi_hw_ops;
 };
 
 /**
@@ -833,4 +838,23 @@ int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ct
 				       struct dp_ipa_net_device_priv *net_dev_priv,
 				       u8 session_id);
 
+/* Nbuf CB values used by IPA component, where driver gets the required info
+ * BCMC_OFFSET: rx_msdu_desc_info->da_is_mcbc stored in skb->cb[1] & 0x2
+ * CHIP_ID_OFFSET: rx_msdu_desc_info->dest_chip_id stored in skb->cb[7]
+ * PAMC_ID_OFFSET: rx_msdu_desc_info->dest_chip_pmac_id in skb->cb[8]
+ */
+#define DP_IPA_SKB_CB_DA_BCMC_OFFSET		1
+#define DP_IPA_SKB_CB_PEER_ID_OFFSET		5
+#define DP_IPA_SKB_CB_DEST_CHIP_ID_OFFSET	7
+#define DP_IPA_SKB_CB_DEST_CHIP_PMAC_ID_OFFSET	8
+
+#define DP_IPA_SKB_CB_BCMC_MASK			0x2
+
+#ifndef ETH_P_WAPI
+#define ETH_P_WAPI 0x88B4
+#endif
+
+#define DP_IPA_MCBC_PKT(_skb) \
+	(((uint8_t)(_skb)->cb[DP_IPA_SKB_CB_DA_BCMC_OFFSET]) & \
+		DP_IPA_SKB_CB_BCMC_MASK)
 #endif

@@ -82,6 +82,9 @@
 #define ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, mask) \
 	(((ipa_cfg)->ipa_config & (mask)) == (mask))
 
+#define WLAN_IPA_AST_META_DATA_MASK htonl(0x000000FF)
+#define DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET	0
+
 
 int ath12k_dp_ipa_plugin_register_ops_extn(struct ath12k_base *ab);
 void ath12k_dp_ipa_plugin_deregister_ops_extn(struct ath12k_base *ab);
@@ -177,6 +180,12 @@ enum ath12k_ipa_bw_level {
 
 enum iommu_attr {
 	ATH12K_IOMMU_MAPPING_CONF_S1_BYPASS,
+};
+
+struct dp_ipa_net_device_priv {
+	char name[IFNAMSIZ];
+	u8 dev_addr[ETH_ALEN];
+	int ifindex;
 };
 
 struct ath12k_ipa_ops {
@@ -434,6 +443,7 @@ struct ath12k_ipa_iface_context {
 	struct ath12k_ipa_mac_addr bssid;
 	u8 is_authenticated;
 	bool alt_pipe;
+	struct dp_ipa_net_device_priv net_dev;
 };
 
 /**

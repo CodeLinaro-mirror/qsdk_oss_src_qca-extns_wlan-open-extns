@@ -3789,14 +3789,6 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 		}
 	}
 
-	if (!dp_peer->is_authorized) {
-		ath12k_err(ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X",
-			   peer_id, eth->h_source, eth->h_dest,
-			   cpu_to_be16(eth->h_proto));
-		rcu_read_unlock();
-		goto drop;
-	}
-
 	hw = ath12k_ar_to_hw(ar);
 	skb->protocol = eth->h_proto;
 

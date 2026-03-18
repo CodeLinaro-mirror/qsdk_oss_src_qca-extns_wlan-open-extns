@@ -659,6 +659,159 @@ static int ath12k_get_vdev_bcast_rate(struct ath12k_link_vif *arvif, u64 *value)
 	return 0;
 }
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	int preamble_type;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	preamble_type = (mhdr >> MESH_DBG_PRAMBLE_OFFSET) & MESH_NIBBLE_MASK;
+
+	if (preamble_type > METAHDR_PREAMBLE_EHT) {
+		pr_err("ERR: preamble type is greater than EHT\n");
+		return -EINVAL;
+	}
+
+	ahvif->dp_vif.dp_extn.mhdr = mhdr;
+	return 0;
+}
+
+int ath12k_mac_vif_set_mesh_dbg(struct ath12k_link_vif *arvif, uint32_t mdbg)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	ahvif->dp_vif.dp_extn.mdbg = mdbg;
+	return 0;
+}
+
+int ath12k_mac_vif_set_mesh_rx_filter(struct ath12k_link_vif *arvif, uint32_t rx_filter)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	/* rx filter shouldn't have bits set beyond MESH_FILTER_OUT_TA */
+	if (rx_filter > 0x1F)
+		return -EINVAL;
+
+	ahvif->dp_vif.dp_extn.rx_filter = rx_filter;
+	return 0;
+}
+
+int ath12k_mac_vif_set_mesh_tx(struct ath12k_link_vif *arvif, uint32_t mesh_tx)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	ahvif->dp_vif.dp_extn.mesh_tx = mesh_tx;
+	return 0;
+}
+
 /**
  * ath12k_set_vdev_bcast_rate - Set broadcast rate for a vdev
  * @arvif: pointer to ath12k_link_vif structure
@@ -731,6 +884,7 @@ static int ath12k_set_vdev_bcast_rate(struct ath12k_link_vif *arvif, u32 bitrate
 
 	return 0;
 }
+#endif
 
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
@@ -740,7 +894,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 	struct ath12k *ar = arvif->ar;
         int ret = -1;
 
-        switch (param) {
+	switch (param) {
         case QCA_WLAN_VENDOR_VDEV_PARAM_TEST_RELOAD:
                 *reload = true;
                 ret = 0;
@@ -1049,6 +1203,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 		    ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MCAST_DATA_RATE to firmware\n");
 		break;
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
 		ret = ath12k_set_vdev_bcast_rate(arvif, value);
 		if (ret)
@@ -1059,6 +1214,51 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 			ath12k_err(NULL, "Failed to set PN RX Filter");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_HDR:
+		ret = ath12k_mac_vif_setmhdr(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh hdr 0x%x for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh hdr to 0x%x for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_DBG:
+		ret = ath12k_mac_vif_set_mesh_dbg(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh dbg %d for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh dbg to %d for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+	case QCA_WLAN_VENDOR_VDEV_RX_FILTER:
+		ret = ath12k_mac_vif_set_mesh_rx_filter(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh rx_filter 0x%x for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh rx_filter to 0x%x for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+	case QCA_WLAN_VENDOR_VDEV_TX_MESH:
+		ret = ath12k_mac_vif_set_mesh_tx(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh tx_%d for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh tx to %d for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+#endif
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -2490,6 +2690,24 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
 		ret = ath12k_get_vdev_bcast_rate(arvif, value);
 		break;
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_HDR:
+		*value = arvif->ahvif->dp_vif.dp_extn.mhdr;
+		ret = 0;
+	break;
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_DBG:
+		*value = arvif->ahvif->dp_vif.dp_extn.mdbg;
+		ret = 0;
+	break;
+	case QCA_WLAN_VENDOR_VDEV_RX_FILTER:
+		*value = arvif->ahvif->dp_vif.dp_extn.rx_filter;
+		ret = 0;
+	break;
+	case QCA_WLAN_VENDOR_VDEV_TX_MESH:
+		*value = arvif->ahvif->dp_vif.dp_extn.mesh_tx;
+		ret = 0;
+	break;
+#endif
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);

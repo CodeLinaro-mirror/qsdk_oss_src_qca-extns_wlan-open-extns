@@ -29,6 +29,20 @@ struct ath12k_vif_extn {
 	spinlock_t data_lock;
 };
 
+struct ath12k_dp_vif_extn {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	uint32_t mhdr; /* mesh header */
+	uint32_t mhdr_len; /* mesh header len */
+	uint32_t mdbg; /* mesh debug */
+#define MESH_DBG_TX		0x1
+#define MESH_DBG_RX		0x2
+#define MESH_DBG_TXHDR_DUMP	0x4
+#define MESH_DBG_RXHDR_DUMP	0x8
+	uint32_t rx_filter; /* mesh rx filter */
+	bool mesh_tx; /*  drop disassocition frames if configured */
+#endif
+};
+
 /**
  * struct esp_extn - ESP (Estimated Service Parameters) extension
  * @air_time_fraction: Configured airtime fraction

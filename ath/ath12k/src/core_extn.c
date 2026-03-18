@@ -31,6 +31,7 @@
 #include <linux/device.h>
 #include "ini.h"
 #include "rropinfo.h"
+#include "qcn_extns/if_meta_hdr.h"
 
 struct ath12k_vif_sysfs_entry {
 	struct kobject kobj;
@@ -842,6 +843,13 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 	spin_lock_init(&ahvif->ath12k_vif_extn.data_lock);
 
 	INIT_LIST_HEAD(&ahvif->ath12k_vif_extn.peer_240mhz_list_extn);
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	ahvif->dp_vif.dp_extn.mhdr_len = sizeof(struct meta_hdr_s);
+	ahvif->dp_vif.dp_extn.mhdr = 0;
+	ahvif->dp_vif.dp_extn.mdbg = 0;
+	ahvif->dp_vif.dp_extn.mesh_tx = 0;
+#endif
 }
 
 void ath12k_mac_setup_radio_iface_comb_extn(

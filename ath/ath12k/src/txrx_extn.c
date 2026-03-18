@@ -1565,7 +1565,6 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 {
 	struct sk_buff *skb;
 	uint32_t data_len;
-	void *hdr;
 	struct ath12k_offchan_stat *stats = NULL;
 	int i;
 
@@ -1588,14 +1587,6 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 	if (!skb) {
 		ath12k_err(NULL, "Failed to allocate skb for vendor event\n");
 		return -ENOMEM;
-	}
-
-	/* Add the vendor data */
-	hdr = nla_nest_start(skb, NL80211_ATTR_VENDOR_DATA);
-	if (!hdr) {
-		ath12k_err(NULL, "Failed to start vendor data\n");
-		kfree_skb(skb);
-		return -EINVAL;
 	}
 
 	/* Add transaction ID for correlation */
@@ -1676,8 +1667,6 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		}
 		nla_nest_end(skb, pkt_status_nest);
 	}
-
-	nla_nest_end(skb, hdr);
 
 	ath12k_dbg(NULL, ATH12K_DBG_WMI,
 		   "OFFCHAN EVENT generated with transaction ID 0x%x, sending to userspace\n",

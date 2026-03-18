@@ -1252,7 +1252,7 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 	    rx->sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH)
 		return RX_CONTINUE;
 
-	if (!ieee80211_is_beacon(mgmt->frame_control))
+	if (!ieee80211_is_beacon(mgmt->frame_control) && !ieee80211_is_action(mgmt->frame_control))
 		return RX_DROP_MONITOR;
 
 	sta = ieee80211_find_sta(&rx->sdata->vif, mgmt->sa);

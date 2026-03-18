@@ -3735,34 +3735,16 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 
 	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
 	if (!dp_peer) {
-		/* NOTE: For MLO case, peer_id sent by IPA is not correct.
-		 * So try mac addr search
-		 */
-		spin_lock_bh(&ar->ah->dp_hw.peer_lock);
-		dp_peer = ath12k_dp_peer_find(&ar->ah->dp_hw, eth->h_source);
-		if (!dp_peer) {
-			ath12k_err(ab, "dp_peer is null (peer_id=%d mac=%pM)",
-				   peer_id, eth->h_source);
-			spin_unlock_bh(&ar->ah->dp_hw.peer_lock);
-			rcu_read_unlock();
-			goto drop;
-		}
-		peer_id = dp_peer->peer_id;
-		spin_unlock_bh(&ar->ah->dp_hw.peer_lock);
-
-		dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
-		if (!dp_peer) {
-			ath12k_err(ab, "dp_peer is null (peer_id=%d mac=%pM)",
-				   peer_id, eth->h_source);
-			rcu_read_unlock();
-			goto drop;
-		}
+		ath12k_err(ab, "dp_peer is null (peer_id=%d mac=%pM)", peer_id,
+			   eth->h_source);
+		rcu_read_unlock();
+		goto drop;
 	}
 
 	if (!dp_peer->is_authorized) {
-		ath12k_err(ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X",
+		ath12k_err(ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
 			   peer_id, eth->h_source, eth->h_dest,
-			   cpu_to_be16(eth->h_proto));
+			   cpu_to_be16(eth->h_proto), dp_peer->addr);
 		rcu_read_unlock();
 		goto drop;
 	}

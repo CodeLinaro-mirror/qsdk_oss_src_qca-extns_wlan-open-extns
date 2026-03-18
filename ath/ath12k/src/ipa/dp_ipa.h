@@ -843,10 +843,13 @@ void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
  */
 #define DP_IPA_SKB_CB_VDEV_ID		0
 #define DP_IPA_SKB_CB_DA_BCMC		1
-#define DP_IPA_SKB_CB_PEER_ID		5
+#define DP_IPA_SKB_CB_PEER_ID_LO	5
+#define DP_IPA_SKB_CB_PEER_ID_HI	6
 #define DP_IPA_SKB_CB_DEST_CHIP_ID	7
 #define DP_IPA_SKB_CB_DEST_CHIP_PMAC	8
 #define DP_IPA_SKB_CB_BCMC_MASK			0x2
+#define DP_IPA_SKB_CB_VDEV_ID_MASK	0x1F
+#define DP_IPA_SKB_CB_PEER_ID_HI_MASK	0x3F
 
 /**
  * ath12k_dp_ipa_skb_get_vdev_id() - Get vdev ID from skb control buffer
@@ -866,12 +869,20 @@ static inline u8 ath12k_dp_ipa_skb_get_vdev_id(struct sk_buff *skb)
  * @skb: socket buffer
  *
  * Extracts the peer ID stored in the skb control buffer by IPA component.
+ * Peer ID is 14 bits and stored in cb as follows -
+ *	Lower 8 bits at offset DP_IPA_SKB_CB_PEER_ID_LO
+ *	Higher 6 bits at offset DP_IPA_SKB_CB_PEER_ID_HI
  *
  * Return: peer ID as u16
  */
 static inline u16 ath12k_dp_ipa_skb_get_peer_id(struct sk_buff *skb)
 {
-	return (u16)skb->cb[DP_IPA_SKB_CB_PEER_ID];
+	u16 peer_id = skb->cb[DP_IPA_SKB_CB_PEER_ID_LO];
+
+	peer_id |= (skb->cb[DP_IPA_SKB_CB_PEER_ID_HI]
+		    & DP_IPA_SKB_CB_PEER_ID_HI_MASK) << 8;
+
+	return peer_id;
 }
 
 /**

@@ -2509,7 +2509,6 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 				    u8 hw_link_id, int event_type)
 {
 	struct sk_buff *skb;
-	void *hdr;
 
 	skb = cfg80211_vendor_event_alloc(wiphy, wdev,
 					  NLMSG_DEFAULT_SIZE,
@@ -2518,13 +2517,6 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 	if (!skb)
 		return -ENOMEM;
 
-	hdr = nla_nest_start(skb, NL80211_ATTR_VENDOR_DATA);
-
-	if (!hdr) {
-		printk("Failed to start vendor data\n");
-		kfree_skb(skb);
-		return -EINVAL;
-	}
 	if (nla_put_u8(skb, QCA_WLAN_VENDOR_FW_RECOVERY_HW_LINK_ID, hw_link_id)) {
 		kfree_skb(skb);
 		return -EINVAL;
@@ -2533,7 +2525,6 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 		kfree_skb(skb);
 		return -EINVAL;
 	}
-	nla_nest_end(skb, hdr);
 
 	ath12k_info(NULL, "send event to userspace hw_link_id %d event type is %d\n", hw_link_id, event_type );
 	cfg80211_vendor_event(skb, GFP_KERNEL);

@@ -6,6 +6,8 @@
 #ifndef CMN_EXTN_H
 #define CMN_EXTN_H
 
+#include "../../../include/net/cfg80211.h"
+
 struct ieee802_11_elems;
 enum ieee80211_conn_mode;
 struct ieee80211_conn_settings;
@@ -15,11 +17,16 @@ struct ieee80211_vif;
 struct ieee80211_local;
 struct link_sta_info;
 struct ieee80211_supported_band;
-struct cfg80211_bss;
-struct cfg80211_chan_def;
 struct ieee80211_link_sta;
+struct ieee80211_rx_data;
+struct wiphy;
+typedef unsigned int __bitwise ieee80211_rx_result;
 struct wireless_dev;
 struct net_device;
+struct sta_info;
+struct ieee80211_bss_conf;
+struct ieee80211_hw;
+struct ieee80211_sta;
 
 #define MESH_CAPS_VER1 0x8000
 #define MESH_CAPS_BW_OFFSET 0
@@ -31,6 +38,9 @@ struct net_device;
 #define MESH_CAPS_SHORT_PREAMBLE 0x2000
 
 #define MESH_PEER_MAX_LINKS 3
+
+#define MESH_PEER_TIMEOUT_CNT 3			/* Peer inactivity timeout threshold */
+#define MESH_PEER_INACTIVITY_PERIOD 20000	/* Peer inactivity timer in milliseconds */
 
 /**
  * enum ath12k_extn_vap_submode: VAP submode types for QCA WLAN vendor
@@ -116,8 +126,38 @@ struct ieee80211_bss_conf_extn {
 	struct mesh_bss_conf mesh_bss_caps;
 };
 
+struct ieee80211_if_ap_extn {
+	struct timer_list mesh_peer_cleanup_timer;
+	u16 num_mesh_peers;
+};
+
+/**
+ * struct mesh_peer_info - Mesh peer beacon intersection state
+ * @is_mesh_peer: True if this station is a configured mesh peer
+ * @beacon_ie_checksum: CRC32 checksum of critical IEs from last beacon
+ * @beacon_miss_count: Number of consecutive missed beacons
+ * @last_beacon_time: Timestamp of last received beacon (jiffies)
+ * @intersection_done: True if initial intersection completed successfully
+ * @intersect_attempts: Total number of intersection attempts
+ * @intersect_successes: Number of successful intersections
+ * @intersect_failures: Number of failed intersections
+ */
+struct mesh_peer_info {
+	bool is_mesh_peer;
+	u32 beacon_ie_checksum;
+	u8 beacon_miss_count;
+	unsigned long last_beacon_time;
+	bool intersection_done;
+	/* Statistics */
+	u32 intersect_attempts;
+	u32 intersect_successes;
+	u32 intersect_failures;
+};
+
 struct ieee80211_sta_extn {
-	bool mesh_local_peer;
+	struct mesh_peer_info peer_info;
+	struct wiphy_work update_cap_wk;
+	struct wiphy_work timeout_wk;
 };
 
 struct ieee80211_240mhz_vendor_oper_extn {
@@ -207,6 +247,15 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 			struct ieee80211_link_sta *link_sta)
 {
 	return NULL;
+}
+
+static inline int
+drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
+			       struct ieee80211_sub_if_data *sdata,
+			       struct sta_info *sta,
+			       struct link_sta_info *link_sta)
+{
+	return -1;
 }
 
 static inline void
@@ -339,6 +388,33 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 			struct ieee80211_vif *vif,
 			struct ieee80211_link_sta *link_sta);
 
+int
+drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
+			       struct ieee80211_sub_if_data *sdata,
+			       struct sta_info *sta,
+			       struct link_sta_info *link_sta);
+/* Mesh beacon intersection functions */
+ieee80211_rx_result
+ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx);
+
+void
+ieee80211_mesh_init_peer_work(struct ieee80211_sub_if_data *sdata,
+			      struct sta_info *sta_info);
+
+void
+ieee80211_mesh_peer_cleanup(struct wiphy *wiphy,
+			    struct ieee80211_sub_if_data *sdata,
+			    struct sta_info *sta_info);
+
+void
+ieee80211_mesh_peer_timeout_check(struct timer_list *t);
+
+void
+ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *work);
+
+void
+ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
+
 void
 ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
 					 struct link_sta_info *link_sta,
@@ -408,11 +484,18 @@ ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
  * 	This 240MHz capability information is obtained from Vendor NL Event from
  * 	hostapd during association of the STA. Use this information to update
  * 	the EHT phy capability info of the STA in the mac80211.
+ * @mesh_peer_update_caps_extn: When receiving beacons from the mesh peer, parse the
+ * 	relevant elements and update the mesh peer capabilities. Send the peer assoc
+ * 	WMI to update the existing peer capabilities to FW.
  */
 struct ieee80211_ops_extn {
 	struct ieee80211_240mhz_vendor_oper_extn*
 	(*get_240mhz_cap_extn) (struct ieee80211_vif *vif,
 				struct ieee80211_link_sta *link_sta);
+	int (*mesh_peer_update_caps_extn)(struct ieee80211_hw *hw,
+					  struct ieee80211_vif *vif,
+					  struct ieee80211_sta *sta,
+					  struct ieee80211_link_sta *link_sta);
 };
 
 #endif /* CMN_EXTN_H */

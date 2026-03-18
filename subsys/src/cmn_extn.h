@@ -469,6 +469,39 @@ void
 ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 			  struct ieee80211_sub_if_data *sdata,
 			  struct ieee80211_bss_conf *link_conf);
+
+/**
+ * struct ieee80211_vendor_mesh_ops - vendor mesh operation function pointers
+ *
+ * This structure contains function pointers for vendor mesh operations
+ * that can be used by external modules to manage mesh peers.
+ *
+ * @add_local_peer: Add a local mesh peer with specified configuration
+ * @authorize_peer: Authorize a mesh peer for data exchange
+ * @delete_local_peer: Delete a local mesh peer
+ */
+struct ieee80211_vendor_mesh_ops {
+       int (*add_local_peer)(struct wiphy *wiphy,
+                             struct ieee80211_vif *vif,
+                             struct ieee80211_mesh_config_params_extn *mesh_params);
+       int (*authorize_peer)(struct wiphy *wiphy,
+                             struct ieee80211_vif *vif,
+                             const u8 *peer_addr);
+       int (*delete_local_peer)(struct wiphy *wiphy,
+                                struct ieee80211_vif *vif,
+                                const u8 *peer_addr);
+};
+
+/**
+ * ieee80211_get_vendor_mesh_ops - Get vendor mesh operations structure
+ *
+ * Returns a pointer to the ieee80211_vendor_mesh_ops structure containing
+ * function pointers for mesh peer management operations.
+ *
+ * Return: Pointer to ieee80211_vendor_mesh_ops structure
+ */
+const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void);
+
 #endif /* CPTCFG_QCN_EXTN */
 
 /**

@@ -44,6 +44,7 @@ ath12k_get_240_mhz_cap_extn(struct ieee80211_vif *vif,
 	return NULL;
 }
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int ath12k_mac_op_mesh_peer_update_caps_extn(struct ieee80211_hw *hw,
 					     struct ieee80211_vif *vif,
 					     struct ieee80211_sta *sta,
@@ -108,10 +109,13 @@ out:
     kfree(peer_arg);
     return ret;
 }
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 static const struct ieee80211_ops_extn ath12k_ops_wifi7_extn = {
 	.get_240mhz_cap_extn = ath12k_get_240_mhz_cap_extn,
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	.mesh_peer_update_caps_extn = ath12k_mac_op_mesh_peer_update_caps_extn,
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
 
 void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab)

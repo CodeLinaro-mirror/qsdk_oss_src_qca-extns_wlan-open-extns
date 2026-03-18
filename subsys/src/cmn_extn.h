@@ -28,6 +28,7 @@ struct ieee80211_bss_conf;
 struct ieee80211_hw;
 struct ieee80211_sta;
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define MESH_CAPS_VER1 0x8000
 #define MESH_CAPS_BW_OFFSET 0
 #define MESH_CAPS_NSS_OFFSET 4
@@ -95,11 +96,6 @@ enum mesh_peer_bw {
 	MESH_BW_MAX,
 };
 
-struct bw240MHz_parameters_extn {
-	struct ieee80211_240mhz_vendor_oper_extn *eht_240mhz_cap;
-	u8 eht_240mhz_len;
-};
-
 struct mesh_bss_conf {
 	struct ieee80211_ht_cap *ht_cap;
 	struct ieee80211_vht_cap *vht_cap;
@@ -108,27 +104,6 @@ struct mesh_bss_conf {
 	struct ieee80211_eht_cap_elem *eht_cap;
 	u8 eht_capa_len;
 	u16 eml_cap;
-};
-
-struct link_station_parameters_extn {
-	struct bw240MHz_parameters_extn params_240MHz;
-};
-
-struct ieee802_11_elems_extn {
-	struct bw240MHz_parameters_extn params_240MHz;
-};
-
-struct ieee80211_bss_extn {
-	struct bw240MHz_parameters_extn params_240MHz;
-};
-
-struct ieee80211_bss_conf_extn {
-	struct mesh_bss_conf mesh_bss_caps;
-};
-
-struct ieee80211_if_ap_extn {
-	struct timer_list mesh_peer_cleanup_timer;
-	u16 num_mesh_peers;
 };
 
 /**
@@ -154,24 +129,6 @@ struct mesh_peer_info {
 	u32 intersect_failures;
 };
 
-struct ieee80211_sta_extn {
-	struct mesh_peer_info peer_info;
-	struct wiphy_work update_cap_wk;
-	struct wiphy_work timeout_wk;
-};
-
-struct ieee80211_240mhz_vendor_oper_extn {
-	u8 ccfs1;
-	u8 ccfs0;
-	u16 punctured;
-	u16 is5ghz240mhz          :1,
-	    bfmess320mhz          :3,
-	    numsound320mhz        :3,
-	    nonofdmaulmumimo320mhz:1,
-	    mubfmr320mhz          :1;
-	u8 mcs_map_320mhz[3];
-}__packed;
-
 struct ieee80211_mesh_peer_info {
 	u8 vap_mac[ETH_ALEN];
 	u8 peer_link_mac[ETH_ALEN];
@@ -186,6 +143,57 @@ struct ieee80211_mesh_config_params_extn {
 	u8 peer_mld_mac[ETH_ALEN];
 	struct ieee80211_mesh_peer_info peers[MESH_PEER_MAX_LINKS];
 } __packed;
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
+struct bw240MHz_parameters_extn {
+	struct ieee80211_240mhz_vendor_oper_extn *eht_240mhz_cap;
+	u8 eht_240mhz_len;
+};
+
+struct link_station_parameters_extn {
+	struct bw240MHz_parameters_extn params_240MHz;
+};
+
+struct ieee802_11_elems_extn {
+	struct bw240MHz_parameters_extn params_240MHz;
+};
+
+struct ieee80211_bss_extn {
+	struct bw240MHz_parameters_extn params_240MHz;
+};
+
+struct ieee80211_bss_conf_extn {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	struct mesh_bss_conf mesh_bss_caps;
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+};
+
+struct ieee80211_if_ap_extn {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	struct timer_list mesh_peer_cleanup_timer;
+	u16 num_mesh_peers;
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+};
+
+struct ieee80211_sta_extn {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	struct mesh_peer_info peer_info;
+	struct wiphy_work update_cap_wk;
+	struct wiphy_work timeout_wk;
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+};
+
+struct ieee80211_240mhz_vendor_oper_extn {
+	u8 ccfs1;
+	u8 ccfs0;
+	u16 punctured;
+	u16 is5ghz240mhz          :1,
+	    bfmess320mhz          :3,
+	    numsound320mhz        :3,
+	    nonofdmaulmumimo320mhz:1,
+	    mubfmr320mhz          :1;
+	u8 mcs_map_320mhz[3];
+}__packed;
 
 #ifndef CPTCFG_QCN_EXTN
 
@@ -249,15 +257,6 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 	return NULL;
 }
 
-static inline int
-drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
-			       struct ieee80211_sub_if_data *sdata,
-			       struct sta_info *sta,
-			       struct link_sta_info *link_sta)
-{
-	return -1;
-}
-
 static inline void
 ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
 					 struct link_sta_info *link_sta,
@@ -291,63 +290,9 @@ ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 	return;
 }
 
-static inline int
-ieee80211_mesh_ap_config_save(struct cfg80211_ap_settings *params,
-			      struct ieee80211_bss_conf *link_conf)
-{
-	return -1;
-}
-
-static inline void
-ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
-			struct ieee80211_sub_if_data *sdata,
-			struct cfg80211_ap_settings *params,
-			struct ieee80211_bss_conf *link_conf)
-{
-    return;
-}
-
-static inline void
-ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
-			  struct ieee80211_sub_if_data *sdata,
-			  struct ieee80211_bss_conf *link_conf)
-{
-    return;
-}
-
 static inline void
 ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 				  u32 *hw_reconf_flags)
-{
-	return;
-}
-
-static inline int
-ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
-				     struct ieee80211_vif *vif,
-				     struct ieee80211_mesh_config_params_extn *mesh_params)
-{
-	return -1;
-}
-
-static inline int
-ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy,
-				     struct ieee80211_vif *vif,
-				     const u8 *peer_addr)
-{
-	return -1;
-}
-
-static inline int
-ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
-					struct ieee80211_vif *vif,
-					const u8 *peer_addr)
-{
-	return -1;
-}
-
-static inline void
-ieee80211_free_mesh_vap_caps(struct ieee80211_bss_conf *bss_conf)
 {
 	return;
 }
@@ -388,33 +333,6 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 			struct ieee80211_vif *vif,
 			struct ieee80211_link_sta *link_sta);
 
-int
-drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
-			       struct ieee80211_sub_if_data *sdata,
-			       struct sta_info *sta,
-			       struct link_sta_info *link_sta);
-/* Mesh beacon intersection functions */
-ieee80211_rx_result
-ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx);
-
-void
-ieee80211_mesh_init_peer_work(struct ieee80211_sub_if_data *sdata,
-			      struct sta_info *sta_info);
-
-void
-ieee80211_mesh_peer_cleanup(struct wiphy *wiphy,
-			    struct ieee80211_sub_if_data *sdata,
-			    struct sta_info *sta_info);
-
-void
-ieee80211_mesh_peer_timeout_check(struct timer_list *t);
-
-void
-ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *work);
-
-void
-ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
-
 void
 ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
 					 struct link_sta_info *link_sta,
@@ -437,6 +355,7 @@ void ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 				       u32 *hw_reconf_flags);
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int
 ieee80211_mesh_ap_config_save(struct cfg80211_ap_settings *params,
 			      struct ieee80211_bss_conf *link_conf);
@@ -470,6 +389,33 @@ ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 			  struct ieee80211_sub_if_data *sdata,
 			  struct ieee80211_bss_conf *link_conf);
 
+int
+drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
+			       struct ieee80211_sub_if_data *sdata,
+			       struct sta_info *sta,
+			       struct link_sta_info *link_sta);
+/* Mesh beacon intersection functions */
+ieee80211_rx_result
+ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx);
+
+void
+ieee80211_mesh_init_peer_work(struct ieee80211_sub_if_data *sdata,
+			      struct sta_info *sta_info);
+
+void
+ieee80211_mesh_peer_cleanup(struct wiphy *wiphy,
+			    struct ieee80211_sub_if_data *sdata,
+			    struct sta_info *sta_info);
+
+void
+ieee80211_mesh_peer_timeout_check(struct timer_list *t);
+
+void
+ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *work);
+
+void
+ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
+
 /**
  * struct ieee80211_vendor_mesh_ops - vendor mesh operation function pointers
  *
@@ -501,6 +447,7 @@ struct ieee80211_vendor_mesh_ops {
  * Return: Pointer to ieee80211_vendor_mesh_ops structure
  */
 const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void);
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 #endif /* CPTCFG_QCN_EXTN */
 
@@ -525,10 +472,12 @@ struct ieee80211_ops_extn {
 	struct ieee80211_240mhz_vendor_oper_extn*
 	(*get_240mhz_cap_extn) (struct ieee80211_vif *vif,
 				struct ieee80211_link_sta *link_sta);
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	int (*mesh_peer_update_caps_extn)(struct ieee80211_hw *hw,
 					  struct ieee80211_vif *vif,
 					  struct ieee80211_sta *sta,
 					  struct ieee80211_link_sta *link_sta);
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
 
 #endif /* CMN_EXTN_H */

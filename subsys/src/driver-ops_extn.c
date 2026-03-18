@@ -12,10 +12,12 @@
 #include "../debugfs_netdev.h"
 #include "../../wireless/core.h"
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define SUPPORTED_RATES_LEN 8
 
 u8 supported_rates_5g6g[SUPPORTED_RATES_LEN] = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
 u8 supported_rates_2g[SUPPORTED_RATES_LEN] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 struct ieee80211_240mhz_vendor_oper_extn*
 drv_get_240mhz_cap_extn(struct ieee80211_local *local,
@@ -28,6 +30,7 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 	return NULL;
 }
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int
 drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
 			       struct ieee80211_sub_if_data *sdata,
@@ -1313,3 +1316,4 @@ const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void)
        return &vendor_mesh_ops;
 }
 EXPORT_SYMBOL(ieee80211_get_vendor_mesh_ops);
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

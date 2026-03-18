@@ -23,6 +23,9 @@
 #include "rropinfo.h"
 #include "dp_stats_extn.h"
 #include "../net/mac80211/ieee80211_i.h"
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+#include "mesh_util.h"
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
@@ -2191,6 +2194,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 	}
 
 	switch (wifi_params->command) {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	case QCA_NL80211_VENDOR_WIFI_GENERIC_SUBCMD_MESH_PARAMS:
 		if (wdev->vap_submode != QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
 			ath12k_err(NULL, "Received command for vap_submode: %d\n"
@@ -2206,6 +2210,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 			return ret;
 		}
 		break;
+#endif
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
 		return -EOPNOTSUPP;
@@ -3755,3 +3760,56 @@ clean:
 					   chansize, chan_lst);
 	return ret_val;
 }
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_vif *vif = NULL;
+	struct ieee80211_mesh_config_params_extn *mesh_params = NULL;
+	int ret = -1;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params) {
+		ath12k_err(NULL, "Mesh config params is NULL\n");
+		return -EINVAL;
+	}
+
+	if (!params->data || !params->data_len) {
+		ath12k_err(NULL, "Missing data for Mesh peer config\n");
+		return -EINVAL;
+	}
+
+	if (params->data_len < sizeof(struct ieee80211_mesh_config_params_extn)) {
+		ath12k_err(NULL, "Insufficient data length for mesh config\n");
+		return -EINVAL;
+	}
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif) {
+		ath12k_err(NULL, "vif pointer is NULL\n");
+		return -EINVAL;
+	}
+
+	mesh_params = (struct ieee80211_mesh_config_params_extn *)params->data;
+
+	switch (mesh_params->cmd_type) {
+	case ATH12K_EXTN_MESH_CONF_ADD_LOCAL_PEER:
+		ret = ieee80211_vendor_mesh_add_local_peer(wiphy, vif, mesh_params);
+		break;
+	case ATH12K_EXTN_MESH_CONF_ALLOW_DATA:
+		ret = ieee80211_vendor_mesh_authorize_peer(wiphy, vif, mesh_params->peer_mld_mac);
+		break;
+	case ATH12K_EXTN_MESH_CONF_DEL_LOCAL_PEER:
+		ret = ieee80211_vendor_mesh_delete_local_peer(wiphy, vif, mesh_params->peer_mld_mac);
+		break;
+	default:
+		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);
+		return -EINVAL;
+	}
+
+	return ret;
+}
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

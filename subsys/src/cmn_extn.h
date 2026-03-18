@@ -43,6 +43,7 @@ struct ieee80211_sta;
 #define MESH_PEER_TIMEOUT_CNT 3			/* Peer inactivity timeout threshold */
 #define MESH_PEER_INACTIVITY_PERIOD 20000	/* Peer inactivity timer in milliseconds */
 
+#define MESH_AID_WORDS ((2008 + 31) / 32)  /* 63 words for 2008 AIDs */
 /**
  * enum ath12k_extn_vap_submode: VAP submode types for QCA WLAN vendor
  *
@@ -172,6 +173,7 @@ struct ieee80211_if_ap_extn {
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	struct timer_list mesh_peer_cleanup_timer;
 	u16 num_mesh_peers;
+	u32 mesh_peer_aid[MESH_AID_WORDS];  /* Bitmap for AID allocation */
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
 

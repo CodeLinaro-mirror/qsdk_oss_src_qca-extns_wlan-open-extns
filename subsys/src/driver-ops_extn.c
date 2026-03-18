@@ -194,6 +194,9 @@ void ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
 		return;
 	}
 
+	memset(sdata->u.ap.if_ap_extn.mesh_peer_aid, 0,
+	       sizeof(sdata->u.ap.if_ap_extn.mesh_peer_aid));
+
 	if (ieee80211_mesh_ap_config_save(params, link_conf) < 0) {
 		printk(KERN_ERR "AP config save failed");
 		return;
@@ -222,6 +225,77 @@ void ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 	del_timer_sync(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
 }
 EXPORT_SYMBOL(ieee80211_mesh_ap_cleanup);
+
+/**
+ * ieee80211_mesh_get_aid - Get unique AID for mesh peer
+ * @sdata: Interface data
+ * @aid_out: Pointer to sta aid
+ *
+ * Replicates hostapd_get_aid() logic for mesh peers.
+ * Returns 0 on success, -1 on failure (no available AIDs)
+ */
+static int ieee80211_mesh_get_aid(struct ieee80211_sub_if_data *sdata, u16 *aid_out)
+{
+	int i, j = 32;
+	u16 aid;
+
+	if (!sdata || !aid_out)
+		return -1;
+
+	/* Find first available AID */
+	for (i = 0; i < MESH_AID_WORDS; i++) {
+		if (sdata->u.ap.if_ap_extn.mesh_peer_aid[i] == (u32) -1)
+			continue;  /* All AIDs in this word are used */
+
+		for (j = 0; j < 32; j++) {
+			if (!(sdata->u.ap.if_ap_extn.mesh_peer_aid[i] & BIT(j)))
+				break;  /* Found available AID */
+		}
+
+		if (j < 32)
+			break;
+	}
+
+	if (j == 32)
+		return -1;  /* No available AIDs */
+
+	aid = i * 32 + j + 1;  /* AID starts from 1, not 0 */
+
+	if (aid > 2007)
+		return -1;  /* AID out of valid range */
+
+	/* Mark AID as used */
+	sdata->u.ap.if_ap_extn.mesh_peer_aid[i] |= BIT(j);
+
+	*aid_out = aid;
+	printk("Assigned mesh peer AID %d\n", aid);
+
+	return 0;
+}
+
+/**
+ * ieee80211_mesh_free_aid - Free AID when mesh peer is removed
+ * @sdata: Interface data
+ * @aid: AID to free
+ */
+static void ieee80211_mesh_free_aid(struct ieee80211_sub_if_data *sdata,
+				    u16 aid)
+{
+	int i, j;
+
+	if (!sdata || aid == 0 || aid > 2007)
+		return;
+
+	/* Convert AID back to bitmap position */
+	aid--;  /* AID starts from 1, array index from 0 */
+	i = aid / 32;
+	j = aid % 32;
+
+	/* Clear the bit */
+	sdata->u.ap.if_ap_extn.mesh_peer_aid[i] &= ~BIT(j);
+
+	pr_debug("Freed mesh peer AID %d\n", aid + 1);
+}
 
 /**
  * ieee80211_mesh_peer_copy_bss_cap: Populate default capability information for the
@@ -656,7 +730,6 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	/* Listen interval 0 indicates the mesh peer will
 	 * never go to power save */
 	station_params->listen_interval = 0;
-	station_params->aid = 1;
 
 	if (mode < MESH_PREAMBLE_EHT)
 		station_params->link_sta_params.link_id = -1;
@@ -742,16 +815,26 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	if (ret)
 		goto cleanup;
 
+	ret = ieee80211_mesh_get_aid(sdata, &params.aid);
+	if (ret) {
+		pr_err("Failed to assign AID for mesh peer, no available AIDs\n");
+		ret = -ENOSPC;
+		goto cleanup;
+	}
+
 	/* Call mac80211's add_station via cfg80211_ops */
 	ret = rdev->ops->add_station(wiphy, dev, peer_addr, &params);
-	if (ret)
+	if (ret) {
+		ieee80211_mesh_free_aid(sdata, params.aid);
 		goto cleanup;
+	}
 
 	/* Get the created station */
 	rcu_read_lock();
 	sta = ieee80211_find_sta(vif, peer_addr);
 	if (!sta) {
 		rcu_read_unlock();
+		ieee80211_mesh_free_aid(sdata, params.aid);
 		ret = -ENOENT;
 		goto cleanup;
 	}
@@ -871,6 +954,7 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 	struct net_device *dev;
 	struct station_del_parameters params;
 	int ret;
+	u16 sta_aid = 0;
 
 	/* Validate input parameters */
 	if (!vif || !peer_addr)
@@ -905,6 +989,7 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 		rcu_read_unlock();
 		return -EINVAL;
 	}
+	sta_aid = sta->aid;
 	rcu_read_unlock();
 
 	/* Prepare deletion parameters */
@@ -916,6 +1001,9 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 
 	/* Call mac80211's del_station to remove the peer */
 	ret = rdev->ops->del_station(wiphy, dev, &params);
+
+	if (!ret)
+	    ieee80211_mesh_free_aid(sdata, sta_aid);
 
 	return ret;
 }

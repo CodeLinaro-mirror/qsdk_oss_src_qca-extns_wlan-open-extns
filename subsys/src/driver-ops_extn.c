@@ -1132,6 +1132,159 @@ ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work)
 	    printk("Failure to delete timed out peer[AID]: %d", sta_info->sta.aid);
 }
 
+static bool ieee80211_mesh_peer_bw_update(struct link_sta_info *link_sta,
+					  struct ieee802_11_elems *elems,
+					  enum nl80211_band band)
+{
+	enum ieee80211_sta_rx_bandwidth new_bw;
+	enum ieee80211_sta_rx_bandwidth old_bw = link_sta->pub->bandwidth;
+	enum ieee80211_sta_rx_bandwidth peer_oper_bw = IEEE80211_STA_RX_BW_320;
+	bool cap_changed = false;
+
+	if (elems->eht_operation) {
+		const struct ieee80211_eht_operation *eht_oper =
+			(struct ieee80211_eht_operation *)elems->eht_operation;
+		const struct ieee80211_eht_operation_info *eht_oper_info =
+			(const void *)eht_oper->optional;
+
+		if (eht_oper->params & IEEE80211_EHT_OPER_INFO_PRESENT) {
+			u8 ch_width = eht_oper_info->control &
+					IEEE80211_EHT_OPER_CHAN_WIDTH;
+
+			switch (ch_width) {
+			case IEEE80211_EHT_OPER_CHAN_WIDTH_320MHZ:
+				peer_oper_bw = IEEE80211_STA_RX_BW_320;
+				break;
+			case IEEE80211_EHT_OPER_CHAN_WIDTH_160MHZ:
+				peer_oper_bw = IEEE80211_STA_RX_BW_160;
+				break;
+			case IEEE80211_EHT_OPER_CHAN_WIDTH_80MHZ:
+				peer_oper_bw = IEEE80211_STA_RX_BW_80;
+				break;
+			case IEEE80211_EHT_OPER_CHAN_WIDTH_40MHZ:
+				peer_oper_bw = IEEE80211_STA_RX_BW_40;
+				break;
+			case IEEE80211_EHT_OPER_CHAN_WIDTH_20MHZ:
+			default:
+				peer_oper_bw = IEEE80211_STA_RX_BW_20;
+				break;
+			}
+		} else {
+			/* EHT operation Info not present, fall back based on band:
+			 * 6GHz - Use HE 6GHz operation info
+			 * 5GHz/2.4GHz - Use VHT/HT operation info
+			 */
+			if (band == NL80211_BAND_6GHZ && elems->he_operation)
+				goto parse_he_6ghz_operation;
+			else if (elems->vht_operation)
+				goto parse_vht_operation;
+			else if (elems->ht_operation)
+				goto parse_ht_operation;
+		}
+	} else if (elems->he_operation) {
+parse_he_6ghz_operation:
+		const struct ieee80211_he_operation *he_oper = elems->he_operation;
+
+		if (band == NL80211_BAND_6GHZ) {
+			if (he_oper->he_oper_params & IEEE80211_HE_OPERATION_6GHZ_OP_INFO) {
+				/* Calculate offset to retrieve HE 6GHz oper information
+				 *
+				 * Skip past mandatory HE operation fields:
+				 * HE operation parameters:	 3 bytes
+				 * HE BSS color information:	 1 byte
+				 * HE basic MCS-NSS information: 2 bytes
+				 *                             = 6 bytes
+				 */
+				const u8 *oper_6g_info = (const u8 *)he_oper + 6;
+				u8 control, ch_width;
+
+				/* Skip 3bytes if VHT Operation information is present */
+				if (he_oper->he_oper_params &
+				    IEEE80211_HE_OPERATION_VHT_OPER_INFO)
+					oper_6g_info += 3;
+
+				/* Skip 1byte if Co-Hosted BSS information is present */
+				if (he_oper->he_oper_params &
+				    IEEE80211_HE_OPERATION_CO_HOSTED_BSS)
+					oper_6g_info += 1;
+				/* 6GHz Operation Info structure (5 bytes):
+			 	 * Byte 0: Primary Channel
+			 	 * Byte 1: Control (bits 0-1 = Channel Width)
+			 	 * Byte 2: Center Freq Seg 0
+			 	 * Byte 3: Center Freq Seg 1
+			 	 * Byte 4: Minimum Rate
+			 	 */
+				control = oper_6g_info[1];
+				ch_width = control & IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH;
+
+				switch (ch_width) {
+				case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_160MHZ:
+					peer_oper_bw = IEEE80211_STA_RX_BW_160;
+					break;
+				case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_80MHZ:
+					peer_oper_bw = IEEE80211_STA_RX_BW_80;
+					break;
+				case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_40MHZ:
+					peer_oper_bw = IEEE80211_STA_RX_BW_40;
+					break;
+				case IEEE80211_HE_6GHZ_OPER_CTRL_CHANWIDTH_20MHZ:
+					peer_oper_bw = IEEE80211_STA_RX_BW_20;
+					break;
+				}
+			} else {
+				peer_oper_bw = IEEE80211_STA_RX_BW_20;
+			}
+		} else {
+			/* Non-6GHz HE operation, fall back to VHT or HT */
+			if (elems->vht_operation)
+				goto parse_vht_operation;
+			else if (elems->ht_operation)
+				goto parse_ht_operation;
+		}
+	} else if (elems->vht_operation) {
+parse_vht_operation:
+		const struct ieee80211_vht_operation *vht_oper = elems->vht_operation;
+
+		switch (vht_oper->chan_width) {
+		case IEEE80211_VHT_CHANWIDTH_160MHZ:
+		case IEEE80211_VHT_CHANWIDTH_80P80MHZ:
+			peer_oper_bw = IEEE80211_STA_RX_BW_160;
+			break;
+		case IEEE80211_VHT_CHANWIDTH_80MHZ:
+			peer_oper_bw = IEEE80211_STA_RX_BW_80;
+			break;
+		case IEEE80211_VHT_CHANWIDTH_USE_HT:
+		default:
+			/* fall back to HT operation */
+			if (elems->ht_operation)
+				goto parse_ht_operation;
+			else
+				peer_oper_bw = IEEE80211_STA_RX_BW_20;
+			break;
+		}
+	} else if (elems->ht_operation) {
+parse_ht_operation:
+		const struct ieee80211_ht_operation *ht_oper = elems->ht_operation;
+
+		if (ht_oper->ht_param & IEEE80211_HT_PARAM_CHAN_WIDTH_ANY)
+			peer_oper_bw = IEEE80211_STA_RX_BW_40;
+		else
+			peer_oper_bw = IEEE80211_STA_RX_BW_20;
+	}
+	link_sta->cur_max_bandwidth = peer_oper_bw;
+
+	new_bw = _ieee80211_sta_cur_vht_bw(link_sta, NULL);
+
+	if (new_bw != old_bw) {
+		link_sta->pub->bandwidth = new_bw;
+		cap_changed = true;
+		printk("Mesh peer bandwidth updated: %d -> %d (peer_oper=%d)\n",
+		       old_bw, new_bw, peer_oper_bw);
+	}
+
+	return cap_changed;
+}
+
 /**
  * ieee80211_mesh_beacon_intersect - Perform capability intersection
  *
@@ -1219,6 +1372,10 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 		if (memcmp(&old_eht_cap, &link_sta->pub->eht_cap, sizeof(old_eht_cap)))
 			cap_changed = true;
 	}
+
+	/* Update Operating BW for the peer */
+	if (ieee80211_mesh_peer_bw_update(link_sta, elems, band))
+		cap_changed = true;
 
 	/* Schedule deferred work queue to send the peer assoc WMI with updated caps */
 	if (cap_changed)

@@ -946,6 +946,16 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 			ath12k_err(NULL, "Failed to set RSSI/Rate breach mask\n");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_HYSTERESIS:
+		ret = ath12k_telemetry_set_hysteresis(HYSTERESIS_TYPE_RSSI, value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set RSSI hysteresis\n");
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RATE_HYSTERESIS:
+		ret = ath12k_telemetry_set_hysteresis(HYSTERESIS_TYPE_RATE, value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set rate hysteresis\n");
+		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
 		if (value > ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE) {
@@ -2394,6 +2404,22 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		ret = ath12k_telemetry_print_thresholds();
 		if (ret)
 			ath12k_err(NULL, "Failed to print RSSI/Rate thresholds\n");
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_HYSTERESIS:
+		ret = ath12k_telemetry_get_hysteresis(HYSTERESIS_TYPE_RSSI, value);
+		if (ret == -ENOTCONN) {
+			ath12k_err(NULL, "Telemetry agent not loaded\n");
+		} else if (ret == -EINVAL) {
+			ath12k_err(NULL, "Failed to get RSSI hysteresis\n");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RATE_HYSTERESIS:
+		ret = ath12k_telemetry_get_hysteresis(HYSTERESIS_TYPE_RATE, value);
+		if (ret == -ENOTCONN) {
+			ath12k_err(NULL, "Telemetry agent not loaded\n");
+		} else if (ret == -EINVAL) {
+			ath12k_err(NULL, "Failed to get rate hysteresis\n");
+		}
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:

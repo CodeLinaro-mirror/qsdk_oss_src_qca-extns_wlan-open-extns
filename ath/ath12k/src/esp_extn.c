@@ -276,7 +276,9 @@ void ath12k_esp_airtime_update_work_extn(struct wiphy *wiphy,
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
 			   "Checking arvif: is_started=%d ahvif=%p\n",
 			   arvif->is_started, arvif->ahvif);
-		if (!tmp_arvif && arvif->is_started) {
+		if (!tmp_arvif && arvif->is_started &&
+		    arvif->link_id < IEEE80211_MLD_MAX_NUM_LINKS &&
+		    arvif->ahvif->vdev_type != WMI_VDEV_TYPE_MONITOR) {
 			tmp_arvif = arvif;
 			break;
 		}
@@ -343,8 +345,8 @@ void ath12k_esp_airtime_update_work_extn(struct wiphy *wiphy,
 	nla_nest_end(vendor_event, esp_attr);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-		   "Send ESP airtime update: airtime %u\n",
-		   ar->ar_extn.esp.fw_esp_air_time);
+		   "Send ESP airtime update: airtime %u for link id %d\n",
+		   ar->ar_extn.esp.fw_esp_air_time, tmp_arvif->link_id);
 	cfg80211_vendor_event(vendor_event, GFP_KERNEL);
 	return;
 

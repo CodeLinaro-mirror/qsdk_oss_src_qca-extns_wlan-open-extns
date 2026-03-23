@@ -38,6 +38,8 @@ struct ipa_header {
 
 #define DEBRUIJIN_MAGIC_IDX 0x077CB531U
 #define DEBRUIJIN_MAGIC_SHIFT 27
+#define DP_IPA_BOARD_ID_FIRST	4099
+#define DP_IPA_BOARD_ID_SECOND	4
 
 #define NL80211_BAND_UNSPECIFIED ((enum nl80211_band)-1)
 
@@ -89,6 +91,8 @@ struct ipa_header {
 /* IPA RING defines */
 #define IPA_TCL_RING            3
 #define IPA_TX_COMP_RING        IPA_TCL_RING
+#define IPA_TCL_ALT_RING	2
+#define IPA_TX_COMP_ALT_RING	IPA_TCL_ALT_RING
 #define IPA_REO_DST_RING        3
 #define IPA_RX_REFILL_RING      IPA_REO_DST_RING
 
@@ -108,8 +112,10 @@ struct ipa_header {
 
 #define WLAN_IPA_AST_META_DATA_MASK htonl(0x0000001F)
 #define DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET	0
+#define WLAN_IPA_SESSION_ID_SHIFT 1
+#define DP_IPA_PDEV_ID_2G	1
 
-
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
 int ath12k_ipa_plugin_register_ops(struct ath12k_base *ab);
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab);
 

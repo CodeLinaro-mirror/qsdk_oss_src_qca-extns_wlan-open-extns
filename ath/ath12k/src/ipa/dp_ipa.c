@@ -13,6 +13,7 @@
 #endif
 
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
 
 /* global control for IPA status */
 atomic_t g_instances_added;
@@ -29,10 +30,20 @@ static const int deBruijnIdx[32] = {
 	26, 12, 18, 6, 11, 5, 10, 9
 };
 
+static bool ath12k_dp_ipa_is_alt_tx_required(struct ath12k_base *ab)
+{
+	int num_radio = ab->qmi.num_radios;
+
+	if (num_radio > 1)
+		return true;
+	else
+		return false;
+}
+
 /* IPA config update */
 void ath12k_dp_ipa_component_config_update(void)
 {
-	g_ipa_config->ipa_config = 0x6d;
+	g_ipa_config->ipa_config = 0x26d;
 
 	g_ipa_config->desc_size = 800;
 	g_ipa_config->txbuf_count = 512;
@@ -419,10 +430,162 @@ static void ath12k_dp_ipa_tx_ipa_uc_detach(struct ath12k_base *ab)
 	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
 }
 
+static int ath12k_dp_ipa_alt_tx_ipa_uc_attach(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct hal_srng *wbm_srng;
+	struct sk_buff *skb;
+	struct hal_srng_params srng_params;
+	struct ath12k_buffer_addr *ring_entry;
+	dma_addr_t buffer_paddr;
+	u32 tx_buffer_count;
+	u32 ring_base_align = 8;
+	int num_entries;
+	int retval = 0;
+	int max_alloc_count = 0;
+	u8 ring_id;
+	u8 rbm_id;
+
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+		return retval;
+
+	unsigned int uc_tx_buf_sz = IPA_UC_TX_BUF_SIZE_DEFAULT;
+	unsigned int alloc_size = uc_tx_buf_sz + ring_base_align - 1;
+
+	ring_id = dp->tx_ring[IPA_TX_COMP_ALT_RING].tcl_comp_ring.ring_id;
+	wbm_srng = &ab->hal.srng_list[ring_id];
+	memset(&srng_params, 0, sizeof(srng_params));
+	ath12k_hal_srng_get_params(ab, wbm_srng, &srng_params);
+	rbm_id = ab->hal.tcl_to_cmp_rbm_map[IPA_TX_COMP_ALT_RING].rbm_id;
+
+	num_entries = srng_params.num_entries;
+
+	max_alloc_count =
+		num_entries - IPA_WAR_WBM2SW_REL_RING_NO_BUF_ENTRIES;
+	if (max_alloc_count <= 0) {
+		ath12k_err(ab, "incorrect value for buffer count %u", max_alloc_count);
+		return -EINVAL;
+	}
+
+	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned =
+		kmalloc(num_entries *
+		sizeof(*ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned), GFP_KERNEL);
+	if (!ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned) {
+		ath12k_err(ab, "IPA WBM Ring Alt Tx buf pool vaddr alloc fail");
+		return -ENOMEM;
+	}
+
+	ath12k_info(ab, "IPA: ALLOCTE Alt tx buffer count:%d dev:%p dev_name:%s",max_alloc_count, dp->dev, dev_name(dp->dev));
+
+	spin_lock_bh(&wbm_srng->lock);
+	ath12k_hal_srng_access_begin(ab, wbm_srng);
+	for (tx_buffer_count = 0;
+		tx_buffer_count < max_alloc_count - 1; tx_buffer_count++) {
+		skb = dev_alloc_skb(alloc_size +
+				    IPA_TX_BUFFER_ALIGN_SIZE);
+		if (!skb)
+			break;
+
+		if (!IS_ALIGNED((unsigned long)skb->data,
+				IPA_TX_BUFFER_ALIGN_SIZE)) {
+			skb_pull(skb,
+				 PTR_ALIGN(skb->data, IPA_TX_BUFFER_ALIGN_SIZE) -
+				 skb->data);
+		}
+
+		buffer_paddr = dma_map_single(dp->dev, skb->data,
+				       skb->len + skb_tailroom(skb),
+				       DMA_BIDIRECTIONAL);
+		if (dma_mapping_error(dp->dev, buffer_paddr))
+			goto fail_free_skb;
+
+		ATH12K_SKB_CB(skb)->paddr = buffer_paddr;
+
+		ring_entry = ath12k_hal_srng_dst_get_next_hp_entry(ab, wbm_srng);
+		if (!ring_entry) {
+			ath12k_err(ab, "Failed to get WBM Alt TX completion ring next entry");
+			goto fail_dma_unmap;
+		}
+
+		ath12k_hal_rx_buf_addr_info_set(ring_entry, buffer_paddr, 0,
+						rbm_id);
+
+		ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned[tx_buffer_count]
+			= (void *)skb;
+	}
+
+	ath12k_hal_srng_access_end(ab, wbm_srng);
+	spin_unlock_bh(&wbm_srng->lock);
+
+	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt = tx_buffer_count;
+
+	if (tx_buffer_count) {
+		ath12k_info(ab, "IPA WDI Alt TX buffer: %d allocated", tx_buffer_count);
+	} else {
+		ath12k_err(ab, "No IPA WDI Alt TX buffer allocated!");
+		kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
+		ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
+		retval = -ENOMEM;
+	}
+	return retval;
+
+fail_dma_unmap:
+	dma_unmap_single(dp->dev, buffer_paddr, skb->len + skb_tailroom(skb),
+			 DMA_BIDIRECTIONAL);
+fail_free_skb:
+	spin_unlock_bh(&wbm_srng->lock);
+	dev_kfree_skb_any(skb);
+	kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
+	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
+	return retval;
+}
+
+static void ath12k_dp_ipa_alt_tx_ipa_uc_detach(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct sk_buff *skb;
+	int idx;
+
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+		return;
+
+	if (!ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned) {
+		ath12k_info(ab, "IPA ALT TX buffers are already detached");
+		return;
+	}
+
+	for (idx = 0; idx < ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt; idx++) {
+		skb = (struct sk_buff *)
+			ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned[idx];
+		if (!skb)
+			continue;
+		dma_unmap_single(dp->dev, ATH12K_SKB_CB(skb)->paddr,
+				 skb->len + skb_tailroom(skb),
+				 DMA_BIDIRECTIONAL);
+		dev_kfree_skb_any(skb);
+		ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned[idx] =
+						(void *)NULL;
+	}
+
+	kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
+	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
+
+	//TODO: fix this code
+	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
+	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
+}
+
 int dp_ipa_uc_attach(struct ath12k_base *ab)
 {
 	if (ath12k_dp_ipa_tx_ipa_uc_attach(ab))
 		return -ENOMEM;
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ab)) {
+		if (ath12k_dp_ipa_alt_tx_ipa_uc_attach(ab)) {
+			ath12k_dp_ipa_tx_ipa_uc_detach(ab);
+			return -ENOMEM;
+		}
+	}
 	return 0;
 }
 
@@ -603,11 +766,80 @@ static int dp_ipa_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 	return ret;
 }
 
+static int ath12k_dp_ipa_alt_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
+{
+	u32 index;
+	int ret = 0;
+	struct ath12k_wlan_ipa_priv *ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+	u32 tx_buffer_cnt;
+	struct sk_buff *skb;
+	u32 buf_len;
+
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+		return 0;
+
+	if (!ipa_is_ready()) {
+		ath12k_err(ab, "IPA is not READY");
+		return 0;
+	}
+
+	if (!ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned) {
+		ath12k_info(ab, "IPA ALT TX buffers are already mapped/unmapped:%d",create);
+		return 0;
+	}
+
+	tx_buffer_cnt = ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt;
+
+	ath12k_info(ab, "IPA: mapping %d Alt Tx buffer",tx_buffer_cnt);
+	for (index = 0; index < tx_buffer_cnt; index++) {
+		skb = (struct sk_buff *)
+			ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned[index];
+		if (!skb)
+			continue;
+
+		buf_len = skb_end_pointer(skb) - skb->data;
+		ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb, buf_len,
+							 create, ipa_ctx->hdl);
+	}
+
+	return ret;
+}
+
+static int ath12k_dp_ipa_tx_buf_smmu_map(struct ath12k_base *ab)
+{
+	struct ath12k_pci *pci_priv = ath12k_pci_priv(ab);
+	bool is_smmu_enabled = ab->ath12k_base_extn.ipa_ctx->is_smmu_enabled && pci_priv->ath12k_pci_extn.smmu_s1_enable;
+	int ret;
+
+	if (!is_smmu_enabled)
+		return 0;
+
+	ret = dp_ipa_tx_buf_smmu_map_unmap(ab, 1);
+	if (ret)
+		return ret;
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ab)) {
+		ret = ath12k_dp_ipa_alt_tx_buf_smmu_map_unmap(ab, 1);
+		if (ret)
+			dp_ipa_tx_buf_smmu_map_unmap(ab, 0);
+	}
+
+	return ret;
+}
+
 /* Done with SMMU mappings */
 
 int ath12k_dp_ipa_uc_detach(struct ath12k_base *ab)
 {
 	int ret;
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ab)) {
+		ret = ath12k_dp_ipa_alt_tx_buf_smmu_map_unmap(ab, 0);
+			if (ret)
+				return ret;
+	}
+	if (ath12k_dp_ipa_is_alt_tx_required(ab))
+		ath12k_dp_ipa_alt_tx_ipa_uc_detach(ab);
 
 	ret = dp_ipa_tx_buf_smmu_map_unmap(ab, 0);
 	if (ret)
@@ -645,6 +877,32 @@ static void dp_ipa_set_tx_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 	ath12k_hif_write32(ipa_ctx->ab, HAL_SEQ_WCSS_UMAC_WBM_REG +
 			   HAL_WBM2SW3_RING_HP_MSB_ADDR,
 			   hp_addr >> HAL_ADDR_MSB_REG_SHIFT);
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
+		hp_addr = ipa_ctx->ipa_uc_tx_alt_rsc.tx_comp_doorbell_paddr;
+
+		if (!hp_addr)
+			return;
+
+		ring_id = dp->tx_ring[IPA_TX_COMP_ALT_RING].tcl_comp_ring.ring_id;
+		wbm_srng = &ipa_ctx->ab->hal.srng_list[ring_id];
+
+		ath12k_info(ipa_ctx->ab, "Setting up the Alt TX completion DB address to wbm_ring_id:%d dp_ring_id:%d srng_ring_id:%d Base_addr:%x LSB_ADDR:%x MSB_ADDR:%x DB_MAP_addr:%llx",
+				IPA_TX_COMP_ALT_RING,
+				ring_id,
+				wbm_srng->ring_id,
+				HAL_SEQ_WCSS_UMAC_WBM_REG,
+				HAL_WBM2SW2_RING_HP_LSB_ADDR,
+				HAL_WBM2SW2_RING_HP_MSB_ADDR,
+				hp_addr);
+
+		ath12k_hif_write32(ipa_ctx->ab, HAL_SEQ_WCSS_UMAC_WBM_REG +
+				   HAL_WBM2SW2_RING_HP_LSB_ADDR,
+				   hp_addr & HAL_ADDR_LSB_REG_MASK);
+		ath12k_hif_write32(ipa_ctx->ab, HAL_SEQ_WCSS_UMAC_WBM_REG +
+				   HAL_WBM2SW2_RING_HP_MSB_ADDR,
+				   hp_addr >> HAL_ADDR_MSB_REG_SHIFT);
+	}
 }
 
 static void dp_ipa_set_rx_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
@@ -702,7 +960,24 @@ void dp_ipa_map_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 		BUG_ON(ret != 0);
 	}
 
-	/* TODO: handle ALT_TX and AT_RX pipe */
+	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
+		struct ipa_dp_tx_rsc *tx_alt_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_alt_rsc;
+		u32 tx_alt_comp_doorbell_dmaaddr;
+
+		if (!tx_alt_rsc->tx_comp_doorbell_paddr)
+			return;
+
+		tx_alt_rsc->tx_comp_doorbell_vaddr = ioremap(tx_alt_rsc->tx_comp_doorbell_paddr, 4);
+
+		if (pci_priv->ath12k_pci_extn.smmu_s1_enable) {
+			ret = ath12k_smmu_map(ipa_ctx->ab,
+						tx_alt_rsc->tx_comp_doorbell_paddr,
+						&tx_alt_comp_doorbell_dmaaddr,
+						sizeof(u32));
+			tx_alt_rsc->tx_comp_doorbell_paddr = tx_alt_comp_doorbell_dmaaddr;
+			BUG_ON(ret != 0);
+		}
+	}
 }
 
 static void dp_ipa_unmap_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
@@ -712,6 +987,19 @@ static void dp_ipa_unmap_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ct
 	struct ipa_dp_rx_rsc *rx_rsc = (struct ipa_dp_rx_rsc *)&ipa_ctx->ipa_uc_rx_rsc;
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ipa_ctx->ab);
 	int ret;
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
+		struct ipa_dp_tx_rsc *tx_alt_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_alt_rsc;
+
+		if (tx_alt_rsc->tx_comp_doorbell_paddr) {
+			if (pci_priv->ath12k_pci_extn.smmu_s1_enable) {
+				ret = ath12k_smmu_unmap(ipa_ctx->ab,
+							tx_alt_rsc->tx_comp_doorbell_paddr,
+							sizeof(u32));
+				BUG_ON(ret != 0);
+			}
+		}
+	}
 
 	if (pci_priv->ath12k_pci_extn.smmu_s1_enable) {
 		ret = ath12k_smmu_unmap(ipa_ctx->ab,
@@ -745,6 +1033,11 @@ static inline void dp_ipa_set_pipe_db(struct ath12k_wlan_ipa_priv *ipa_ctx,
 
 	tx_rsc->tx_comp_doorbell_paddr = out->tx_uc_db_pa;
 	rx_rsc->rx_ready_doorbell_paddr = out->rx_uc_db_pa;
+
+	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn()) {
+		struct ipa_dp_tx_rsc *tx_alt_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_alt_rsc;
+		tx_alt_rsc->tx_comp_doorbell_paddr = out->tx1_uc_db_pa;
+	}
 }
 
 /* Done with DB address */
@@ -773,6 +1066,23 @@ static void dp_ipa_tx_comp_ring_init_hp(struct ath12k_wlan_ipa_priv *ipa_ctx)
 
 	if (ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_vaddr)
 		*wbm_srng->u.dst_ring.hp_addr = cached_hp;
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
+		ring_id = dp->tx_ring[IPA_TX_COMP_ALT_RING].tcl_comp_ring.ring_id;
+		wbm_srng = &ipa_ctx->ab->hal.srng_list[ring_id];
+
+		wbm_srng->u.dst_ring.hp_addr =
+			(u32 __iomem *)ipa_ctx->ipa_uc_tx_alt_rsc.tx_comp_doorbell_vaddr;
+
+		cached_hp = wbm_srng->u.dst_ring.cached_hp;
+
+		ath12k_hif_write32(ipa_ctx->ab, HAL_SEQ_WCSS_UMAC_WBM_REG +
+				HAL_WBM2SW2_RING_HP_VAL,
+				cached_hp & HAL_ADDR_LSB_REG_MASK);
+
+		if (ipa_ctx->ipa_uc_tx_alt_rsc.tx_comp_doorbell_vaddr)
+			*wbm_srng->u.dst_ring.hp_addr = cached_hp;
+	}
 }
 
 int dp_ipa_enable_pipes(struct ath12k_wlan_ipa_priv *ipa_ctx)
@@ -924,6 +1234,89 @@ static int ath12k_ipa_get_shared_mem_info(struct ath12k_base *ab,
 	return 0;
 }
 
+static void ath12k_dp_ipa_tx_alt_ring_resource_setup(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct hal_srng *srng;
+	struct hal_srng_params params;
+	struct ipa_dp_tx_rsc *tx_alt_rsc = &ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc;
+	int ring_id;
+	struct device *dev = ab->dev;
+	struct iommu_domain *domain = ath12k_smmu_get_domain(ab);
+	struct scatterlist *sg;
+	int i, ret;
+	unsigned long base_pa_addr, offset;
+
+	ring_id = dp->tx_ring[IPA_TCL_ALT_RING].tcl_data_ring.ring_id;
+	srng = &ab->hal.srng_list[ring_id];
+	memset(&params, 0, sizeof(params));
+	ath12k_hal_srng_get_params(ab, srng, &params);
+	tx_alt_rsc->ipa_tcl_ring_base_paddr = params.ring_base_paddr;
+	tx_alt_rsc->ipa_tcl_ring_base_vaddr = params.ring_base_vaddr;
+	tx_alt_rsc->ipa_tcl_ring_size = (params.num_entries * srng->entry_size) << 2;
+
+	offset = (unsigned long)((unsigned long)(srng->u.src_ring.hp_addr_direct) - (unsigned long)ab->mem);
+	base_pa_addr = (unsigned long)ab->ath12k_base_extn.mem_pa;
+	tx_alt_rsc->ipa_tcl_hp_paddr = (dma_addr_t)(offset + base_pa_addr);
+
+	ath12k_info(ab, "TCL_HP_ADDR:%llx srng_HP_addr:%pad",tx_alt_rsc->ipa_tcl_hp_paddr, &srng->u.src_ring.hp_addr);
+
+	if (domain)
+		tx_alt_rsc->tcl_pa = iommu_iova_to_phys(domain, tx_alt_rsc->ipa_tcl_ring_base_paddr);
+	else
+		tx_alt_rsc->tcl_pa = tx_alt_rsc->ipa_tcl_ring_base_paddr;
+	ret = dma_get_sgtable(dev, &tx_alt_rsc->sgtable_tcl,
+				tx_alt_rsc->ipa_tcl_ring_base_vaddr,
+				tx_alt_rsc->tcl_pa, tx_alt_rsc->ipa_tcl_ring_size);
+	if (ret)
+	{
+		ath12k_err(ab, "Unable to get DMA sgtable");
+		return;
+	}
+
+	for_each_sg((&tx_alt_rsc->sgtable_tcl)->sgl, sg, (&tx_alt_rsc->sgtable_tcl)->nents, i)
+	{
+		if (!sg)
+			break;
+		sg->dma_address = sg_phys(sg);
+	}
+	i = 0;
+
+	ring_id = dp->tx_ring[IPA_TX_COMP_ALT_RING].tcl_comp_ring.ring_id;
+	srng = &ab->hal.srng_list[ring_id];
+	memset(&params, 0, sizeof(params));
+	ath12k_hal_srng_get_params(ab, srng, &params);
+	tx_alt_rsc->ipa_wbm_ring_base_paddr = params.ring_base_paddr;
+	tx_alt_rsc->ipa_wbm_ring_base_vaddr = params.ring_base_vaddr;
+	tx_alt_rsc->ipa_wbm_ring_size = (params.num_entries * srng->entry_size) << 2;
+	offset = (unsigned long)((unsigned long)(srng->u.dst_ring.tp_addr_direct) - (unsigned long)ab->mem);
+	base_pa_addr = (unsigned long)ab->ath12k_base_extn.mem_pa;
+	tx_alt_rsc->ipa_wbm_tp_paddr = (dma_addr_t)(offset + base_pa_addr);
+
+	tx_alt_rsc->ipa_wbm_hp_shadow_paddr = ath12k_hal_srng_get_hp_addr(ab, srng);
+
+	if (domain)
+		tx_alt_rsc->wbm_pa = iommu_iova_to_phys(domain, tx_alt_rsc->ipa_wbm_ring_base_paddr);
+	else
+		tx_alt_rsc->wbm_pa = tx_alt_rsc->ipa_wbm_ring_base_paddr;
+	ret = dma_get_sgtable(dev, &tx_alt_rsc->sgtable_wbm,
+				tx_alt_rsc->ipa_wbm_ring_base_vaddr,
+				tx_alt_rsc->wbm_pa, tx_alt_rsc->ipa_wbm_ring_size);
+	if (ret)
+	{
+		ath12k_err(ab, "Unable to get DMA sgtable");
+		return;
+	}
+
+	for_each_sg((&tx_alt_rsc->sgtable_wbm)->sgl, sg, (&tx_alt_rsc->sgtable_wbm)->nents, i)
+	{
+		if (!sg)
+			break;
+		sg->dma_address = sg_phys(sg);
+	}
+	i = 0;
+}
+
 void dp_ipa_get_resources(struct ath12k_base *ab)
 {
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
@@ -1009,6 +1402,9 @@ void dp_ipa_get_resources(struct ath12k_base *ab)
 		sg->dma_address = sg_phys(sg);
 	}
 	i = 0;
+
+	if (ath12k_dp_ipa_is_alt_tx_required(ab))
+		ath12k_dp_ipa_tx_alt_ring_resource_setup(ab);
 
 	/* IPA REO_DEST ring - HAL_REO_DST REO2SW4 */
 	ring_id = dp->reo_dst_ring[IPA_REO_DST_RING].ring_id;
@@ -1105,7 +1501,7 @@ void wlan_ipa_uc_loaded_handler(struct ath12k_wlan_ipa_priv *ipa_ctx)
 		return;
 	}
 	/* Setup the Tx buffer SMMU mapings */
-	status = dp_ipa_tx_buf_smmu_map_unmap(ipa_ctx->ab, 1);
+	status = ath12k_dp_ipa_tx_buf_smmu_map(ipa_ctx->ab);
 	if (status) {
 		ath12k_err(ipa_ctx->ab, "Failure to map Tx buffers for IPA(status=%d)",
 			status);
@@ -1449,8 +1845,21 @@ dp_ipa_setup_tx_smmu_params_pmac_id(struct ath12k_wlan_ipa_priv *ipa_ctx,
 				    struct ipa_wdi_pipe_setup_info_smmu *tx_smmu)
 {
 	u8 pmac_id = 0;
+	struct ath12k_base *ab = ipa_ctx->ab;
+	int num_radio = ab->qmi.num_radios;
 
-	/*TODO: handle pmac id from ath pov, in case of split phy, else it is always 0 in single wkk */
+	if (num_radio > 1)
+		pmac_id = 1;
+
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->rx_pmac_id = pmac_id;
+}
+
+static void
+ath12k_dp_ipa_setup_alt_tx_smmu_params_pmac_id(struct ath12k_wlan_ipa_priv *ipa_ctx,
+					       struct ipa_wdi_pipe_setup_info_smmu *tx_smmu)
+{
+	u8 pmac_id = 0;
+
 	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->rx_pmac_id = pmac_id;
 }
 
@@ -1550,6 +1959,42 @@ dp_ipa_wdi_tx_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	dp_ipa_setup_tx_smmu_params_pmac_id(ipa_ctx, tx_smmu);
 }
 
+static void
+ath12k_dp_ipa_wdi_alt_tx_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
+				     struct ipa_wdi_pipe_setup_info_smmu *tx_smmu)
+{
+	struct ipa_dp_tx_rsc *tx_alt_rsc = &ipa_ctx->ipa_uc_tx_alt_rsc;
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->client = IPA_CLIENT_WLAN2_CONS1;
+
+	memcpy(&(((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->transfer_ring_base),
+		     &tx_alt_rsc->sgtable_wbm,
+		     sizeof(struct sg_table));
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->transfer_ring_size =
+		tx_alt_rsc->ipa_wbm_ring_size;
+	/* WBM Tail Pointer Address */
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->transfer_ring_doorbell_pa =
+		tx_alt_rsc->ipa_wbm_tp_paddr;
+	dp_ipa_set_smmu_txr_rn_db_addr(ipa_ctx->ab, tx_smmu);
+
+	memcpy(&(((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->event_ring_base),
+		     &tx_alt_rsc->sgtable_tcl,
+		     sizeof(struct sg_table));
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->event_ring_size =
+		tx_alt_rsc->ipa_tcl_ring_size;
+	/* TCL Head Pointer Address */
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->event_ring_doorbell_pa =
+		tx_alt_rsc->ipa_tcl_hp_paddr;
+	dp_ipa_set_smmu_evt_rn_db_addr(ipa_ctx->ab, tx_smmu);
+
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->num_pkt_buffers =
+		tx_alt_rsc->alloc_tx_buf_cnt;
+	((struct ipa_wdi_pipe_setup_info_smmu *)(tx_smmu))->pkt_offset = 0;
+
+	dp_ipa_setup_tx_smmu_params_bank_id(ipa_ctx, tx_smmu);
+
+	ath12k_dp_ipa_setup_alt_tx_smmu_params_pmac_id(ipa_ctx, tx_smmu);
+}
+
 void
 dp_ipa_wdi_rx_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
 			  struct ipa_wdi_pipe_setup_info_smmu *rx_smmu)
@@ -1601,6 +2046,40 @@ dp_ipa_wdi_rx_smmu_params(struct ath12k_wlan_ipa_priv *ipa_ctx,
 		((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->mlo_chip_id = 0xFF;
 }
 /* DONE WDI TX/RX SMMU PARAMS settings */
+
+static void ath12k_dp_ipa_setup_tx_alt_pipe(struct ath12k_wlan_ipa_priv *ipa_ctx,
+					    struct ipa_wdi_conn_in_params *pipe_in)
+{
+	struct ipa_ep_cfg *tx_cfg;
+	struct ipa_wdi_pipe_setup_info *tx = NULL;
+	struct ipa_wdi_pipe_setup_info_smmu *tx_smmu = NULL;
+	struct ath12k_pci *pci_priv = ath12k_pci_priv(ipa_ctx->ab);
+	bool is_smmu_enabled = ipa_ctx->is_smmu_enabled && pci_priv->ath12k_pci_extn.smmu_s1_enable;
+
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+		return;
+
+	pipe_in->is_tx1_used = true;
+
+	if (is_smmu_enabled) {
+		tx_smmu = &pipe_in->u_tx1.tx_smmu;
+		tx_cfg = &tx_smmu->ipa_ep_cfg;
+	} else {
+		tx = &pipe_in->u_tx1.tx;
+		tx_cfg = &tx->ipa_ep_cfg;
+	}
+
+	tx_cfg->nat.nat_en = IPA_BYPASS_NAT;
+	tx_cfg->hdr.hdr_len = DP_IPA_UC_WLAN_TX_HDR_LEN;
+	tx_cfg->hdr.hdr_ofst_pkt_size_valid = 0;
+	tx_cfg->hdr.hdr_ofst_pkt_size = 0;
+	tx_cfg->hdr.hdr_additional_const_len = 0;
+	tx_cfg->mode.mode = IPA_BASIC;
+	tx_cfg->hdr_ext.hdr_little_endian = true;
+
+	if (is_smmu_enabled)
+		ath12k_dp_ipa_wdi_alt_tx_smmu_params(ipa_ctx, tx_smmu);
+}
 
 int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
@@ -1654,6 +2133,8 @@ int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 		dp_ipa_wdi_tx_smmu_params(ipa_ctx, tx_smmu);
 	/* TODO: implement non-smmu support */
 
+	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab))
+		ath12k_dp_ipa_setup_tx_alt_pipe(ipa_ctx, pipe_in);
 
 	/* RX PIPE Setup */
 	if (is_smmu_enabled) {
@@ -1775,7 +2256,7 @@ int wlan_ipa_uc_ol_init(struct ath12k_wlan_ipa_priv *ipa_ctx)
 			goto free_res;
 		}
 
-		ret = dp_ipa_tx_buf_smmu_map_unmap(ipa_ctx->ab, 1);
+		ret = ath12k_dp_ipa_tx_buf_smmu_map(ipa_ctx->ab);
 		if (ret) {
 			ath12k_err(ipa_ctx->ab, "Failure to map Tx buffers for IPA(status=%d)",
 				ret);
@@ -1856,6 +2337,11 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 	if (!ipa_ctx->is_db_ddr_mapped)
 		iounmap(ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_vaddr);
 
+	if (ath12k_dp_ipa_is_alt_tx_required(ab)) {
+		if (!ipa_ctx->is_db_ddr_mapped)
+			iounmap(ipa_ctx->ipa_uc_tx_alt_rsc.tx_comp_doorbell_vaddr);
+	}
+
 	if (true == ipa_ctx->uc_loaded) {
 		/* Unmap RX buffers first after disabling IPA pipes */
 		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
@@ -1892,6 +2378,7 @@ void ath12k_ipa_ready_cb(void *data)
 {
 	struct ath12k_wlan_ipa_priv *ipa_priv = (struct ath12k_wlan_ipa_priv *)data;
 	int ret;
+	static int idx;
 
 	ath12k_info(ipa_priv->ab, "ENTER in IPA code");
 	if (!ipa_priv)
@@ -1910,6 +2397,15 @@ void ath12k_ipa_ready_cb(void *data)
 	g_ipa_is_ready = true;
 	ipa_priv->instance_id = deBruijnIdx[(ipa_priv->ab->qmi.target.board_id * DEBRUIJIN_MAGIC_IDX) >> DEBRUIJIN_MAGIC_SHIFT];
 
+	if (ipa_priv->ab->qmi.target.board_id == DP_IPA_BOARD_ID_FIRST) {
+		ipa_priv->instance_id = 0;
+		idx = ipa_priv->ab->qmi.target.board_id;
+	}
+
+	if ((ipa_priv->ab->qmi.target.board_id == DP_IPA_BOARD_ID_SECOND) && (idx == DP_IPA_BOARD_ID_FIRST))
+		ipa_priv->instance_id = 1;
+
+	idx = ipa_priv->ab->qmi.target.board_id;
 	ret = ipa_obj_setup(ipa_priv);
 	if (ret) {
 		ath12k_err(ipa_priv->ab, "IPA Object setup failed");
@@ -2316,11 +2812,12 @@ wlan_ipa_is_two_tx_pipes_enabled(struct wlan_ipa_config *ipa_cfg)
 					  WLAN_IPA_TWO_TX_PIPES_ENABLE_MASK);
 }
 
-bool ipa_config_is_two_tx_pipes_enabled(void)
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void)
 {
 	return g_ipa_config ? (ipa_config_is_enabled() ?
 		wlan_ipa_is_two_tx_pipes_enabled(g_ipa_config) : 0) : 0;
 }
+EXPORT_SYMBOL(ath12k_dp_ipa_is_two_tx_pipes_enabled_extn);
 
 static inline char
 *wlan_ipa_get_iface_ifname(struct wlan_ipa_iface_context *iface)
@@ -2357,6 +2854,21 @@ bool ipa_config_is_vlan_enabled(void)
 bool ipa_is_wds_enabled(void)
 {
 	return g_ipa_config ? g_ipa_config->ipa_wds : 0;
+}
+
+static void
+ath12k_wlan_ipa_setup_iface_alt_pipe(struct wlan_ipa_iface_context *iface_context,
+				     bool alt_pipe)
+{
+	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+		iface_context->alt_pipe = alt_pipe;
+}
+
+static void
+ath12k_wlan_ipa_cleanup_iface_alt_pipe(struct wlan_ipa_iface_context *iface_context)
+{
+	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+		iface_context->alt_pipe = false;
 }
 
 int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, uint8_t session_id, bool mld_enabled)
@@ -2467,6 +2979,7 @@ void wlan_ipa_cleanup_iface(struct wlan_ipa_iface_context *iface_context,
 	iface_context->session_id = WLAN_IPA_MAX_SESSION;
 
 	memset(iface_context->mac_addr, 0, ETH_ALEN);
+	ath12k_wlan_ipa_cleanup_iface_alt_pipe(iface_context);
 
 	spin_unlock_bh(&iface_context->interface_lock);
 	iface_context->ifa_address = 0;
@@ -2545,6 +3058,7 @@ int wlan_ipa_setup_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	iface_context->device_mode = device_mode;
 	iface_context->session_id = session_id;
 	ether_addr_copy(iface_context->mac_addr, mac_addr);
+	ath12k_wlan_ipa_setup_iface_alt_pipe(iface_context, is_2g_iface);
 
 	spin_unlock_bh(&iface_context->interface_lock);
 
@@ -3100,7 +3614,8 @@ bool ath12k_ipa_get_is_tx1_used(struct ath12k_base *ab, u8 pdev_idx)
 
 	if (!pdev)
 		return false;
-	return ((ab->num_radios > 1) && (pdev->pdev_id == 0)) ? true : false;
+	// pdev_id starts from 1 and pdev_idx starts from 0
+	return ((ab->num_radios > 1) && (pdev->pdev_id == DP_IPA_PDEV_ID_2G)) ? true : false;
 }
 EXPORT_SYMBOL(ath12k_ipa_get_is_tx1_used);
 
@@ -3817,3 +4332,4 @@ drop:
 	dev_kfree_skb_any(skb);
 	return;
 }
+

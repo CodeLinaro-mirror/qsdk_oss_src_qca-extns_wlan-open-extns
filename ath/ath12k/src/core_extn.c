@@ -986,3 +986,27 @@ void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 {
 	ath12k_reconfig_esp_params_extn(ar);
 }
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+void ath12k_peer_assoc_h_auth_extn(struct ath12k_link_vif *arvif,
+				   struct ath12k_link_sta *arsta,
+				   struct ath12k_wmi_peer_assoc_arg *arg)
+{
+	struct ath12k_vif *ahvif = arvif->ahvif;
+	struct ath12k *ar = arvif->ar;
+
+	if (!arsta || !arg) {
+		ath12k_err(ar->ab, "Link STA/Peer assoc args is NULL\n");
+		return;
+	}
+
+	/* For statically added mesh peers, keys will be programmed by user.
+	 * Reset the need_ptk_4_way/need_gtk_2_way flag when sending peer assoc. */
+	if (ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+		arg->need_ptk_4_way = false;
+		arg->need_gtk_2_way = false;
+	}
+
+	return;
+}
+#endif

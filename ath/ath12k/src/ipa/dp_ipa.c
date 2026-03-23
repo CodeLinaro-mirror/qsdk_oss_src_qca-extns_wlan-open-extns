@@ -393,6 +393,11 @@ static void ath12k_dp_ipa_tx_ipa_uc_detach(struct ath12k_base *ab)
 	struct sk_buff *skb;
 	int idx;
 
+	if (!ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned) {
+		ath12k_info(ab, "IPA TX buffers are already detached");
+		return;
+	}
+
 	for (idx = 0; idx < ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.alloc_tx_buf_cnt; idx++) {
 		skb = (struct sk_buff *)
 			ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned[idx];
@@ -412,12 +417,6 @@ static void ath12k_dp_ipa_tx_ipa_uc_detach(struct ath12k_base *ab)
 	//TODO: fix this code 
 	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
 	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
-}
-
-int ath12k_dp_ipa_uc_detach(struct ath12k_base *ab)
-{
-	ath12k_dp_ipa_tx_ipa_uc_detach(ab);
-	return 0;
 }
 
 int dp_ipa_uc_attach(struct ath12k_base *ab)
@@ -571,6 +570,10 @@ static int dp_ipa_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 		ath12k_err(ab, "IPA is not READY");
 		return 0;
 	}
+	if (!ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned) {
+		ath12k_info(ab, "IPA TX buffers are already mapped/unmapped:%d",create);
+		return 0;
+	}
 
 	ath12k_info(ab, "IPA: mapping %d Tx buffer",tx_buffer_cnt);
 	for (index = 0; index < tx_buffer_cnt; index++) {
@@ -601,6 +604,19 @@ static int dp_ipa_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 }
 
 /* Done with SMMU mappings */
+
+int ath12k_dp_ipa_uc_detach(struct ath12k_base *ab)
+{
+	int ret;
+
+	ret = dp_ipa_tx_buf_smmu_map_unmap(ab, 0);
+	if (ret)
+		ath12k_err(ab, "Failure to unmap Tx buffers for IPA(status=%d)", ret);
+	else
+		ath12k_info(ab, "TX buffers unmapped to IPA");
+	ath12k_dp_ipa_tx_ipa_uc_detach(ab);
+	return 0;
+}
 
 /* Handle Doorbell address */
 
@@ -1850,13 +1866,6 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 			ath12k_info(ab, "RX buffers unmapped to IPA");
 
 		/* Unmap TX buffers and free TX pool */
-		ret = dp_ipa_tx_buf_smmu_map_unmap(ipa_ctx->ab, 0);
-		if (ret)
-			ath12k_err(ab, "Failure to unmap Tx buffers for IPA(status=%d)",
-				ret);
-		else
-			ath12k_info(ab, "TX buffers unmapped to IPA");
-
 		ath12k_dp_ipa_uc_detach(ab);
 
 		/* Cleanup IPA pipes and ring doorbell address*/

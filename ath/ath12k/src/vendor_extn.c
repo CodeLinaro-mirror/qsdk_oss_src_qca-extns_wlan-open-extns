@@ -1268,6 +1268,548 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 	return ret;
 }
 
+static inline enum srtype ath12k_extact_sr_type(void *data, uint32_t data_len)
+{
+	char srtype[SR_TYPE_LENGTH];
+
+	if (!data_len)
+		goto err;
+
+	if (data_len > SR_TYPE_LENGTH-1)
+		data_len = SR_TYPE_LENGTH-1;
+
+	memcpy(srtype, data, data_len);
+	srtype[data_len] = '\0';
+
+	if (strcmp(srtype, "non-srg") == 0)
+		return SR_TYPE_NON_SRG_OBSS_PD;
+	else if(strcmp(srtype, "srg") == 0)
+		return SR_TYPE_SRG_OBSS_PD;
+	else if(strcmp(srtype, "obss_pd") == 0)
+		return SR_TYPE_OBSS_PD;
+	else if(strcmp(srtype, "psr") == 0)
+		return SR_TYPE_PSR;
+
+err:
+	ath12k_err(NULL, "Wrong Spatial reuse type");
+	return SR_TYPE_MAX;
+}
+
+static inline int set_obss_pd_enable_bit(uint32_t *threshold,
+					 enum srtype type,
+					 uint8_t value)
+{
+	switch (type) {
+	case SR_TYPE_NON_SRG_OBSS_PD:
+		SET_SELF_OBSS_PD_ENABLE(NON_SRG, *threshold, value);
+		break;
+
+	case SR_TYPE_SRG_OBSS_PD:
+		SET_SELF_OBSS_PD_ENABLE(SRG, *threshold, value);
+		break;
+
+	default:
+		ath12k_err(NULL, "Invalid Spatial Reuse type");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int set_obss_pd_threshold(uint32_t *threshold,
+					enum srtype type,
+					uint8_t value)
+{
+	switch (type) {
+	case SR_TYPE_NON_SRG_OBSS_PD:
+		SET_SELF_OBSS_PD_THRESH(NON_SRG, *threshold, value);
+		break;
+
+	case SR_TYPE_SRG_OBSS_PD:
+		SET_SELF_OBSS_PD_THRESH(SRG, *threshold, value);
+		break;
+
+	default:
+		ath12k_err(NULL, "Invalid Spatial Reuse type");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int set_sr_per_ac(uint32_t *enable_bitmap,
+				enum srtype type, uint8_t value)
+{
+	switch (type) {
+	case SR_TYPE_OBSS_PD:
+		SET_SELF_SR_PER_AC(OBSS_PD, *enable_bitmap, value);
+		break;
+
+	case SR_TYPE_PSR:
+		SET_SELF_SR_PER_AC(PSR, *enable_bitmap, value);
+	break;
+
+	default:
+		ath12k_err(NULL, "Invalid Spatial Reuse type");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline void set_obss_pd_threshold_unit(uint32_t *threshold, uint8_t value)
+{
+	SR_SET_FIELD(*threshold, value, SELF_OBSS_PD_THRESH_UNITS);
+}
+
+static int ath12k_set_obss_pd_enable_bit(struct ath12k *ar, u32 enable,
+					 enum srtype type)
+{
+	int ret;
+	int temp_thresh;
+
+	if (enable > 1) {
+		ath12k_err(NULL, "OBSS_PD Threshold enable value should be either 0 or 1");
+		return -EINVAL;
+	}
+
+	SR_SET_FIELD(temp_thresh,
+		     IEEE80211_SELF_OBSS_PD_THRESHOLD_IN_DBM,
+		     SELF_OBSS_PD_THRESH_UNITS); //check for global
+
+	if (set_obss_pd_enable_bit(&temp_thresh, type, enable))
+		return -EINVAL;
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_CMD_OBSS_PD_THRESHOLD,
+					temp_thresh, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "Could not set obss pd thresh enable val");
+	} else {
+		ar->sr_cfg.obss_pd_thresh = temp_thresh;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_obss_pd_threshold(struct ath12k *ar, int32_t threshold,
+					enum srtype type)
+{
+	int ret;
+	int temp_thresh;
+
+	/* OBSS Packet Detect threshold bounds for Spatial Reuse feature.
+	 * The parameter value is programmed into the spatial reuse
+	 * register, to specify how low the background signal strength
+	 * from neighboring BSS cells must be, for this AP to
+	 * employ spatial reuse.
+	 */
+	if (threshold > SELF_OBSS_PD_UPPER_THRESH ||
+	    threshold < SELF_OBSS_PD_LOWER_THRESH) {
+		ath12k_err(NULL, "Threshold must in the range [%d, %d] (both inclusive)",
+			   SELF_OBSS_PD_LOWER_THRESH, SELF_OBSS_PD_UPPER_THRESH);
+		return -EINVAL;
+	}
+
+	SR_SET_FIELD(temp_thresh,
+		     IEEE80211_SELF_OBSS_PD_THRESHOLD_IN_DBM,
+		     SELF_OBSS_PD_THRESH_UNITS); //check for gloabal
+
+	if (set_obss_pd_threshold(&temp_thresh, type, threshold))
+		return -EINVAL;
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_CMD_OBSS_PD_THRESHOLD,
+					temp_thresh, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set cmd obss pd threshold failed");
+	} else {
+		ar->sr_cfg.obss_pd_thresh = temp_thresh;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_sr_per_ac(struct ath12k *ar, u32 value,
+				enum srtype type)
+{
+	int ret;
+	u32 temp_enable_sr;
+
+	if (value > 15) {
+		ath12k_err(NULL, "Value: %d is not a valid value for setting SR ACs",
+			   value);
+		return -EINVAL;
+	}
+
+	temp_enable_sr = IEEE80211_SR_ENABLE_PER_AC;
+	// check for global
+	if (set_sr_per_ac(&temp_enable_sr, type, value)) {
+		ath12k_err(NULL, "Unable to set SR per AC");
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_CMD_OBSS_PD_PER_AC,
+					temp_enable_sr, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "Error sending WMI for SR per AC");
+	} else {
+		ar->sr_cfg.enable_per_ac = temp_enable_sr;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_hesiga_sr15_enable(struct ath12k *ar,
+					      u8 enable)
+{
+	int ret;
+
+	if (enable > 1) {
+		ath12k_err(NULL, "HESIGA SR15 enable field can either be 0 or 1");
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_SR_PROHIBIT,
+					enable, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI send to set HESIGA SR15 failed, discarding configuration");
+	} else {
+		ar->sr_cfg.hesiga_sr15_enable = enable;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_psr_tx_enable(struct ath12k *ar,
+					 u8 enable)
+{
+	int ret;
+
+	if (enable > 1) {
+		ath12k_err(NULL, "PSR Tx enable field can either be 0 or 1");
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ENABLE_SRP,
+					enable, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI command failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.psr_tx_enable = enable;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_safety_margin_psr(struct ath12k *ar,
+					     u8 margin)
+{
+	int ret;
+
+	if (margin > 5) {
+		ath12k_err(NULL, "Safety margin should be in the range 0-5 (both inclusive)");
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SR_TRIGGER_MARGIN,
+					margin, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI command failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.safety_margin_psr = margin;
+	}
+
+	return ret;
+}
+
+static int ath12k_configure_obss_pd_ctrl_frame(struct ath12k *ar,
+					       u32 enable,
+					       int32_t threshold,
+					       enum srtype type)
+{
+	int ret;
+	int temp_thresh;
+
+	if (enable > 1) {
+		ath12k_err(NULL, "OBSS_PD Threshold enable value should be either 0 or 1");
+		return -EINVAL;
+	}
+
+	/* OBSS Packet Detect threshold bounds for Spatial Reuse feature.
+	 * The parameter value is programmed into the spatial reuse
+	 * register, to specify how low the background signal strength
+	 * from neighboring BSS cells must be, for this AP to
+	 * employ spatial reuse.
+	 */
+	if (threshold > SELF_OBSS_PD_UPPER_THRESH ||
+	    threshold < SELF_OBSS_PD_LOWER_THRESH) {
+		ath12k_err(NULL, "Threshold must in the range [%d, %d] (both inclusive)",
+			   SELF_OBSS_PD_LOWER_THRESH, SELF_OBSS_PD_UPPER_THRESH);
+        	return -EINVAL;
+	}
+
+	/* Read the existing configuration */
+	temp_thresh  = ar->sr_cfg.obss_pd_thresh_ctrl_frame;
+
+	/* Set the enable value */
+	if (set_obss_pd_enable_bit(&temp_thresh, type, enable))
+		return -EINVAL;
+
+	/* Set the threshold */
+	if (set_obss_pd_threshold(&temp_thresh, type, threshold))
+		return -EINVAL;
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_CTRL_FRAME_OBSS_PD_THRESHOLD,
+					temp_thresh, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set cmd obss pd threshold ctrl frame failed");
+	} else {
+		ar->sr_cfg.obss_pd_thresh_ctrl_frame = temp_thresh;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_sr_enable_truncation(struct ath12k *ar,
+						u8 enable)
+{
+	int ret;
+
+	if (enable > 1) {
+		ath12k_err(NULL, "SR truncate enable field can either be 0 or 1");
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_TRUNCATE_SR,
+					enable, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI command failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.enable_sr_truncate = enable;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_sr_obss_ppdu_min_dur(struct ath12k *ar,
+						u32 duration)
+{
+	int ret;
+
+	if (duration > MAX_SELF_SR_MIN_TXOP ) {
+		ath12k_err(NULL, "Enter a valid sr duration < Min: 0 -  Max: 65535 >");
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_OBSS_MIN_DURATION_CHECK_FOR_SR,
+					duration, ar->pdev->pdev_id);
+
+	if (ret) {
+		ath12k_err(NULL, "WMI command failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.min_obss_ppdu_dur_sr = duration;
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_srg_bss_color_bitmap(struct ath12k *ar,
+						u32 *bitmap)
+{
+	int ret;
+
+	ret = ath12k_wmi_pdev_set_srg_bss_color_bitmap(ar, bitmap);
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set self srg bitmap failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.srg_bss_color_bitmap[0] = bitmap[0];
+		ar->sr_cfg.srg_bss_color_bitmap[1] = bitmap[1];
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_srg_partial_bssid_bitmap(struct ath12k *ar,
+						    u32 *bitmap)
+{
+	int ret;
+
+	ret = ath12k_wmi_pdev_set_srg_patial_bssid_bitmap(ar, bitmap);
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set self srg bitmap failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.srg_partial_bssid_bitmap[0] = bitmap[0];
+		ar->sr_cfg.srg_partial_bssid_bitmap[1] = bitmap[1];
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_srg_obss_color_enable_bitmap(struct ath12k *ar,
+							u32 *bitmap)
+{
+	int ret;
+
+	ret = ath12k_wmi_pdev_srg_obss_color_enable_bitmap(ar, bitmap);
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set_self_srg_obss_color_enable_bitmap failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.srg_obss_color_enable_bitmap[0] = bitmap[0];
+		ar->sr_cfg.srg_obss_color_enable_bitmap[1] = bitmap[1];
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_srg_obss_bssid_enable_bitmap(struct ath12k *ar,
+							u32 *bitmap)
+{
+	int ret;
+
+	ret = ath12k_wmi_pdev_srg_obss_bssid_enable_bitmap(ar, bitmap);
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set_self_srg_obss_bssid_enable_bitmap failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.srg_obss_bssid_enable_bitmap[0] = bitmap[0];
+		ar->sr_cfg.srg_obss_bssid_enable_bitmap[1] = bitmap[1];
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_non_srg_obss_color_enable_bitmap(struct ath12k *ar,
+							    u32 *bitmap)
+{
+	int ret;
+
+	ret = ath12k_wmi_pdev_non_srg_obss_color_enable_bitmap(ar, bitmap);
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set_self_non_srg_obss_color_enable_bitmap failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.non_srg_obss_color_enable_bitmap[0] = bitmap[0];
+		ar->sr_cfg.non_srg_obss_color_enable_bitmap[1] = bitmap[1];
+	}
+
+	return ret;
+}
+
+static int ath12k_set_self_non_srg_obss_bssid_enable_bitmap(struct ath12k *ar,
+							    u32 *bitmap)
+{
+	int ret;
+
+	ret = ath12k_wmi_pdev_non_srg_obss_bssid_enable_bitmap(ar, bitmap);
+	if (ret) {
+		ath12k_err(NULL, "WMI send for set_self_non_srg_obss_bssid_enable_bitmap failed, discarding the configuration");
+	} else {
+		ar->sr_cfg.non_srg_obss_bssid_enable_bitmap[0] = bitmap[0];
+		ar->sr_cfg.non_srg_obss_bssid_enable_bitmap[1] = bitmap[1];
+	}
+
+	return ret;
+}
+
+static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
+					     u32 param, void *data,
+					     u32 data_len, u32 value,
+					     u32 flags, bool *reload)
+{
+	int ret = -1;
+	u32 bitmap[2];
+
+	switch (param) {
+	case SR_SELF_OBSS_PD_TX_ENABLE:
+		ret = ath12k_set_obss_pd_enable_bit(ar, value,
+						    ath12k_extact_sr_type(data, data_len));
+		break;
+	case SR_SELF_OBSS_PD_THRESHOLD_DB:
+		ret = ath12k_set_obss_pd_threshold(ar, value,
+						   ath12k_extact_sr_type(data, data_len));
+		break;
+	case SR_SELF_OBSS_PD_THRESHOLD_DBM:
+		ret = ath12k_set_obss_pd_threshold(ar, value,
+						   ath12k_extact_sr_type(data, data_len));
+		break;
+	case SR_SELF_ENABLE_PER_AC:
+		ret = ath12k_set_sr_per_ac(ar, value,
+					   ath12k_extact_sr_type(data, data_len));
+		break;
+	case SR_SELF_HESIGA_SR15_ENABLE:
+		ret = ath12k_set_self_hesiga_sr15_enable(ar,
+							 *(uint8_t*)data);
+		break;
+	case SR_SELF_PSR_TX_ENABLE:
+		ret = ath12k_set_self_psr_tx_enable(ar,
+						    *(uint8_t*)data);
+		break;
+	case SR_SELF_SAFETY_MARGIN_PSR:
+		ret = ath12k_set_self_safety_margin_psr(ar,
+							*(uint8_t*)data);
+		break;
+	case SR_SELF_OBSS_PD_CTRL_FRAME:
+		ret = ath12k_configure_obss_pd_ctrl_frame(ar, value,
+							  flags,
+							  ath12k_extact_sr_type(data, data_len));
+		break;
+	case SR_SELF_ENABLE_TRUNCATION:
+		ret = ath12k_set_self_sr_enable_truncation(ar,
+							   *(uint8_t*)data);
+		break;
+	case SR_SELF_OBSS_PPDU_MIN_DUR:
+		ret = ath12k_set_self_sr_obss_ppdu_min_dur(ar,
+							   *(uint8_t*)data);
+		break;
+	case SR_SELF_SRG_BSS_COLOR_BITMAP:
+		bitmap[0] = value;
+		memcpy(&bitmap[1], data, sizeof(u32));
+		ret = ath12k_set_self_srg_bss_color_bitmap(ar,
+							   bitmap);
+		break;
+	case SR_SELF_SRG_PARTIAL_BSSID_BITMAP:
+		bitmap[0] = value;
+		memcpy(&bitmap[1], data, sizeof(u32));
+		ret = ath12k_set_self_srg_partial_bssid_bitmap(ar,
+							       bitmap);
+		break;
+	case SR_SELF_SRG_OBSS_COLOR_ENABLE_BITMAP:
+		bitmap[0] = value;
+		memcpy(&bitmap[1], data, sizeof(u32));
+		ret = ath12k_set_self_srg_obss_color_enable_bitmap(ar,
+								   bitmap);
+		break;
+	case SR_SELF_SRG_OBSS_BSSID_ENABLE_BITMAP:
+		bitmap[0] = value;
+		memcpy(&bitmap[1], data, sizeof(u32));
+		ret = ath12k_set_self_srg_obss_bssid_enable_bitmap(ar,
+								   bitmap);
+		break;
+	case SR_SELF_NON_SRG_OBSS_COLOR_ENABLE_BITMAP:
+		bitmap[0] = value;
+		memcpy(&bitmap[1], data, sizeof(u32));
+		ret = ath12k_set_self_non_srg_obss_color_enable_bitmap(ar,
+								       bitmap);
+		break;
+	case SR_SELF_NON_SRG_OBSS_BSSID_ENABLE_BITMAP:
+		bitmap[0] = value;
+		memcpy(&bitmap[1], data, sizeof(u32));
+		ret = ath12k_set_self_non_srg_obss_bssid_enable_bitmap(ar,
+								       bitmap);
+		break;
+	default:
+		ath12k_info(NULL, "Unhandled SR config command");
+		return -EINVAL;
+	}
+
+	return ret;
+}
+
 /* Set radio level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_radio_params(struct ath12k *ar,
@@ -2511,6 +3053,52 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
         return ret;
 }
 
+int ath12k_vendor_set_wiphy_sr_params_extn(struct wiphy *wiphy,
+					   struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_hw *hw = NULL;
+	struct ath12k_hw *ah = NULL;
+	struct ath12k *ar = NULL;
+	u32 param = params->value;
+	void *data = params->data;
+	u32 data_len = params->data_len;
+	u32 value = params->length;
+	u32 flags = params->flags;
+	bool reload = false;
+	int ret;
+
+	lockdep_assert_wiphy(wiphy);
+
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	ah = hw->priv;
+
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index %u (valid range: 0..%u)\n",
+			   params->radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+		return -ENODATA;
+	}
+
+	ar = &ah->radio[params->radio_idx];
+	if (!ar) {
+		ath12k_err(NULL, "Failed to find ar\n");
+		return -ENODATA;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
+		   "ar: %p param: %d value: %d if: %d radio: %d\n",
+		   ar, param, value,
+		   params->ifindex, params->radio_idx);
+
+	ret = ath12k_vendor_set_sr_radio_params(ar, param, data, data_len,
+						value, flags, &reload);
+
+	if (!ret && reload)
+		ath12k_vendor_event_iface_reload(wiphy, params->radio_idx);
+
+	return ret;
+}
+
+
 static int ath12k_vendor_get_rssi_rate_threshold(u8 type, u64 *value)
 {
 	int threshold = ath12k_get_rssi_rate_threshold(type);
@@ -2715,6 +3303,215 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
         }
 
         return ret;
+}
+
+static inline int get_obss_pd_enable_bit(uint32_t threshold,
+					 enum srtype type,
+					 uint8_t *value)
+{
+	switch (type) {
+	case SR_TYPE_NON_SRG_OBSS_PD:
+		*value = GET_SELF_OBSS_PD_ENABLE(NON_SRG, threshold);
+	break;
+
+	case SR_TYPE_SRG_OBSS_PD:
+		*value = GET_SELF_OBSS_PD_ENABLE(SRG, threshold);
+	break;
+
+	default:
+		ath12k_err(NULL, "Invalid Spatial Reuse type");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int get_obss_pd_threshold(uint32_t threshold,
+					enum srtype type,
+					uint8_t *value)
+{
+	switch (type) {
+	case SR_TYPE_NON_SRG_OBSS_PD:
+		*value = GET_SELF_OBSS_PD_THRESH(NON_SRG, threshold);
+	break;
+
+	case SR_TYPE_SRG_OBSS_PD:
+		*value = GET_SELF_OBSS_PD_THRESH(SRG, threshold);
+	break;
+
+	default:
+		ath12k_err(NULL, "Invalid Spatial Reuse type");
+		return -1;
+	}
+
+	return 0;
+}
+
+static inline int get_sr_per_ac(uint32_t enable_bitmap,
+				enum srtype type,
+				uint8_t *value)
+{
+	switch (type) {
+	case SR_TYPE_OBSS_PD:
+		*value = GET_SELF_SR_PER_AC(OBSS_PD, enable_bitmap);
+	break;
+
+	case SR_TYPE_PSR:
+		*value = GET_SELF_SR_PER_AC(PSR, enable_bitmap);
+	break;
+
+	default:
+		ath12k_err(NULL, "Invalid Spatial Reuse type");
+	return -1;
+	}
+
+	return 0;
+}
+
+static int ath12k_vendor_get_sr_radio_params(struct ath12k *ar,
+					     u32 param,
+					     char value[], size_t length)
+{
+	uint8_t srg_val = 0, non_srg_val = 0;
+	uint8_t srg_enable = 0, non_srg_enable = 0;
+	uint8_t enable_per_ac_obss_pd = 0, enable_per_ac_psr = 0;
+
+	switch (param) {
+	case SR_SELF_OBSS_PD_TX_ENABLE:
+		if (get_obss_pd_enable_bit(ar->sr_cfg.obss_pd_thresh,
+					   SR_TYPE_NON_SRG_OBSS_PD,
+					   &non_srg_enable))
+			return -EINVAL;
+
+		if (get_obss_pd_enable_bit(ar->sr_cfg.obss_pd_thresh,
+					   SR_TYPE_SRG_OBSS_PD,
+					   &srg_enable))
+			return -EINVAL;
+
+		snprintf(value, length, " non-srg: %d, srg: %d",
+			 non_srg_enable, srg_enable);
+		break;
+
+	case SR_SELF_OBSS_PD_THRESHOLD_DB:
+		if (get_obss_pd_threshold(ar->sr_cfg.obss_pd_thresh,
+					  SR_TYPE_NON_SRG_OBSS_PD,
+					  &non_srg_val))
+			return -EINVAL;
+
+		if (get_obss_pd_threshold(ar->sr_cfg.obss_pd_thresh,
+					  SR_TYPE_SRG_OBSS_PD,
+					  &srg_val))
+			return -EINVAL;
+
+		snprintf(value, length, " non-srg: %d, srg: %d",
+			 (int8_t)non_srg_val, (int8_t)srg_val);
+		break;
+
+	case SR_SELF_OBSS_PD_THRESHOLD_DBM:
+		if (get_obss_pd_threshold(ar->sr_cfg.obss_pd_thresh,
+					  SR_TYPE_NON_SRG_OBSS_PD,
+					  &non_srg_val))
+			return -EINVAL;
+
+		if (get_obss_pd_threshold(ar->sr_cfg.obss_pd_thresh,
+					  SR_TYPE_SRG_OBSS_PD, &srg_val))
+			return -EINVAL;
+
+		snprintf(value, length, " non-srg: %d, srg: %d",
+			 (int8_t)non_srg_val, (int8_t)srg_val);
+		break;
+
+	case SR_SELF_ENABLE_PER_AC:
+		if (get_sr_per_ac(ar->sr_cfg.enable_per_ac, SR_TYPE_OBSS_PD,
+				  &enable_per_ac_obss_pd))
+			return -EINVAL;
+
+		if (get_sr_per_ac(ar->sr_cfg.enable_per_ac, SR_TYPE_PSR,
+				  &enable_per_ac_psr))
+			return -EINVAL;
+
+		snprintf(value, length, " obss_pd: 0x%X psr: 0x%X",
+			 enable_per_ac_obss_pd, enable_per_ac_psr);
+		break;
+
+	case SR_SELF_HESIGA_SR15_ENABLE:
+		snprintf(value, length, "%d", ar->sr_cfg.hesiga_sr15_enable);
+		break;
+
+	case SR_SELF_PSR_TX_ENABLE:
+		snprintf(value, length, "%d", ar->sr_cfg.psr_tx_enable);
+		break;
+
+	case SR_SELF_SAFETY_MARGIN_PSR:
+		snprintf(value, length, "%d", ar->sr_cfg.safety_margin_psr);
+		break;
+
+	case SR_SELF_ENABLE_TRUNCATION:
+		snprintf(value, length, "%d", ar->sr_cfg.enable_sr_truncate);
+		break;
+
+	case SR_SELF_OBSS_PPDU_MIN_DUR:
+		snprintf(value, length, "%u", ar->sr_cfg.min_obss_ppdu_dur_sr);
+		break;
+
+	case SR_SELF_OBSS_PD_CTRL_FRAME:
+		if (get_obss_pd_enable_bit(ar->sr_cfg.obss_pd_thresh_ctrl_frame,
+					   SR_TYPE_NON_SRG_OBSS_PD, &non_srg_enable))
+			return -EINVAL;
+
+		if (get_obss_pd_threshold(ar->sr_cfg.obss_pd_thresh_ctrl_frame,
+					  SR_TYPE_NON_SRG_OBSS_PD, &non_srg_val))
+			return -EINVAL;
+
+		if (get_obss_pd_enable_bit(ar->sr_cfg.obss_pd_thresh_ctrl_frame,
+					   SR_TYPE_SRG_OBSS_PD, &srg_enable))
+			return -EINVAL;
+
+		if (get_obss_pd_threshold(ar->sr_cfg.obss_pd_thresh_ctrl_frame,
+					  SR_TYPE_SRG_OBSS_PD, &srg_val))
+			return -EINVAL;
+
+		snprintf(value, length,
+			 " non-srg:{enable:%d threshold:%d},"
+			 " srg:{enable:%d threshold:%d}",
+			 non_srg_enable, (int8_t)non_srg_val,
+			 srg_enable, (int8_t)srg_val);
+		break;
+	case SR_SELF_SRG_BSS_COLOR_BITMAP:
+		snprintf(value, length, "0x%08X %08X",
+			 ar->sr_cfg.srg_bss_color_bitmap[1],
+			 ar->sr_cfg.srg_bss_color_bitmap[0]);
+		break;
+	 case SR_SELF_SRG_PARTIAL_BSSID_BITMAP:
+		snprintf(value, length, "0x%08X %08X",
+			 ar->sr_cfg.srg_partial_bssid_bitmap[1],
+			 ar->sr_cfg.srg_partial_bssid_bitmap[0]);
+		break;
+	case SR_SELF_SRG_OBSS_COLOR_ENABLE_BITMAP:
+		snprintf(value, length, "0x%08X %08X",
+			 ar->sr_cfg.srg_obss_color_enable_bitmap[1],
+			 ar->sr_cfg.srg_obss_color_enable_bitmap[0]);
+		break;
+	case SR_SELF_SRG_OBSS_BSSID_ENABLE_BITMAP:
+		snprintf(value, length, "0x%08X %08X",
+			 ar->sr_cfg.srg_obss_bssid_enable_bitmap[1],
+			 ar->sr_cfg.srg_obss_bssid_enable_bitmap[0]);
+		break;
+	case SR_SELF_NON_SRG_OBSS_COLOR_ENABLE_BITMAP:
+		snprintf(value, length, "0x%08X %08X",
+			 ar->sr_cfg.non_srg_obss_color_enable_bitmap[1],
+			 ar->sr_cfg.non_srg_obss_color_enable_bitmap[0]);
+		break;
+	case SR_SELF_NON_SRG_OBSS_BSSID_ENABLE_BITMAP:
+		snprintf(value, length, "0x%08X %08X",
+			 ar->sr_cfg.non_srg_obss_bssid_enable_bitmap[1],
+			 ar->sr_cfg.non_srg_obss_bssid_enable_bitmap[0]);
+		break;
+	default:
+		ath12k_err(NULL, "Unhandled SR config command");
+		return -EINVAL;
+	}
+	return 0;
 }
 
 /* Get radio level parameters */
@@ -3036,6 +3833,38 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 
         return ret;
 }
+
+int ath12k_vendor_get_wiphy_sr_params_extn(struct wiphy *wiphy,
+					   struct ath12k_wifi_generic_params *params,
+					   char value[], size_t length)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar = NULL;
+	uint8_t param = params->value;
+	int ret = -1;
+
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index %u (valid range: 0..%u)\n",
+			   params->radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+		return -ENODATA;
+	}
+
+	ar = &ah->radio[params->radio_idx];
+	if (!ar) {
+		ath12k_err(NULL, "Failed to find ar\n");
+		return -ENODATA;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
+		   "ar: %p param: %d if: %d radio: %d\n",
+		   ar, param, params->ifindex, params->radio_idx);
+	ret = ath12k_vendor_get_sr_radio_params(ar, param, value, length);
+
+	return ret;
+}
+
+
 
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)

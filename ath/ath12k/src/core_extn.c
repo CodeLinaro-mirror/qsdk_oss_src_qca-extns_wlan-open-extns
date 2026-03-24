@@ -29,7 +29,7 @@
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
 #include <linux/device.h>
-#include "../ini.h"
+#include "ini.h"
 #include "rropinfo.h"
 
 struct ath12k_vif_sysfs_entry {

@@ -6,7 +6,7 @@
 
 #include "../../core.h"
 #include "wmi.h"
-#include "../../ini.h"
+#include "../ini.h"
 
 void ath12k_wifi6_wmi_init_qcn9074(struct ath12k_base *ab,
 				   struct ath12k_wmi_resource_config_arg *config)

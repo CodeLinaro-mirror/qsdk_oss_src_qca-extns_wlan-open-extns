@@ -16,7 +16,7 @@
 #include "../debug.h"
 #include "../mac.h"
 #include "esp_extn.h"
-#include "../ini.h"
+#include "ini.h"
 #include "../cmn_defs.h"
 #include "../telemetry_agent_if.h"
 #include "dcs_extn.h"

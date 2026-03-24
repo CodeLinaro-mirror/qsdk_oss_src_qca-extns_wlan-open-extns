@@ -9,32 +9,47 @@ struct ath12k_smart_ant_ops *g_sa_ops;
 atomic_t ag_sa_init;
 static DEFINE_MUTEX(sa_ops_lock);
 
+bool ath12k_smart_ant_is_enable(struct ath12k_base *ab)
+{
+	struct sa_base_extn *sa_base;
+
+	if (!ab)
+		return false;
+	sa_base = &ab->ath12k_base_extn.sa_base;
+
+	return sa_base->sa_enable;
+}
+
 bool ath12k_smart_ant_enable(struct ath12k_base *ab)
 {
 	u8 wmi_sa_sw, wmi_sa_hw;
-	bool sa_enable;
 	u8 en_sa = 0, sa_sw_test = 0;
+	struct sa_base_extn *sa_base;
 
 	if (!ab)
 		return false;
 
+	sa_base = &ab->ath12k_base_extn.sa_base;
 	wmi_sa_sw =
 		test_bit(WMI_TLV_SERVICE_SMART_ANTENNA_SW_SUPPORT, ab->wmi_ab.svc_map);
 	wmi_sa_hw =
 		test_bit(WMI_TLV_SERVICE_SMART_ANTENNA_HW_SUPPORT, ab->wmi_ab.svc_map);
 	sa_get_cfg_flags(ab, &en_sa, &sa_sw_test);
 
-	sa_enable = (en_sa && wmi_sa_sw && wmi_sa_hw) || (sa_sw_test && wmi_sa_sw);
-	if (sa_enable)
+	if ((en_sa && wmi_sa_sw && wmi_sa_hw) || (sa_sw_test && wmi_sa_sw)) {
+		sa_base->sa_enable = true;
+		ath12k_info(ab, "SA enabled; Host: en:%d test:%d  FW: sw:%d "
+			    "hw:%d\n", en_sa, sa_sw_test, wmi_sa_sw, wmi_sa_hw);
+	} else {
 		ath12k_dbg(ab, ATH12K_DBG_ANY,
-			   "SA enabled; Host: en:%d test:%d  FW: sw:%d hw:%d\n",
+			   "SA disabled; Host: en:%d test:%d FW: sw:%d hw:%d\n",
 			   en_sa, sa_sw_test, wmi_sa_sw, wmi_sa_hw);
-	else
-		ath12k_dbg(ab, ATH12K_DBG_ANY,
-			   "SA disabled; Host: en:%d test:%d  FW: sw:%d hw:%d\n",
-			   en_sa, sa_sw_test, wmi_sa_sw, wmi_sa_hw);
+		sa_base->sa_enable = false;
+	}
+	sa_base->sa_support = en_sa;
+	sa_base->sa_sw_test = sa_sw_test;
 
-	return sa_enable;
+	return sa_base->sa_enable;
 }
 
 int ath12k_register_smart_ant_ops(struct ath12k_smart_ant_ops *ops)

@@ -308,6 +308,7 @@ struct ath12k_cbs_scan_params {
  * @he_mcs_12_13_peer_tx_cap: Intersected peer HE MCS 12/13 TX capability.
  *   Interpretation is same as @he_mcs_12_13_peer_rx_cap.
  * @he_mcs_12_13_radio_cap: Radio capability for HE MCS 12/13 support.
+ * @sa_ar: Smart Antenna extention for radio
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -326,6 +327,9 @@ struct ath12k_extn {
 	u16 he_mcs_12_13_peer_rx_cap;
 	u16 he_mcs_12_13_peer_tx_cap;
 	u16 he_mcs_12_13_radio_cap;
+
+	/* Smart Antenna Specific */
+	struct sa_ar_extn sa_ar;
 };
 
 /**
@@ -854,6 +858,8 @@ struct ath12k_base_extn {
 	u32 rx_buf_cnt;
 	dma_addr_t mem_pa;
 #endif
+	/* Smart Antenna Specific */
+	struct sa_base_extn sa_base;
 };
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,

@@ -4,8 +4,20 @@
 #ifndef ATH12K_SA_API_H
 #define ATH12K_SA_API_H
 
+#include "../vendor.h"
 #include "sa_api_defs.h"
 #include "sa_core.h"
+
+/**
+ * ath12k_smart_ant_is_enable - Query whether Smart Antenna is enabled
+ * @ab: ath12k base pointer
+ *
+ * Checks the cached enable state for Smart Antenna feature based on host cfg
+ * and firmware capability detection performed during wmi init.
+ *
+ * Return: true if Smart Antenna is enabled, false otherwise.
+ */
+bool ath12k_smart_ant_is_enable(struct ath12k_base *ab);
 
 /**
  * ath12k_smart_ant_enable - Evaluate and set Smart Antenna enable state

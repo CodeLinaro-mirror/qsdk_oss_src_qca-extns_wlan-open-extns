@@ -3831,6 +3831,15 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 	case ATH12K_EXTN_MESH_CONF_DEL_LOCAL_PEER:
 		ret = ieee80211_vendor_mesh_delete_local_peer(wiphy, vif, mesh_params->peer_mld_mac);
 		break;
+	case ATH12K_EXTN_MESH_CONF_SET_PEER_TIMEOUT_CNT:
+		ret = ieee80211_vendor_mesh_set_peer_timeout_cnt(wiphy, vif,
+								 mesh_params->mesh_peer_timeout_cnt);
+		break;
+	case ATH12K_EXTN_MESH_CONF_PEER_TIMEOUT_EN:
+		ret = ieee80211_vendor_mesh_peer_timeout_en(wiphy, vif,
+							    mesh_params->
+							    peer_cleanup_timer_enable);
+		break;
 	default:
 		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);
 		return -EINVAL;

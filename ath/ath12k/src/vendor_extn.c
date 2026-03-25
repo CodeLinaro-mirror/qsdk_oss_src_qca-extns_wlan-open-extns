@@ -10,6 +10,7 @@
 #include <net/cfg80211.h>
 #include <linux/byteorder/generic.h>
 #include <linux/ctype.h>
+#include <linux/delay.h>
 #include <linux/etherdevice.h>
 #include <linux/fs.h>
 #include <linux/limits.h>
@@ -26,6 +27,7 @@
 #include "ini.h"
 #include "../cmn_defs.h"
 #include "../telemetry_agent_if.h"
+#include "../reg.h"
 #include "dcs_extn.h"
 #include "rropinfo.h"
 #include "dp_stats_extn.h"
@@ -148,6 +150,229 @@ static u32 ath12k_vendor_get_radio_band_info(struct ath12k *ar)
 #define ATH12K_CONFIG_MAX_RX_DECAP_TYPE 2
 #define ATH12K_CHAN144_FREQ 5720
 
+#define ATH12K_REGDOM_UPDATE_TIMEOUT_MS	5000
+#define ATH12K_REGDOM_UPDATE_POLL_MS	20
+#define ATH12K_IFACE_RELOAD_LINKID_REGDOM	0xFE
+
+static int ath12k_vendor_wait_for_regdom_update(struct ath12k_hw *ah)
+{
+	unsigned long timeout;
+
+	if (!ah)
+		return -EINVAL;
+
+	timeout = jiffies + msecs_to_jiffies(ATH12K_REGDOM_UPDATE_TIMEOUT_MS);
+
+	while (time_before(jiffies, timeout)) {
+		if (READ_ONCE(ah->regd_updated))
+			return 0;
+
+		msleep(ATH12K_REGDOM_UPDATE_POLL_MS);
+	}
+
+	return -ETIMEDOUT;
+}
+
+static void ath12k_vendor_sync_alpha2_cache(struct ath12k_hw *ah)
+{
+	const struct ieee80211_regdomain *regd;
+	struct ath12k *tmp_ar;
+	u8 alpha2[REG_ALPHA2_LEN];
+	int i;
+
+	if (!ah || !ah->hw || !ah->hw->wiphy)
+		return;
+
+	rcu_read_lock();
+	regd = rcu_dereference(ah->hw->wiphy->regd);
+	if (!regd || !regd->alpha2[0] || !regd->alpha2[1]) {
+		rcu_read_unlock();
+		return;
+	}
+
+	alpha2[0] = regd->alpha2[0];
+	alpha2[1] = regd->alpha2[1];
+	rcu_read_unlock();
+
+	for_each_ar(ah, tmp_ar, i)
+		memcpy(tmp_ar->alpha2, alpha2, REG_ALPHA2_LEN);
+}
+
+static bool ath12k_vendor_regdom_changes(struct ieee80211_hw *hw,
+						 const char *alpha2)
+{
+	const struct ieee80211_regdomain *regd;
+
+	regd = rcu_dereference_rtnl(hw->wiphy->regd);
+	if (!regd)
+		return true;
+
+	return memcmp(regd->alpha2, alpha2, REG_ALPHA2_LEN) != 0;
+}
+
+static int ath12k_reg_set_country_locked(struct wiphy *wiphy,
+					 const char *alpha2)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_wmi_init_country_arg arg = {};
+	struct wmi_set_current_country_arg current_arg = {};
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	struct ath12k *ar = ath12k_ah_to_ar(ah, 0);
+	int i;
+	int ret = 0;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!alpha2)
+		return -EINVAL;
+
+	if (!IS_ENABLED(CPTCFG_ATH_REG_DYNAMIC_USER_REG_HINTS)) {
+		ath12k_dbg(ar ? ar->ab : NULL, ATH12K_DBG_REG,
+			   "Country Setting is not allowed\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (!ath12k_vendor_regdom_changes(hw, alpha2)) {
+		ath12k_dbg(ar ? ar->ab : NULL, ATH12K_DBG_REG,
+			   "Country is already set\n");
+		return 0;
+	}
+
+	ah->regd_updated = false;
+
+	for_each_ar(ah, ar, i) {
+		int cmd_ret;
+
+		if (ar->ab->hw_params->current_cc_support) {
+			memcpy(&current_arg.alpha2, alpha2, REG_ALPHA2_LEN);
+			memcpy(&ar->alpha2, &current_arg.alpha2, REG_ALPHA2_LEN);
+			cmd_ret = ath12k_wmi_send_set_current_country_cmd(ar,
+								  &current_arg);
+			if (cmd_ret)
+				ath12k_warn(ar->ab,
+					    "failed set current country code: %d\n",
+					    cmd_ret);
+		} else {
+			arg.flags = ALPHA_IS_SET;
+			memcpy(&arg.cc_info.alpha2, alpha2, REG_ALPHA2_LEN);
+			arg.cc_info.alpha2[REG_ALPHA2_LEN] = 0;
+
+			cmd_ret = ath12k_wmi_send_init_country_cmd(ar, &arg);
+			if (cmd_ret)
+				ath12k_warn(ar->ab,
+					    "failed set INIT Country code: %d\n",
+					    cmd_ret);
+		}
+
+		ath12k_mac_11d_scan_stop(ar);
+		ar->regdom_set_by_user = true;
+
+		if (cmd_ret && !ret)
+			ret = cmd_ret;
+	}
+
+	return ret;
+}
+
+static int ath12k_vendor_set_country_alpha2(struct wiphy *wiphy,
+						     const u8 *country)
+{
+	struct ieee80211_hw *hw;
+	struct ath12k_hw *ah;
+	char alpha2[REG_ALPHA2_LEN];
+	int ret = -1;
+
+	if (!country)
+		return -EINVAL;
+
+	alpha2[0] = country[0];
+	alpha2[1] = country[1];
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	ah = hw->priv;
+
+	if (!ath12k_vendor_regdom_changes(hw, alpha2)) {
+		ath12k_vendor_sync_alpha2_cache(ah);
+		return 0;
+	}
+
+	ret = ath12k_reg_set_country_locked(wiphy, alpha2);
+	if (ret) {
+		ath12k_err(NULL, "Failed to set country code %c%c: %d\n",
+			   alpha2[0], alpha2[1], ret);
+		return ret;
+	}
+
+	ret = ath12k_vendor_wait_for_regdom_update(ah);
+	if (ret)
+		ath12k_err(NULL,
+			   "Timed out waiting for regdom update for country %c%c: %d\n",
+			   alpha2[0], alpha2[1], ret);
+	else
+		ath12k_vendor_sync_alpha2_cache(ah);
+
+	return ret;
+}
+
+static int ath12k_vendor_set_country_id(struct ath12k *ar, u32 country_id)
+{
+	struct ath12k_wmi_init_country_arg arg = {};
+	struct ath12k_hw *ah;
+	struct ath12k *tmp_ar;
+	u16 country_code;
+	int cmd_ret;
+	int i;
+	int ret = 0;
+
+	if (!ar || !ar->ah)
+		return -EINVAL;
+
+	if (country_id > U16_MAX)
+		return -EINVAL;
+
+	country_code = (u16)country_id;
+	if (ar->country_id == country_code) {
+		ath12k_vendor_sync_alpha2_cache(ar->ah);
+		return 0;
+}
+
+	ah = ar->ah;
+	ah->regd_updated = false;
+
+	arg.flags = CC_IS_SET;
+	arg.cc_info.country_code = country_code;
+
+	for_each_ar(ah, tmp_ar, i) {
+		cmd_ret = ath12k_wmi_send_init_country_cmd(tmp_ar, &arg);
+		if (cmd_ret) {
+			ath12k_warn(tmp_ar->ab,
+				    "failed set INIT country id %u: %d\n",
+				    country_id, cmd_ret);
+			if (!ret)
+				ret = cmd_ret;
+			continue;
+		}
+
+		ath12k_mac_11d_scan_stop(tmp_ar);
+		tmp_ar->regdom_set_by_user = true;
+	}
+
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_wait_for_regdom_update(ah);
+	if (ret)
+		ath12k_err(NULL,
+			   "Timed out waiting for regdom update for country id %u: %d\n",
+			   country_id, ret);
+	else
+		ath12k_vendor_sync_alpha2_cache(ah);
+
+	if (!ret)
+		for_each_ar(ah, tmp_ar, i)
+			tmp_ar->country_id = country_code;
+
+	return ret;
+}
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -3171,7 +3396,8 @@ static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
 
 /* Set radio level parameters
  * set 'reload' to true to send reload event to userspace */
-static int ath12k_vendor_set_radio_params(struct ath12k *ar,
+static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
+					  struct ath12k *ar,
 					  u32 param, u32 value,
 					  struct ath12k_wifi_generic_params *params,
 					  bool *reload)
@@ -4312,7 +4538,7 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 		break;
 	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_WSI_BYPASS:
-	        int i, ret;
+	        int i;
 	        struct ath12k_hw_group *ag;
 	        struct ath12k_base *ab;
 	        struct ath12k_wsi_remap_work *w;
@@ -4388,6 +4614,25 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 	        queue_work(system_unbound_wq, &w->work);
 
 	        return 0;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2:
+		u8 alpha2[REG_ALPHA2_LEN];
+		bool regdom_changed;
+
+		alpha2[0] = (value >> 8) & 0xFF;
+		alpha2[1] = value & 0xFF;
+		regdom_changed = ath12k_vendor_regdom_changes(
+			wiphy_to_ieee80211_hw(wiphy), alpha2);
+		ret = ath12k_vendor_set_country_alpha2(wiphy, alpha2);
+		if (!ret && regdom_changed)
+			*reload = true;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID:
+		bool country_changed = ar->country_id != (u16)value;
+
+		ret = ath12k_vendor_set_country_id(ar, value);
+		if (!ret && country_changed)
+			*reload = true;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -6501,8 +6746,8 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
         struct ath12k_hw *ah = NULL;
         struct ath12k *ar = NULL;
         u32 param = params->value;
-        u32 *data = (u32 *)params->data;
-        u32 value = *data;
+        u32 value = 0;
+        u8 radio_idx = params->radio_idx;
         int ret = -1;
         bool reload = false;
 
@@ -6511,27 +6756,67 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
         hw = wiphy_to_ieee80211_hw(wiphy);
         ah = hw->priv;
 
-	if (params->radio_idx >= ah->num_radio) {
+	if ((param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2 ||
+	     param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID) &&
+	    radio_idx == INVALID_RADIO_INDEX)
+		radio_idx = 0;
+
+	if (radio_idx >= ah->num_radio) {
 		ath12k_err(NULL, "Invalid radio index %u (valid range: 0..%u)\n",
-			   params->radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+			   radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
 		return -ENODATA;
 	}
 
-        ar = &ah->radio[params->radio_idx];
+        ar = &ah->radio[radio_idx];
         if (!ar) {
 		ath12k_err(NULL, "Failed to find ar\n");
                 return -ENODATA;
         }
 
 	ath12k_dbg(NULL, ATH12K_DBG_CFG,
-                   "ar: %p param: %d value: %d if: %d radio: %d\n",
-                   ar, param, value,
-                   params->ifindex, params->radio_idx);
+		   "ar: %p param: %d value: %d if: %d radio: %d\n",
+		   ar, param, value,
+		   params->ifindex, radio_idx);
 
-        ret = ath12k_vendor_set_radio_params(ar, param, value, params, &reload);
+	if (!params->data || !params->data_len) {
+		ath12k_err(NULL, "Invalid params data for radio param: %d\n", param);
+		return -EINVAL;
+	}
 
-        if (!ret && reload)
-                ath12k_vendor_event_iface_reload(wiphy, params->radio_idx);
+	switch (param) {
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2:
+		if (params->data_len < REG_ALPHA2_LEN) {
+			ath12k_err(NULL, "Invalid country code data len: %u\n",
+				   params->data_len);
+			return -EINVAL;
+		}
+
+		value = ((u8 *)params->data)[0] << 8 | ((u8 *)params->data)[1];
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID:
+		if (params->data_len < sizeof(u32)) {
+			ath12k_err(NULL, "Invalid country id data len: %u\n",
+				   params->data_len);
+			return -EINVAL;
+		}
+
+		memcpy(&value, params->data, sizeof(value));
+		break;
+	default:
+		if (params->data_len < sizeof(u32)) {
+			ath12k_err(NULL, "Invalid data len: %u for radio param: %d\n",
+				   params->data_len, param);
+			return -EINVAL;
+		}
+
+		memcpy(&value, params->data, sizeof(value));
+		break;
+	}
+
+	ret = ath12k_vendor_set_radio_params(wiphy, ar, param, value, params,
+					     &reload);
+	if (!ret && reload)
+		ath12k_vendor_event_iface_reload(wiphy, params->radio_idx);
 
         return ret;
 }
@@ -8108,6 +8393,26 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		*value = ath12k_vendor_get_radio_band_info(ar);
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2:
+		ath12k_vendor_sync_alpha2_cache(ar->ah);
+		*value = ((u32)ar->alpha2[1] << 8) | ar->alpha2[0];
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID:
+		*value = ar->country_id;
+		if (!*value && ar->ah) {
+			struct ath12k *tmp_ar;
+			int i;
+
+			for_each_ar(ar->ah, tmp_ar, i) {
+				if (tmp_ar->country_id) {
+					*value = tmp_ar->country_id;
+					break;
+				}
+			}
+		}
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -8176,23 +8481,29 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
         struct ath12k_hw *ah = hw->priv;
         struct ath12k *ar = NULL;
         int param = params->value;
+        u8 radio_idx = params->radio_idx;
         int ret = -1;
 
-	if (params->radio_idx >= ah->num_radio) {
+	if ((param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2 ||
+	     param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID) &&
+	    radio_idx == INVALID_RADIO_INDEX)
+		radio_idx = 0;
+
+	if (radio_idx >= ah->num_radio) {
 		ath12k_err(NULL, "Invalid radio index %u (valid range: 0..%u)\n",
-			   params->radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+			   radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
 		return -ENODATA;
 	}
 
-        ar = &ah->radio[params->radio_idx];
-        if (!ar) {
+	ar = &ah->radio[radio_idx];
+	if (!ar) {
                 ath12k_err(NULL, "Failed to find ar\n");
                 return -ENODATA;
         }
 
         ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "ar: %p param: %d if: %d radio: %d\n",
-                   ar, param, params->ifindex, params->radio_idx);
+                   ar, param, params->ifindex, radio_idx);
         ret = ath12k_vendor_get_radio_params(ar, param, params, value);
 
         return ret;

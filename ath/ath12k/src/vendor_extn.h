@@ -193,6 +193,30 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 {
 	return -1;
 }
+
+int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy,
+					   struct wireless_dev *wdev,
+					   struct ath12k_wifi_generic_params *wifi_params)
+{
+    return -1;
+}
+
+/**
+ * ath12k_vendor_mesh_params_config_extn - Mesh peer configurations command handler.
+ *
+ * @wiphy - WIPHY pointer
+ * @wdev - Wireless dev pointer
+ * @params - Mesh peer configuration parameters
+ *
+ * Return 0 on success and -ve on failure
+ */
+static inline
+int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
+					  struct wireless_dev *wdev,
+					  struct ath12k_wifi_generic_params *params)
+{
+	return -1;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -280,7 +304,30 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     const void *data,
 				     int data_len);
+
+int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
+					   struct ath12k_wifi_generic_params *wifi_params);
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+/**
+ * ath12k_vendor_mesh_params_config_extn - Mesh peer configurations command handler.
+ *
+ * @wiphy - WIPHY pointer
+ * @wdev - Wireless dev pointer
+ * @params - Mesh peer configuration parameters
+ *
+ * Return 0 on success and -ve on failure
+ */
+int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     struct ath12k_wifi_generic_params *params);
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
 #endif /* CPTCFG_QCN_EXTN */
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+#define QCA_NL80211_VENDOR_WIFI_GENERIC_SUBCMD_MESH_PARAMS 436
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 typedef enum _CLI_DPD_STATUS {
     CLI_DPD_STATUS_DISABLED   =  0x0,  /* DPD disabled via CLI dpd_enable */

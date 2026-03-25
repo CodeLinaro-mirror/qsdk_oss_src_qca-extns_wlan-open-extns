@@ -5,3 +5,11 @@ config QCN_EXTN
 	help
 	  Select this option to enable QCN 802.11 extensions in ath12k
 	  drivers that support it..
+
+config QCN_EXTN_MESH_SUPPORT
+	bool "Enable QCN extensions mesh feature support"
+	depends on QCN_EXTN
+	default n
+	help
+	  Select this option to enable QCN extension mesh feature in ath12k
+	  drivers that support it..

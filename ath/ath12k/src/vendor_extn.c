@@ -22,6 +22,10 @@
 #include "dcs_extn.h"
 #include "rropinfo.h"
 #include "dp_stats_extn.h"
+#include "../net/mac80211/ieee80211_i.h"
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+#include "mesh_util.h"
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
@@ -414,6 +418,316 @@ static int ath12k_set_amsdu_aggr_size_arvif(struct ath12k_link_vif *arvif, u32 v
 				params.vdev_id, value, ret);
 		return ret;
 	}
+	return 0;
+}
+
+/**
+ * ath12k_is_valid_basic_rate - Validate if a bitrate is a basic rate
+ * @arvif: pointer to ath12k_link_vif structure
+ * @bitrate: bitrate value in units of 100 kbps (e.g., 60 = 6 Mbps)
+ *
+ * Returns: true if the bitrate is a valid basic rate, false otherwise
+ */
+static bool ath12k_is_valid_basic_rate(struct ath12k_link_vif *arvif, u32 bitrate)
+{
+	struct ieee80211_vif *vif = NULL;
+	struct ieee80211_bss_conf *bss_conf = NULL;
+	struct ieee80211_hw *hw = NULL;
+	const struct ieee80211_supported_band *sband = NULL;
+	struct cfg80211_chan_def def;
+	u8 rate_idx;
+	int i;
+
+	if (!arvif || !arvif->ar)
+		return false;
+
+	vif = ath12k_ahvif_to_vif(arvif->ahvif);
+	if (!vif)
+		return false;
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!bss_conf)
+		return false;
+
+	if (ath12k_mac_vif_link_chan(vif, arvif->link_id, &def))
+		return false;
+
+	hw = ath12k_ar_to_hw(arvif->ar);
+	sband = ieee80211_get_link_sband(wiphy_dereference(hw->wiphy,
+			vif_to_sdata(vif)->link[arvif->link_id]) ?:
+			&vif_to_sdata(vif)->deflink);
+	if (!sband)
+		return false;
+
+	/* Search for the bitrate in the supported rates table */
+	for (i = 0; i < sband->n_bitrates; i++) {
+		if (sband->bitrates[i].bitrate == bitrate) {
+			rate_idx = i;
+			/* Check if this rate index bit is set in basic_rates bitmap */
+			return !!(bss_conf->basic_rates & BIT(rate_idx));
+		}
+	}
+
+	/* Bitrate not found in supported rates */
+	return false;
+}
+
+/**
+ * ath12k_set_vdev_mcast_rate - Set multicast rate for a vdev
+ * @arvif: pointer to ath12k_link_vif structure
+ * @bitrate: bitrate in units of 100 kbps (e.g., 60 = 6 Mbps)
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_set_vdev_mcast_rate(struct ath12k_link_vif *arvif, u32 bitrate)
+{
+	struct ieee80211_vif *vif = NULL;
+	struct ieee80211_bss_conf *bss_conf = NULL;
+	struct ieee80211_hw *hw = NULL;
+	const struct ieee80211_supported_band *sband = NULL;
+	struct cfg80211_chan_def def;
+	enum nl80211_band band;
+	struct ath12k *ar;
+	u32 rate;
+	u8 rate_idx;
+	int ret;
+
+	if (!arvif || !arvif->ar)
+		return -EINVAL;
+
+	ar = arvif->ar;
+
+	/* Validate that the provided bitrate is a basic rate */
+	if (!ath12k_is_valid_basic_rate(arvif, bitrate)) {
+		ath12k_err(ar->ab, "Invalid mcast rate %u not a basic rate\n", bitrate);
+		return -EINVAL;
+	}
+
+	vif = ath12k_ahvif_to_vif(arvif->ahvif);
+	if (!vif) {
+		ath12k_err(ar->ab, "unable to get vif\n");
+		return -EINVAL;
+	}
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!bss_conf) {
+		ath12k_err(ar->ab, "unable to access bss link conf\n");
+		return -EINVAL;
+	}
+
+	/* Get the current operating band */
+	if (ath12k_mac_vif_link_chan(vif, arvif->link_id, &def)) {
+		ath12k_err(ar->ab, "unable to get channel def\n");
+		return -EINVAL;
+	}
+	band = def.chan->band;
+
+	hw = ath12k_ar_to_hw(ar);
+	sband = ieee80211_get_link_sband(wiphy_dereference(hw->wiphy,
+			vif_to_sdata(vif)->link[arvif->link_id]) ?:
+			&vif_to_sdata(vif)->deflink);
+	if (!sband) {
+		ath12k_err(ar->ab, "supported band not found\n");
+		return -EINVAL;
+	}
+
+	/* Convert bitrate to rate index using existing helper */
+	rate_idx = ath12k_mac_bitrate_to_idx(sband, bitrate);
+
+	/* Convert bitrate to firmware rate format using existing helper */
+	rate = ath12k_mac_get_rate_hw_value(bitrate);
+	if (rate == -EINVAL) {
+		ath12k_err(ar->ab, "Invalid bitrate %u\n", bitrate);
+		return -EINVAL;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+		   "mac vdev %d setting mcast_rate %x (bitrate %u)\n",
+		   arvif->vdev_id, rate, bitrate);
+
+	/* Send multicast rate to firmware */
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					    WMI_VDEV_PARAM_MCAST_DATA_RATE, rate);
+	if (ret) {
+		ath12k_err(ar->ab,
+			    "failed to set mcast rate on vdev %i: %d\n",
+			    arvif->vdev_id, ret);
+		return ret;
+	} else {
+		ath12k_err(ar->ab,"Set mcast rate successful for vdev %i",
+				arvif->vdev_id);
+	}
+
+	/*
+	 * Only update mac80211's mcast_rate after firmware successfully accepts it.
+	 * mac80211 stores mcast_rate as (rate_index + 1), where 0 means disabled.
+	 */
+	bss_conf->mcast_rate[band] = rate_idx + 1;
+
+	return 0;
+}
+
+/**
+ * ath12k_get_vdev_mcast_rate - Get multicast rate for a vdev
+ * @arvif: pointer to ath12k_link_vif structure
+ * @value: pointer to store the retrieved bitrate (in units of 100 kbps)
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_get_vdev_mcast_rate(struct ath12k_link_vif *arvif, u64 *value)
+{
+	struct ieee80211_bss_conf *bss_conf;
+	struct cfg80211_chan_def def;
+	struct ieee80211_vif *vif;
+	struct ieee80211_hw *hw;
+	const struct ieee80211_supported_band *sband;
+	enum nl80211_band band;
+	int mcast_idx;
+
+	if (!arvif || !arvif->ar || !value)
+		return -EINVAL;
+
+	vif = ath12k_ahvif_to_vif(arvif->ahvif);
+	if (!vif)
+		return -EINVAL;
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!bss_conf)
+		return -EINVAL;
+
+	/* Get the current operating band */
+	if (ath12k_mac_vif_link_chan(vif, arvif->link_id, &def))
+		return -EINVAL;
+
+	if (!def.chan || def.chan->band >= NUM_NL80211_BANDS)
+		return -EINVAL;
+
+	band = def.chan->band;
+	mcast_idx = bss_conf->mcast_rate[band];
+
+	/* mcast_idx of 0 means default/disabled */
+	if (mcast_idx == 0) {
+		*value = 0;
+		return 0;
+	}
+
+	hw = ath12k_ar_to_hw(arvif->ar);
+	if (!hw || !hw->wiphy)
+		return -EINVAL;
+
+	sband = ieee80211_get_link_sband(wiphy_dereference(hw->wiphy,
+			vif_to_sdata(vif)->link[arvif->link_id]) ?:
+			&vif_to_sdata(vif)->deflink);
+	if (!sband || !sband->bitrates)
+		return -EINVAL;
+
+	/* mcast_rate is stored as (rate_idx + 1), so subtract 1 to get actual index */
+	if ((mcast_idx - 1) >= sband->n_bitrates) {
+		ath12k_err(arvif->ar->ab,
+			   "Invalid mcast rate index %d (max=%d)\n",
+			   mcast_idx - 1, sband->n_bitrates - 1);
+		return -EINVAL;
+	}
+
+	*value = sband->bitrates[mcast_idx - 1].bitrate;
+
+	ath12k_dbg(arvif->ar->ab, ATH12K_DBG_MAC,
+		   "mac vdev %d get mcast_rate bitrate=%llu (index=%d)\n",
+		   arvif->vdev_id, *value, mcast_idx - 1);
+
+	return 0;
+}
+
+/**
+ * ath12k_get_vdev_bcast_rate - Get broadcast rate for a vdev
+ * @arvif: pointer to ath12k_link_vif structure
+ * @value: pointer to store the retrieved bitrate (in units of 100 kbps)
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_get_vdev_bcast_rate(struct ath12k_link_vif *arvif, u64 *value)
+{
+	if (!arvif || !arvif->ar || !value)
+		return -EINVAL;
+
+	*value = arvif->bcast_rate;
+
+	ath12k_err(NULL,
+		       "mac vdev %d get bcast_rate bitrate=%llu (%s)\n",
+		       arvif->vdev_id, *value,
+		       arvif->bcast_rate_configured ? "user-configured" : "default");
+	return 0;
+}
+
+/**
+ * ath12k_set_vdev_bcast_rate - Set broadcast rate for a vdev
+ * @arvif: pointer to ath12k_link_vif structure
+ * @bitrate: bitrate in units of 100 kbps (e.g., 60 = 6 Mbps)
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_set_vdev_bcast_rate(struct ath12k_link_vif *arvif, u32 bitrate)
+{
+	struct ath12k *ar;
+	u32 rate;
+	u32 prev_bcast_rate;
+	int ret;
+	bool prev_bcast_configured;
+
+	if (!arvif || !arvif->ar)
+		return -EINVAL;
+
+	ar = arvif->ar;
+
+	/* Validate that the provided bitrate is a basic rate */
+	if (!ath12k_is_valid_basic_rate(arvif, bitrate)) {
+		ath12k_err(ar->ab, "Invalid bcast rate %u not a basic rate\n", bitrate);
+		return -EINVAL;
+	}
+
+	/* Convert bitrate to firmware rate format using existing helper */
+	rate = ath12k_mac_get_rate_hw_value(bitrate);
+	if (rate == -EINVAL) {
+		ath12k_err(ar->ab, "Invalid bitrate %u\n", bitrate);
+		return -EINVAL;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+		   "mac vdev %d setting bcast_rate %x (bitrate %u)\n",
+		   arvif->vdev_id, rate, bitrate);
+
+	/* Save previous state for rollback */
+	prev_bcast_configured = arvif->bcast_rate_configured;
+	prev_bcast_rate = arvif->bcast_rate;
+
+	/* Send broadcast rate to firmware */
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					    WMI_VDEV_PARAM_BCAST_DATA_RATE, rate);
+	if (ret) {
+		ath12k_err(ar->ab,
+			    "failed to set bcast rate on vdev %i %d\n",
+			    arvif->vdev_id, ret);
+
+		/* Attempt to restore previous broadcast rate if it was configured */
+		if (prev_bcast_configured && prev_bcast_rate != 0) {
+			u32 prev_rate = ath12k_mac_get_rate_hw_value(prev_bcast_rate);
+
+			if (prev_rate != -EINVAL) {
+				if (ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+								  WMI_VDEV_PARAM_BCAST_DATA_RATE,
+								  prev_rate))
+					ath12k_err(ar->ab,
+						   "failed to restore previous bcast rate %u on vdev %i\n",
+						   prev_bcast_rate, arvif->vdev_id);
+			}
+		}
+
+		return ret;
+	}
+
+	/* Firmware accepted the rate - update our state */
+	arvif->bcast_rate_configured = true;
+	arvif->bcast_rate = bitrate;
 
 	return 0;
 }
@@ -632,6 +946,16 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 			ath12k_err(NULL, "Failed to set RSSI/Rate breach mask\n");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_HYSTERESIS:
+		ret = ath12k_telemetry_set_hysteresis(HYSTERESIS_TYPE_RSSI, value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set RSSI hysteresis\n");
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RATE_HYSTERESIS:
+		ret = ath12k_telemetry_set_hysteresis(HYSTERESIS_TYPE_RATE, value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set rate hysteresis\n");
+		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
 		if (value > ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE) {
@@ -713,7 +1037,16 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			}
 		}
 		break;
-
+	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RATE:
+		ret = ath12k_set_vdev_mcast_rate(arvif, value);
+		if (ret)
+		    ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MCAST_DATA_RATE to firmware\n");
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
+		ret = ath12k_set_vdev_bcast_rate(arvif, value);
+		if (ret)
+		    ath12k_err(NULL, "Failed to set bcast rate\n");
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -1855,6 +2188,47 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         return ret;
 }
 
+int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
+					   struct ath12k_wifi_generic_params *wifi_params)
+{
+	int ret = 0;
+
+	if (!wiphy || !wdev || !wifi_params) {
+		ath12k_err(NULL, "NULL input params received\n");
+		return -EINVAL;
+	}
+
+	if (!wifi_params->data) {
+		ath12k_err(NULL, "Empty mesh params received\n");
+		return -EINVAL;
+	}
+
+	switch (wifi_params->command) {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	case QCA_NL80211_VENDOR_WIFI_GENERIC_SUBCMD_MESH_PARAMS:
+		if (wdev->vap_submode != QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+			ath12k_err(NULL, "Received command for vap_submode: %d\n"
+				   "Command valid only for mesh vap\n",
+				   wdev->vap_submode);
+			return -EINVAL;
+		}
+
+		ret = ath12k_vendor_mesh_params_config_extn(wiphy, wdev, wifi_params);
+
+		if (ret) {
+			ath12k_err(NULL,"Failed to set mesh params \n");
+			return ret;
+		}
+		break;
+#endif
+	default:
+		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
+		return -EOPNOTSUPP;
+	}
+
+	return ret;
+}
+
 /* Find the 'ar' radio instance using the radio index of the wiphy
  * to set params
  */
@@ -2031,6 +2405,22 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		if (ret)
 			ath12k_err(NULL, "Failed to print RSSI/Rate thresholds\n");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RSSI_HYSTERESIS:
+		ret = ath12k_telemetry_get_hysteresis(HYSTERESIS_TYPE_RSSI, value);
+		if (ret == -ENOTCONN) {
+			ath12k_err(NULL, "Telemetry agent not loaded\n");
+		} else if (ret == -EINVAL) {
+			ath12k_err(NULL, "Failed to get RSSI hysteresis\n");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RATE_HYSTERESIS:
+		ret = ath12k_telemetry_get_hysteresis(HYSTERESIS_TYPE_RATE, value);
+		if (ret == -ENOTCONN) {
+			ath12k_err(NULL, "Telemetry agent not loaded\n");
+		} else if (ret == -EINVAL) {
+			ath12k_err(NULL, "Failed to get rate hysteresis\n");
+		}
+		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
 		*value = arvif->vap_cfg.ampdu_aggr_size;
@@ -2057,6 +2447,12 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		ret = 0;
 		break;
 
+	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RATE:
+		ret = ath12k_get_vdev_mcast_rate(arvif, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
+		ret = ath12k_get_vdev_bcast_rate(arvif, value);
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -3390,3 +3786,56 @@ clean:
 					   chansize, chan_lst);
 	return ret_val;
 }
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_vif *vif = NULL;
+	struct ieee80211_mesh_config_params_extn *mesh_params = NULL;
+	int ret = -1;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params) {
+		ath12k_err(NULL, "Mesh config params is NULL\n");
+		return -EINVAL;
+	}
+
+	if (!params->data || !params->data_len) {
+		ath12k_err(NULL, "Missing data for Mesh peer config\n");
+		return -EINVAL;
+	}
+
+	if (params->data_len < sizeof(struct ieee80211_mesh_config_params_extn)) {
+		ath12k_err(NULL, "Insufficient data length for mesh config\n");
+		return -EINVAL;
+	}
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif) {
+		ath12k_err(NULL, "vif pointer is NULL\n");
+		return -EINVAL;
+	}
+
+	mesh_params = (struct ieee80211_mesh_config_params_extn *)params->data;
+
+	switch (mesh_params->cmd_type) {
+	case ATH12K_EXTN_MESH_CONF_ADD_LOCAL_PEER:
+		ret = ieee80211_vendor_mesh_add_local_peer(wiphy, vif, mesh_params);
+		break;
+	case ATH12K_EXTN_MESH_CONF_ALLOW_DATA:
+		ret = ieee80211_vendor_mesh_authorize_peer(wiphy, vif, mesh_params->peer_mld_mac);
+		break;
+	case ATH12K_EXTN_MESH_CONF_DEL_LOCAL_PEER:
+		ret = ieee80211_vendor_mesh_delete_local_peer(wiphy, vif, mesh_params->peer_mld_mac);
+		break;
+	default:
+		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);
+		return -EINVAL;
+	}
+
+	return ret;
+}
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

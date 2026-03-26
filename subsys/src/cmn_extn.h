@@ -396,6 +396,8 @@ drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
 			       struct ieee80211_sub_if_data *sdata,
 			       struct sta_info *sta,
 			       struct link_sta_info *link_sta);
+
+bool ieee80211_skip_pn_check(struct ieee80211_rx_data *rx);
 /* Mesh beacon intersection functions */
 ieee80211_rx_result
 ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx);

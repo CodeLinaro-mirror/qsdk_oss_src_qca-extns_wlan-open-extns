@@ -1412,9 +1412,12 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 	if (!ieee80211_is_beacon(mgmt->frame_control) && !ieee80211_is_action(mgmt->frame_control))
 		return RX_DROP_MONITOR;
 
+	rcu_read_lock();
 	sta = ieee80211_find_sta(&rx->sdata->vif, mgmt->sa);
-	if (!sta || !sta->sta_extn.peer_info.is_mesh_peer)
+	if (!sta || !sta->sta_extn.peer_info.is_mesh_peer) {
+		rcu_read_unlock();
 		return RX_CONTINUE;
+	}
 
 	/* Parse beacon IEs */
 	elems = ieee802_11_parse_elems(mgmt->u.beacon.variable,
@@ -1422,8 +1425,10 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 							       u.beacon.variable),
 				       IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_BEACON,
 				       NULL);
-	if (!elems)
+	if (!elems) {
+		rcu_read_unlock();
 		return RX_CONTINUE;
+	}
 
 	/* Check for MBSSID - skip nontransmitted BSSIDs */
 	if (elems->bssid_index) {
@@ -1456,10 +1461,24 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 		sta->sta_extn.peer_info.beacon_ie_checksum = new_checksum;
 
 exit:
+	rcu_read_unlock();
 	kfree(elems);
 	return result;
 }
 EXPORT_SYMBOL(ieee80211_process_mesh_peer_beacon);
+
+bool ieee80211_skip_pn_check(struct ieee80211_rx_data *rx)
+{
+	struct ieee80211_sub_if_data *sdata = rx->sdata;
+	struct ieee80211_mgmt *mgmt = (void *)rx->skb->data;
+
+	if ((sdata->wdev.vap_submode == IEEE80211_EXTN_VAP_SUBMODE_MESH) &&
+	    ieee80211_is_beacon(mgmt->frame_control))
+		return true;
+
+	return false;
+}
+EXPORT_SYMBOL(ieee80211_skip_pn_check);
 
 void ieee80211_mesh_init_peer_work(struct ieee80211_sub_if_data *sdata,
 				   struct sta_info *sta_info)

@@ -243,13 +243,6 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 	dp_peer = kzalloc(sizeof(*dp_peer), GFP_KERNEL);
 	if (!dp_peer)
 		return -ENOMEM;
-
-	dp_peer->link_peer_delete_stats = ath12k_dp_alloc_preserved_stats();
-	if (!dp_peer->link_peer_delete_stats) {
-		ath12k_err(NULL, "Failed to allocate link peer delete stats");
-		kfree(dp_peer);
-		return -ENOMEM;
-	}
 	ether_addr_copy(dp_peer->addr, addr);
 	dp_peer->sta = params->sta;
 	dp_peer->is_mlo = params->is_mlo;
@@ -316,7 +309,6 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 	if (dp_peer->qos)
 		kfree(dp_peer->qos);
 
-	ath12k_dp_free_preserved_stats(dp_peer->link_peer_delete_stats);
 	kfree(dp_peer);
 }
 

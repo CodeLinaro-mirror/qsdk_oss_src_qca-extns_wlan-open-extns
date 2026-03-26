@@ -1047,6 +1047,11 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 		    ath12k_err(NULL, "Failed to set bcast rate\n");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_PN_MGMT_RX_FILTER:
+		ret = ath12k_wmi_vdev_set_pn_mgmt_rx_filter_cmd(ar, arvif->vdev_id, value);
+		if (ret)
+			ath12k_err(NULL, "Failed to set PN RX Filter");
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);

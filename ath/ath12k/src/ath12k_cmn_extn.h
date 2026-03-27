@@ -548,7 +548,7 @@ struct ath12k_pci_extn {
 
 struct ath12k_base_extn {
 #ifdef CPTCFG_EXT_IPA_OFFLOAD
-	struct ath12k_wlan_ipa *ipa_ctx;
+	struct ath12k_ipa *ipa_ctx;
 	/* This is to hold the rx_buffers allocated initially in RXDMA for IPA
 	 * as in UD we make use of common API for allocating RX buffer initially
 	 * and for refilling the buffers.
@@ -561,12 +561,6 @@ struct ath12k_base_extn {
 	void **rx_buf_pool;
 	u32 rx_buf_cnt;
 	dma_addr_t mem_pa;
-#endif
-};
-
-struct ath12k_dp_extn {
-#ifdef CPTCFG_EXT_IPA_OFFLOAD
-	struct dp_rxdma_ring rx_refill_buf_ring2;
 #endif
 };
 

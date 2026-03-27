@@ -2210,3 +2210,315 @@ int ath12k_dp_ipa_smmu_unmap(struct ath12k_base *ab, u32 iova_addr, size_t size)
 	return 0;
 }
 /* Done SMMU Init for SDX */
+
+static u8 wlan_ipa_set_session_id(u8 session_id, bool is_2g_iface)
+{
+	return session_id;
+}
+
+static inline bool wlan_ipa_is_ipv6_enabled(struct ath12k_ipa_config *ipa_cfg)
+{
+	return ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, ATH12K_IPA_IPV6_ENABLE_MASK);
+}
+
+int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ctx,
+				       struct dp_ipa_net_device_priv *net_dev_priv, u8 session_id)
+{
+	if ((memcmp(iface_ctx->net_dev.dev_addr, net_dev_priv->dev_addr, ETH_ALEN) == 0) &&
+		iface_ctx->session_id == session_id)
+		return 1;
+
+	return 0;
+}
+
+static inline bool wlan_ipa_is_enabled(struct ath12k_ipa_config *ipa_cfg)
+{
+	return ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, ATH12K_IPA_ENABLE_MASK);
+}
+
+bool ipa_config_is_enabled(void)
+{
+	return g_ipa_config ? wlan_ipa_is_enabled(g_ipa_config) : 0;
+}
+
+static inline bool
+wlan_ipa_is_two_tx_pipes_enabled(struct ath12k_ipa_config *ipa_cfg)
+{
+	return ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg,
+					  ATH12K_IPA_TWO_TX_PIPES_ENABLE_MASK);
+}
+
+bool ipa_config_is_two_tx_pipes_enabled(void)
+{
+	return g_ipa_config ? (ipa_config_is_enabled() ?
+		wlan_ipa_is_two_tx_pipes_enabled(g_ipa_config) : 0) : 0;
+}
+
+static inline char
+*wlan_ipa_get_iface_ifname(struct ath12k_ipa_iface_context *iface)
+{
+	return iface->net_dev.name;
+}
+
+static inline void
+dp_ipa_set_wdi_hdr_type(struct ipa_wdi_hdr_info *hdr_info)
+{
+	hdr_info->hdr_type = IPA_HDR_L2_ETHERNET_II;
+}
+
+static void dp_ipa_setup_meta_data_mask(struct ipa_wdi_reg_intf_in_params *in)
+{
+	in->meta_data_mask = WLAN_IPA_AST_META_DATA_MASK;
+}
+
+static void dp_ipa_setup_iface_session_id(struct ipa_wdi_reg_intf_in_params *in,
+					  u8 session_id, bool is_tx1_used)
+{
+	in->meta_data = htonl(session_id);
+	in->is_tx1_used = is_tx1_used;
+}
+
+bool ipa_config_is_vlan_enabled(void)
+{
+	if (!ipa_config_is_enabled())
+		return false;
+
+	return g_ipa_config ? g_ipa_config->ipa_vlan_support : 0;
+}
+
+bool ipa_is_wds_enabled(void)
+{
+	return g_ipa_config ? g_ipa_config->ipa_wds : 0;
+}
+
+int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, uint8_t session_id, bool mld_enabled)
+{
+	int ret;
+	ret = ipa_wdi_dereg_intf_per_inst_mlo(ifname, hdl, session_id, mld_enabled);
+	if (ret) {
+		ath12k_err(NULL, "ipa_wdi_dereg_intf: IPA pipe deregistration failed: ret=%d \n", ret);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
+
+int dp_ipa_setup_iface(char *ifname,
+		       u8 *mac_addr,
+		       enum ipa_client_type prod_client,
+		       enum ipa_client_type cons_client,
+		       u8 session_id, bool is_ipv6_enabled,
+		       ipa_wdi_hdl_t hdl,
+		       bool is_tx1_used,
+		       int is_mlo)
+{
+	struct ipa_wdi_reg_intf_in_params in = { 0 };
+	struct ipa_wdi_hdr_info hdr_info = { 0 };
+	struct ath12k_ipa_uc_tx_hdr uc_tx_hdr;
+	struct ath12k_ipa_uc_tx_hdr uc_tx_hdr_v6;
+	int ret = -EINVAL;
+
+	ether_addr_copy(uc_tx_hdr.eth.h_source, mac_addr);
+
+	/* IPV4 header */
+	uc_tx_hdr.eth.h_proto = htons(ETH_P_IP);
+
+	hdr_info.hdr = (u8 *)&uc_tx_hdr;
+	hdr_info.hdr_len = ATH12K_IPA_UC_WLAN_TX_HDR_LEN;
+	dp_ipa_set_wdi_hdr_type(&hdr_info);
+
+	hdr_info.dst_mac_addr_offset = DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET;
+
+	in.netdev_name = ifname;
+	memcpy(&(in.hdr_info[IPA_IP_v4]),
+	&hdr_info, sizeof(struct ipa_wdi_hdr_info));
+	in.alt_dst_pipe = cons_client;
+	in.is_meta_data_valid = 1;
+	dp_ipa_setup_meta_data_mask(&in);
+	in.hdl = hdl;
+
+	dp_ipa_setup_iface_session_id(&in, session_id, is_tx1_used);
+
+	/* IPV6 header */
+	if (is_ipv6_enabled) {
+		memcpy(&uc_tx_hdr_v6, &uc_tx_hdr, ATH12K_IPA_UC_WLAN_TX_HDR_LEN);
+		uc_tx_hdr_v6.eth.h_proto = htons(ETH_P_IPV6);
+		hdr_info.hdr = (u8 *)&uc_tx_hdr_v6;
+		memcpy(&(in.hdr_info[IPA_IP_v6]),
+		&hdr_info, sizeof(struct ipa_wdi_hdr_info));
+	}
+
+	in.mld_enabled = is_mlo;
+	ret = ipa_wdi_reg_intf_per_inst(&in);
+	if (ret) {
+		ath12k_err(NULL, "ipa_wdi_reg_intf: register IPA interface failed: ret = %d",ret);
+		return -EPERM;
+	}
+
+	return 0;
+}
+
+
+static void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
+				   const u8 *mac_addr, ipa_wdi_hdl_t hdl, uint8_t session_id, 
+				   bool mld_enabled)
+{
+	struct ath12k_ipa *ipa_ctx = iface_context->ipa_ctx;
+	char *ifname;
+
+	if (iface_context->session_id == ATH12K_IPA_MAX_SESSION)
+		return;
+
+	ifname = wlan_ipa_get_iface_ifname(iface_context);
+
+	if (dp_ipa_cleanup_iface(ifname, hdl, session_id, mld_enabled)) {
+		ath12k_err(ipa_ctx->ab, "ipa_cleanup_iface failed \n");
+	}
+
+	if (iface_context->device_mode == ATH12K_IPA_SAP) {
+		if(ipa_ctx->num_sap_connected > 0) {
+			ipa_ctx->num_sap_connected--;
+		} else {
+			ath12k_warn(ipa_ctx->ab, "num_sap_connected is already 0\n");
+		}
+	}
+
+	spin_lock_bh(&iface_context->interface_lock);
+	if (atomic_read(&iface_context->disconn_count) ==
+			atomic_read(&iface_context->conn_count) - 1) {
+		atomic_inc(&iface_context->disconn_count);
+	} else {
+		ath12k_err(ipa_ctx->ab, "connect/disconnect out of sync\n");
+		BUG_ON(1);
+	}
+
+	iface_context->is_authenticated = false;
+	iface_context->device_mode = ATH12K_IPA_MAX_NO_OF_MODE;
+	iface_context->session_id = ATH12K_IPA_MAX_SESSION;
+
+	memset(iface_context->mac_addr, 0, ETH_ALEN);
+
+	spin_unlock_bh(&iface_context->interface_lock);
+	iface_context->ifa_address = 0;
+	eth_zero_addr(iface_context->bssid.bytes);
+	if (!iface_context->ipa_ctx->num_iface) {
+		ath12k_err(ipa_ctx->ab, "NUM INTF 0, Invalid \n");
+		WARN_ON(1);
+	}
+	iface_context->ipa_ctx->num_iface--;
+}
+
+
+int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
+			 struct dp_ipa_net_device_priv *net_dev_priv,
+			 enum ath12k_ipa_opmode device_mode,
+			 u8 session_id,
+			 const u8 *mac_addr,
+			 bool is_2g_iface, bool is_mlo_vdev, bool is_tx1_used)
+{
+	struct ath12k_ipa_iface_context *iface_context = NULL;
+	int status = 0;
+	u8 sessid;
+	bool ipv6_en;
+	char *ifname;
+	int i;
+
+	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+		iface_context = &(ipa_ctx->iface_context[i]);
+		if (wlan_ipa_check_iface_netdev_sessid(iface_context, net_dev_priv,
+						       session_id)) {
+			if (iface_context->device_mode == device_mode) {
+				if (device_mode == ATH12K_IPA_SAP) {
+					return 0; // success as dfs send us multiple start
+				}
+			}
+
+			wlan_ipa_cleanup_iface(iface_context, NULL, ipa_ctx->hdl, session_id, is_mlo_vdev);
+		} else if (iface_context->session_id == session_id) {
+			wlan_ipa_cleanup_iface(iface_context, NULL, ipa_ctx->hdl, session_id, is_mlo_vdev);
+		}
+	}
+
+	if (ATH12K_IPA_MAX_IFACE == ipa_ctx->num_iface) {
+		status = -ENOMEM; // no mem
+		ath12k_err(ipa_ctx->ab, "Max interface reached %d \n", ATH12K_IPA_MAX_IFACE);
+		iface_context = NULL;
+		WARN_ON(1);
+		goto end;
+	}
+
+	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+		if (ipa_ctx->iface_context[i].session_id == ATH12K_IPA_MAX_SESSION) {
+			iface_context = &(ipa_ctx->iface_context[i]);
+			break;
+		}
+	}
+
+	if (!iface_context) {
+		ath12k_err(ipa_ctx->ab, "All the IPA interfaces are in use \n");
+		status = -ENOMEM; // No mem
+		WARN_ON(1);
+		goto end;
+	}
+
+	spin_lock_bh(&iface_context->interface_lock);
+	if (atomic_read(&iface_context->conn_count) ==
+			atomic_read(&iface_context->disconn_count)) {
+		atomic_inc(&iface_context->conn_count);
+	} else {
+		ath12k_err(ipa_ctx->ab,"connect/disconnect out of sync \n");
+		BUG_ON(1);
+	}
+
+	memcpy(&iface_context->net_dev, net_dev_priv, sizeof(struct dp_ipa_net_device_priv));
+	iface_context->device_mode = device_mode;
+	iface_context->session_id = session_id;
+	memcpy(iface_context->mac_addr, mac_addr, ETH_ALEN);
+
+	spin_unlock_bh(&iface_context->interface_lock);
+
+	if (ipa_ctx->uc_loaded) {
+		sessid = wlan_ipa_set_session_id(session_id, is_2g_iface);
+		ipv6_en = wlan_ipa_is_ipv6_enabled(ipa_ctx->config);
+		ifname = wlan_ipa_get_iface_ifname(iface_context);
+
+		if(device_mode == ATH12K_IPA_SAP) {
+			status = dp_ipa_setup_iface(ifname,
+					(u8 *)mac_addr,
+					iface_context->prod_client,
+					iface_context->cons_client,
+					sessid,
+					ipv6_en,
+					ipa_ctx->hdl,
+					is_tx1_used,
+					is_mlo_vdev);
+		} else {
+			status = dp_ipa_setup_iface(ifname,
+					(u8 *)net_dev_priv->dev_addr,
+					iface_context->prod_client,
+					iface_context->cons_client,
+					sessid,
+					ipv6_en,
+					ipa_ctx->hdl,
+					is_tx1_used,
+					is_mlo_vdev);
+		}
+
+		if (status)
+			goto end;
+	}
+
+	ipa_ctx->num_iface++;
+
+	if (device_mode == ATH12K_IPA_SAP)
+		ipa_ctx->num_sap_connected++;
+
+	return status;
+
+end:
+	if (iface_context)
+		wlan_ipa_cleanup_iface(iface_context, mac_addr, ipa_ctx->hdl, session_id, is_mlo_vdev);
+
+	return status;
+}

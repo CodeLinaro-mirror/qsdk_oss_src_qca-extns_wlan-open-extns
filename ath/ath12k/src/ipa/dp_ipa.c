@@ -3437,6 +3437,121 @@ enum ath12k_ipa_opmode ath12k_ipa_mode(enum nl80211_iftype mode)
 }
 EXPORT_SYMBOL(ath12k_ipa_mode);
 
+static struct ath12k_ipa_iface_context *
+ath12k_dp_ipa_get_if_ctx(struct ath12k_ipa *ipa_ctx, u8 vdev_id)
+{
+	struct ath12k_ipa_iface_context *if_ctx;
+	u8 if_idx;
+
+	if_idx = ipa_ctx->vdev_to_iface[vdev_id];
+
+	if (if_idx >= ATH12K_IPA_MAX_IFACE) {
+		ath12k_err(ipa_ctx->ab, "vdev_id=%d not in ipa_ctx", vdev_id);
+		return NULL;
+	}
+
+	if_ctx = &ipa_ctx->iface_context[if_idx];
+	if (if_ctx->session_id >= ATH12K_IPA_MAX_SESSION) {
+		ath12k_err(ipa_ctx->ab, "vdev_id=%d at if_idx=%u is invalid",
+			   if_ctx->session_id, if_idx);
+		return NULL;
+	}
+
+	return if_ctx;
+}
+
+void
+ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
+				   u8 *mac_addr)
+{
+	struct ath12k_link_vif *arvif;
+	struct ath12k_ipa *ipa_ctx;
+	struct ath12k_ipa_iface_context *if_ctx;
+	bool mlo;
+
+	rcu_read_lock();
+
+	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
+	if (!arvif) {
+		ath12k_err(ab, "arvif is null");
+		goto exit;
+	}
+
+	ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+	if (!ipa_ctx) {
+		ath12k_err(ab, "ipa_ctx is null");
+		goto exit;
+	}
+
+	if_ctx = ath12k_dp_ipa_get_if_ctx(ipa_ctx, vdev_id);
+	if (!if_ctx) {
+		ath12k_err(ab, "if_ctx is null");
+		goto exit;
+	}
+
+	mlo = if_ctx->is_mlo_vdev;
+
+	ath12k_ipa_enqueue_evt(WLAN_CLIENT_DISCONNECT, arvif, mac_addr,
+			       mlo);
+exit:
+	rcu_read_unlock();
+}
+
+void
+ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
+				 u8 *mac_addr)
+{
+	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_link_vif *arvif;
+	struct ieee80211_vif *vif;
+	struct wireless_dev *wdev;
+	struct net_device *dev;
+	struct ath12k_dp *dp;
+	struct ath12k_pdev_dp *dp_pdev;
+	struct ath12k_ipa *ipa_ctx;
+	struct ath12k_ipa_iface_context *if_ctx;
+	bool mlo;
+
+	rcu_read_lock();
+
+	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
+	if (!arvif) {
+		ath12k_err(ab, "arvif is null");
+		goto exit;
+	}
+
+	ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+	if (!ipa_ctx) {
+		ath12k_err(ab, "ipa_ctx is null");
+		goto exit;
+	}
+
+	if_ctx = ath12k_dp_ipa_get_if_ctx(ipa_ctx, vdev_id);
+	if (!if_ctx) {
+		ath12k_err(ab, "if_ctx is null");
+		goto exit;
+	}
+
+	vif = arvif->ahvif->vif;
+	wdev = ieee80211_vif_to_wdev(vif);
+	dev = wdev->netdev;
+
+	dp = ath12k_ab_to_dp(ab);
+	dp_pdev = ath12k_dp_to_dp_pdev(dp, arvif->ar->pdev_idx);
+	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
+
+	if (dp_peer) {
+		mlo = if_ctx->is_mlo_vdev;
+		ath12k_ipa_enqueue_evt(WLAN_CLIENT_CONNECT_EX, arvif, mac_addr,
+				       mlo);
+
+		ath12k_info(ab, "send rx_unexpected_4addr to hostapd");
+		cfg80211_rx_unexpected_4addr_frame(dev, dp_peer->addr, GFP_ATOMIC, -1);
+	}
+exit:
+	rcu_read_unlock();
+}
+
 /**
  * ath12k_dp_ipa_mac80211_rx() - Submit packet to mac80211 RX path
  * @hw: ieee80211_hw structure

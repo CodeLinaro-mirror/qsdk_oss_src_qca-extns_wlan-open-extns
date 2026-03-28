@@ -8,6 +8,9 @@
 #include <linux/qcom-iommu-util.h>
 #include "dp_ipa.h"
 #include "../../wmi.h"
+#include "../../dp_peer.h"
+
+static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 
 /* global control for IPA status */
 atomic_t g_instances_added;
@@ -994,16 +997,6 @@ inline ath12k_dp_ipa_set_smmu_mapped(struct ath12k_ipa *ipa_ctx, int val)
 	atomic_set(&ipa_ctx->ipa_map_allowed, val);
 }
 
-/* IPA exception flow */
-
-static void wlan_ipa_w2i_cb(void *priv, enum ipa_dp_evt_type evt,
-			    unsigned long data)
-{
-//	__wlan_ipa_w2i_cb(priv, evt, data);
-}
-
-/* Done with exception flow */
-
 /* IPA_UC_Defered loading */
 
 /**
@@ -1615,7 +1608,7 @@ int ath12k_dp_ipa_setup(struct ath12k_ipa *ipa_ctx)
 	if (is_smmu_enabled)
 		ath12k_dp_ipa_wdi_rx_smmu_params(ipa_ctx, rx_smmu);
 
-	pipe_in->notify = wlan_ipa_w2i_cb;
+	pipe_in->notify = ath12k_dp_ipa_w2i;
 	pipe_in->priv = ipa_ctx;
 	pipe_in->hdl = ipa_ctx->hdl;
 
@@ -3443,3 +3436,251 @@ enum ath12k_ipa_opmode ath12k_ipa_mode(enum nl80211_iftype mode)
 	return ipa_mode;
 }
 EXPORT_SYMBOL(ath12k_ipa_mode);
+
+static bool
+ath12k_dp_ipa_is_dst_br_dev(struct ath12k_ipa_iface_context *if_ctx,
+			       struct sk_buff *skb)
+{
+	struct ethhdr *eth;
+	struct net_device *ndev;
+	struct net_device *master_ndev;
+	bool ret = false;
+	ndev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
+	if (!ndev)
+		return ret;
+
+	if (!netif_is_bridge_port(ndev))
+		return ret;
+
+	rcu_read_lock();
+	master_ndev = netdev_master_upper_dev_get_rcu(ndev);
+	if (!master_ndev)
+		goto out;
+
+	eth = skb_eth_hdr(skb);
+	if (!ether_addr_equal(eth->h_dest, master_ndev->dev_addr))
+		goto out;
+
+	ret = true;
+out:
+	dev_put(ndev);
+	rcu_read_unlock();
+	return ret;
+}
+
+static bool
+ath12k_dp_ipa_intrabss_ucast_fwd(struct ath12k_ipa *ipa_ctx,
+				 struct ath12k_ipa_iface_context *if_ctx,
+				 struct sk_buff *skb)
+{
+	struct ath12k_hw_group *ag;
+	struct ath12k_base *src_ab;
+	struct ath12k_base *dst_ab;
+	struct ath12k_dp *dst_dp;
+	u32 src_vdev_id;
+	struct ath12k_dp_link_peer *peer;
+	struct ethhdr *eth;
+	eth = skb_eth_hdr(skb);
+
+	u32 dst_chip_id = skb->cb[DP_IPA_SKB_CB_DEST_CHIP_ID_OFFSET];
+	src_ab = ipa_ctx->ab;
+	src_vdev_id = if_ctx->session_id;
+	ag = src_ab->ag;
+	if (ag->mlo_capable)
+		dst_ab = ag->ab[dst_chip_id];
+	else
+		dst_ab = src_ab;
+	dst_dp = ath12k_ab_to_dp(dst_ab);
+	spin_lock_bh(&dst_dp->dp_lock);
+	peer = ath12k_dp_link_peer_find_by_addr(dst_dp, eth->h_dest);
+	if (!peer || peer->vdev_id != src_vdev_id) {
+		spin_unlock_bh(&dst_dp->dp_lock);
+		return false;
+	}
+	spin_unlock_bh(&dst_dp->dp_lock);
+	if (ipa_ctx->wifi_hw_ops->tx)
+		return ipa_ctx->wifi_hw_ops->tx(dst_ab, skb, false);
+
+	return false;
+}
+
+static bool
+ath12k_dp_ipa_intrabss_mcbc_fwd(struct ath12k_ipa *ipa_ctx,
+				struct ath12k_ipa_iface_context *if_ctx,
+				struct sk_buff *skb)
+{
+	if (ipa_ctx->wifi_hw_ops->tx)
+		ipa_ctx->wifi_hw_ops->tx(ipa_ctx->ab, skb, true);
+	return false;
+}
+
+/*
+ * return: false -> forward to network stack
+ *	   true -> do not forward to network stack
+ */
+static bool
+ath12k_dp_ipa_intrabss_fwd(struct ath12k_ipa *ipa_ctx,
+			   struct ath12k_ipa_iface_context *if_ctx,
+			   struct sk_buff *skb)
+{
+	if (ipa_ctx->disable_intrabss_fwd[if_ctx->session_id]) {
+		ath12k_warn(ipa_ctx->ab, "intrabss is disabled");
+		return false;
+	}
+
+	if (if_ctx->device_mode == ATH12K_IPA_STA) {
+		return false;
+	}
+
+	if (DP_IPA_MCBC_PKT(skb)) {
+		ath12k_dp_ipa_intrabss_mcbc_fwd(ipa_ctx, if_ctx, skb);
+		return false;
+	}
+
+	if (ath12k_dp_ipa_is_dst_br_dev(if_ctx, skb))
+		return false;
+
+	return ath12k_dp_ipa_intrabss_ucast_fwd(ipa_ctx, if_ctx, skb);
+}
+
+static bool
+ath12k_dp_ipa_is_peer_authorized(struct ath12k_ipa *ipa_ctx,
+				 struct ath12k_ipa_iface_context *if_ctx,
+				 u8 *src_mac)
+{
+	struct ath12k_dp_link_peer *peer;
+
+	struct ath12k *ar;
+	struct ath12k_dp_peer *dp_peer;
+	bool ret = false;
+
+	switch (if_ctx->device_mode) {
+	case ATH12K_IPA_SAP: {
+		ar = ath12k_mac_get_ar_by_vdev_id(ipa_ctx->ab, if_ctx->session_id);
+		if (!ar) {
+			return false;
+		}
+
+		spin_lock_bh(&ar->ah->dp_hw.peer_lock);
+		dp_peer = ath12k_dp_peer_find(&ar->ah->dp_hw, src_mac);
+		if (!dp_peer) {
+			return false;
+		}
+
+		ret = dp_peer->is_authorized;
+		spin_unlock_bh(&ar->ah->dp_hw.peer_lock);
+
+		return ret;
+	}
+	case ATH12K_IPA_STA: {
+		if (if_ctx->is_authenticated)
+			return true;
+		spin_lock_bh(&ipa_ctx->ab->dp->dp_lock);
+		peer = ath12k_dp_link_peer_find_by_vdev_id_and_addr(ipa_ctx->ab->dp,
+								    if_ctx->session_id,
+								    src_mac);
+		if (!peer)
+			return false;
+
+		if_ctx->is_authenticated = peer->is_authorized;
+
+		spin_unlock_bh(&ipa_ctx->ab->dp->dp_lock);
+		return if_ctx->is_authenticated;
+	}
+	default:
+		break;
+	}
+	return false;
+}
+
+/* IPA exception flow */
+static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
+			      unsigned long data)
+{
+	struct ath12k_ipa *ipa_ctx;
+	struct sk_buff *skb;
+	u8 iface_idx;
+	u8 session_id = 0xff;
+	struct ath12k_ipa_iface_context *if_ctx;
+	bool is_eapol_wapi = false;
+	struct ethhdr *eth;
+	ipa_ctx = (struct ath12k_ipa *)priv;
+	skb = (struct sk_buff *)data;
+	eth = skb_eth_hdr(skb);
+	struct net_device *dev;
+
+	if (!ipa_ctx) {
+		ath12k_err(NULL, "ipa_ctx is NULL, dropping pkt");
+		if (evt == IPA_RECEIVE)
+			dev_kfree_skb_any(skb);
+		return;
+	}
+	if (evt != IPA_RECEIVE) {
+		ath12k_warn(ipa_ctx->ab, "w2i cb wrong event: 0x%x", evt);
+		return;
+	}
+
+	/* TODO: add check for WLAN_IPA_UC_ENABLE_MASK */
+	session_id = (uint8_t)skb->cb[0];
+	iface_idx = ipa_ctx->vdev_to_iface[session_id];
+
+	if (iface_idx >= ATH12K_IPA_MAX_IFACE) {
+		ath12k_err(ipa_ctx->ab, "Invalid iface_idx %u,session_id %x %x %x %x",
+			   iface_idx, session_id, (uint8_t)skb->cb[1],
+			   (uint8_t)skb->cb[2], (uint8_t)skb->cb[3]);
+
+		/* TODO: If EAPOL is rx before iface setup, send them to nw stack */
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
+	if_ctx = &ipa_ctx->iface_context[iface_idx];
+	if (if_ctx->session_id >= ATH12K_IPA_MAX_SESSION) {
+		ath12k_err(ipa_ctx->ab, "session_id of iface_idx %u is invalid:%d",
+			   iface_idx, if_ctx->session_id);
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
+	if (eth->h_proto == cpu_to_be16(ETH_P_PAE) ||
+		eth->h_proto == cpu_to_be16(ETH_P_WAPI)) {
+		is_eapol_wapi = true;
+
+		dev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
+		if (!dev) {
+			ath12k_err(ipa_ctx->ab, "netdev is null for '%s'",
+				   if_ctx->net_dev.name);
+			dev_kfree_skb_any(skb);
+			return;
+		}
+		skb->protocol = eth_type_trans(skb, dev);
+		cfg80211_rx_control_port(dev, skb, false, -1);
+		dev_put(dev);
+		return;
+	}
+
+
+	if (!is_eapol_wapi &&
+	    !ath12k_dp_ipa_is_peer_authorized(ipa_ctx, if_ctx, eth->h_source)) {
+		ath12k_err(ipa_ctx->ab, "peer %pM is unauthorized. dst=%pM proto=0x%X",
+			   eth->h_source, eth->h_dest, eth->h_proto);
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
+	skb->protocol = eth->h_proto;
+	if (ath12k_dp_ipa_intrabss_fwd(ipa_ctx, if_ctx, skb))
+		return;
+
+	/* sending to network stack */
+	dev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
+	if (!dev) {
+		ath12k_err(ipa_ctx->ab, "netdev is null for '%s'",
+			   if_ctx->net_dev.name);
+		dev_kfree_skb_any(skb);
+		return;
+	}
+	skb->protocol = eth_type_trans(skb, dev);
+	netif_receive_skb(skb);
+	dev_put(dev);
+}

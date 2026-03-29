@@ -143,6 +143,8 @@ struct ieee80211_mesh_config_params_extn {
 	u16 num_links;
 	u8 peer_mld_mac[ETH_ALEN];
 	struct ieee80211_mesh_peer_info peers[MESH_PEER_MAX_LINKS];
+	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
+	bool peer_cleanup_timer_enable;
 } __packed;
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
@@ -174,6 +176,8 @@ struct ieee80211_if_ap_extn {
 	struct timer_list mesh_peer_cleanup_timer;
 	u16 num_mesh_peers;
 	u32 mesh_peer_aid[MESH_AID_WORDS];  /* Bitmap for AID allocation */
+	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
+	bool mesh_peer_cleanup_timer_enabled; /* Runtime enable/disable of cleanup timer */
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
 
@@ -377,6 +381,11 @@ ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 					struct ieee80211_vif *vif,
 					const u8 *peer_addr);
 
+int
+ieee80211_vendor_mesh_set_peer_timeout_cnt(struct wiphy *wiphy,
+					   struct ieee80211_vif *vif,
+					   u16 timeout_cnt);
+
 void
 ieee80211_free_mesh_vap_caps(struct ieee80211_bss_conf *bss_conf);
 
@@ -413,6 +422,10 @@ ieee80211_mesh_peer_cleanup(struct wiphy *wiphy,
 
 void
 ieee80211_mesh_peer_timeout_check(struct timer_list *t);
+
+int
+ieee80211_vendor_mesh_peer_timeout_en(struct wiphy *wiphy, struct ieee80211_vif *vif,
+				      bool enable);
 
 void
 ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *work);

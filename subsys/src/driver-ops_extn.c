@@ -197,6 +197,8 @@ void ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
 	memset(sdata->u.ap.if_ap_extn.mesh_peer_aid, 0,
 	       sizeof(sdata->u.ap.if_ap_extn.mesh_peer_aid));
 
+	sdata->u.ap.if_ap_extn.mesh_peer_timeout_cnt = MESH_PEER_TIMEOUT_CNT;
+
 	if (ieee80211_mesh_ap_config_save(params, link_conf) < 0) {
 		printk(KERN_ERR "AP config save failed");
 		return;
@@ -204,6 +206,8 @@ void ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
 
 	timer_setup(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
 		    ieee80211_mesh_peer_timeout_check, 0);
+	/* Timer is enabled by default */
+	sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled = true;
 }
 EXPORT_SYMBOL(ieee80211_mesh_ap_setup);
 
@@ -839,8 +843,11 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 		goto cleanup;
 	}
 
-	/* Start timer to track peers who are not sending beacons. Start this timer right after the 1st peer is added */
-	if (sdata->u.ap.if_ap_extn.num_mesh_peers == 0)
+	/* Start timer to track peers who are not sending beacons. Start this
+	 * timer right after the 1st peer is added, only if timer is enabled.
+	 */
+	if (sdata->u.ap.if_ap_extn.num_mesh_peers == 0 &&
+	    sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled)
 		mod_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
 			  jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
 
@@ -1008,6 +1015,51 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 	return ret;
 }
 EXPORT_SYMBOL(ieee80211_vendor_mesh_delete_local_peer);
+
+/**
+ * ieee80211_vendor_mesh_set_peer_timeout_cnt - Set mesh peer inactivity timeout count.
+ *
+ * @wiphy: WIPHY pointer
+ * @vif: VIF pointer
+ * @timeout_cnt: New peer inactivity timeout threshold (number of iterations of
+ *               peer timeout where the peer was found to have not sent beacon)
+ *
+ * Configures the number of iterations of peer timeout where the peer was found
+ * to have not sent beacon before a mesh peer is considered inactive and cleaned
+ * up. Replaces the compile-time constant MESH_PEER_TIMEOUT_CNT with a
+ * runtime-configurable value per interface.
+ *
+ * Return 0 on success and -ve on failure
+ */
+int ieee80211_vendor_mesh_set_peer_timeout_cnt(struct wiphy *wiphy,
+					       struct ieee80211_vif *vif,
+					       u16 timeout_cnt)
+{
+	struct ieee80211_sub_if_data *sdata;
+
+	if (!vif)
+		return -EINVAL;
+
+	if (timeout_cnt == 0) {
+		wiphy_err(wiphy, "mesh_peer_timeout_cnt must be greater than 0\n");
+		return -EINVAL;
+	}
+
+	sdata = vif_to_sdata(vif);
+	if (!sdata)
+		return -EINVAL;
+
+	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+		wiphy_err(wiphy, "ieee80211_vendor_mesh_set_peer_timeout_cnt: not a mesh VAP\n");
+		return -EINVAL;
+	}
+
+	sdata->u.ap.if_ap_extn.mesh_peer_timeout_cnt = timeout_cnt;
+	wiphy_dbg(wiphy, "mesh_peer_timeout_cnt set to %u\n", timeout_cnt);
+
+	return 0;
+}
+EXPORT_SYMBOL(ieee80211_vendor_mesh_set_peer_timeout_cnt);
 
 /**
  * ieee80211_calc_beacon_ie_checksum_raw - Calculate checksum of critical IEs
@@ -1546,16 +1598,63 @@ void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 		else
 			sta->sta.sta_extn.peer_info.beacon_miss_count = 0;
 
-		if (sta->sta.sta_extn.peer_info.beacon_miss_count >= MESH_PEER_TIMEOUT_CNT) {
+		if (sta->sta.sta_extn.peer_info.beacon_miss_count >=
+		    sdata->u.ap.if_ap_extn.mesh_peer_timeout_cnt) {
 			/* Peer timeout - trigger cleanup */
 			wiphy_work_queue(sdata->local->hw.wiphy,
 					 &sta->sta.sta_extn.timeout_wk);
 		}
 	}
-	mod_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
-		  jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
+	/* Re-arm the timer only if it is still enabled */
+	if (sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled)
+	    mod_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
+		      jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
 }
 EXPORT_SYMBOL(ieee80211_mesh_peer_timeout_check);
+
+/**
+ * ieee80211_vendor_mesh_peer_timeout_en - Enable or disable the mesh peer
+ *                                            cleanup timer
+ * @wiphy: wiphy pointer
+ * @vif: virtual interface pointer
+ * @enable: true to enable the timer, false to disable it
+ *
+ * When enabling, sets the enabled flag and arms the timer immediately via
+ * mod_timer() if there are active mesh peers.  When disabling, clears the
+ * flag and stops the timer via del_timer().
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ieee80211_vendor_mesh_peer_timeout_en(struct wiphy *wiphy,
+					  struct ieee80211_vif *vif,
+					  bool enable)
+{
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
+
+	if (!sdata)
+		return -EINVAL;
+
+	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+		printk(KERN_ERR "mesh_peer_cleanup_timer_config: not a mesh VAP\n");
+		return -EINVAL;
+	}
+
+	if (enable) {
+		sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled = true;
+		/* If there are active peers, start the timer immediately */
+		if (sdata->u.ap.if_ap_extn.num_mesh_peers > 0)
+			mod_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
+				  jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
+		printk(KERN_DEBUG "Mesh peer cleanup timer enabled\n");
+	} else {
+		sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled = false;
+		del_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
+		printk(KERN_DEBUG "Mesh peer cleanup timer disabled\n");
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(ieee80211_vendor_mesh_peer_timeout_en);
 
 /**
  * Vendor mesh operations structure - provides function pointers

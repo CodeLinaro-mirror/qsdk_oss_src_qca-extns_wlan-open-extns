@@ -353,7 +353,13 @@ static int ieee80211_mesh_peer_copy_bss_cap(struct ieee80211_bss_conf *bss_conf,
 
 	/* Populate the HE capbility for the peer */
 	if (mesh_conf->he_cap) {
-		mesh_he_cap = kzalloc(sizeof(struct ieee80211_he_cap_elem), GFP_KERNEL);
+		/* Allocate space for fixed HE cap elem + MCS/NSS map written by
+		 * ieee80211_mesh_peer_he_mcsnssmap_update() immediately after the
+		 * fixed portion.
+		 */
+		mesh_he_cap = kzalloc(sizeof(struct ieee80211_he_cap_elem) +
+				      sizeof(struct ieee80211_he_mcs_nss_supp),
+				      GFP_KERNEL);
 		if (!mesh_he_cap)
 			return -ENOMEM;
 
@@ -364,12 +370,18 @@ static int ieee80211_mesh_peer_copy_bss_cap(struct ieee80211_bss_conf *bss_conf,
 
 	/* Populate the EHT capbility for the peer */
 	if (mesh_conf->eht_cap) {
-		mesh_eht_cap = kzalloc(sizeof(struct ieee80211_eht_cap_elem), GFP_KERNEL);
+		/* Allocate space for fixed EHT cap elem + the full optional
+		 * MCS/NSS support field (ieee80211_eht_mcs_nss_supp covers both
+		 * the 20-MHz-only case and the worst-case bw._80/_160/_320 case).
+		 */
+		mesh_eht_cap = kzalloc(sizeof(struct ieee80211_eht_cap_elem_fixed) +
+				       sizeof(struct ieee80211_eht_mcs_nss_supp),
+				       GFP_KERNEL);
 		if (!mesh_eht_cap)
 			return -ENOMEM;
 
 		memcpy(mesh_eht_cap, mesh_conf->eht_cap,
-		       sizeof(struct ieee80211_eht_cap_elem));
+		       sizeof(struct ieee80211_eht_cap_elem_fixed));
 		station_params->link_sta_params.eht_capa = mesh_eht_cap;
 	}
 

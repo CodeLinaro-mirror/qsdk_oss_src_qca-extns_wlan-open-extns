@@ -2961,10 +2961,11 @@ int ath12k_wlan_ipa_send_msg(struct ath12k_ipa *ipa_ctx,
 
 	if (ipa_send_msg(&meta, msg, ath12k_wlan_ipa_msg_free_fn)) {
 		ath12k_err(ab, "%s: Evt: %d fail\n", msg->name, meta.msg_type);
+		ipa_ctx->stats.failed_msg++;
 		kfree(msg);
 		return -EIO;
 	}
-	ipa_ctx->stats.num_send_msg++;
+	ipa_ctx->stats.send_msg++;
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_wlan_ipa_send_msg);
@@ -3009,10 +3010,11 @@ int ath12k_wlan_ipa_send_msg_ex(struct ath12k_ipa *ipa_ctx,
 
 	if (ipa_send_msg(&meta, msg_ex, ath12k_wlan_ipa_msg_free_fn)) {
 		ath12k_err(ab, "%s: Evt: %d fail\n", msg_ex->name, meta.msg_type);
+		ipa_ctx->stats.failed_msg++;
 		kfree(msg_ex);
 		return -EIO;
 	}
-	ipa_ctx->stats.num_send_msg++;
+	ipa_ctx->stats.send_msg++;
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_wlan_ipa_send_msg_ex);
@@ -3627,6 +3629,8 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 		return;
 	}
 
+	ipa_ctx->stats.rx_excep++;
+
 	ab = ipa_ctx->ab;
 	dp = ath12k_ab_to_dp(ab);
 
@@ -3640,7 +3644,7 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 	if (if_idx >= ATH12K_IPA_MAX_IFACE) {
 		ath12k_err(ab, "pkt received before intf setup vdev_id=%d",
 			   vdev_id);
-
+		ipa_ctx->stats.rx_no_iface++;
 		/* TODO: If EAPOL is rx before iface setup, send them to nw stack */
 		goto drop;
 	}
@@ -3654,7 +3658,7 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 
 	if (eth->h_proto == cpu_to_be16(ETH_P_PAE) ||
 		eth->h_proto == cpu_to_be16(ETH_P_WAPI)) {
-
+		ipa_ctx->stats.rx_eapol++;
 		dev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
 		if (!dev) {
 			ath12k_err(ab, "netdev is null for '%s'",
@@ -3726,10 +3730,12 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 	status->link_valid = true;
 
 	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
+	ipa_ctx->stats.sent_to_mac++;
 
 	rcu_read_unlock();
 	return;
 drop:
+	ipa_ctx->stats.rx_drop_excep++;
 	dev_kfree_skb_any(skb);
 	return;
 }

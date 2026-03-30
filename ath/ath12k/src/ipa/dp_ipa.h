@@ -349,47 +349,33 @@ struct ath12k_ipa_iface_stats {
 };
 
 /**
- * struct wlan_ipa_stats - IPA system stats
+ * struct ath12k_ipa_stats - IPA system stats
  * @event: WLAN IPA event record
- * @num_send_msg: Number of sent IPA messages
- * @num_free_msg: Number of freed IPA messages
- * @num_rm_grant: Number of times IPA RM resource granted
- * @num_rm_release: Number of times IPA RM resource released
- * @num_rm_grant_imm: Number of immediate IPA RM granted
- * @num_cons_perf_req: Number of CONS pipe perf request
- * @num_prod_perf_req: Number of PROD pipe perf request
- * @num_rx_drop: Number of RX packet drops
- * @num_tx_desc_q_cnt: Number of TX descriptor queue count
- * @num_tx_desc_error: Number of TX descriptor error
- * @num_tx_comp_cnt: Number of TX event_t count
- * @num_tx_queued: Number of TX queued
- * @num_tx_dequeued: Number of TX dequeued
- * @num_max_pm_queue: Number of packets in PM queue
- * @num_rx_excep: Number of RX IPA exception packets
- * @num_rx_no_iface_eapol: No of EAPOL pkts before iface setup
- * @num_tx_fwd_ok: Number of TX forward packet success
- * @num_tx_fwd_err: Number of TX forward packet failures
+ * @send_msg: Number of sent IPA messages
+ * @failed_msg: Number of failed IPA messages
+ * @cons_perf_req: Number of CONS pipe perf request
+ * @prod_perf_req: Number of PROD pipe perf request
+ * @rx_drop_excep: Number of RX packet drops
+ * @tx_desc_q_cnt: Number of TX descriptor queue count
+ * @tx_desc_error: Number of TX descriptor error
+ * @rx_excep: Number of RX IPA exception packets
+ * @rx_no_iface: No of pkts before iface setup
+ * @sent_to_mac: Number of TX forward to MAC layer
+ * @rx_eapol: Number of RX EAPOL packets
  */
 struct ath12k_ipa_stats {
 	u32 event[ATH12K_IPA_WLAN_EVENT_MAX];
-	u64 num_send_msg;
-	u64 num_free_msg;
-	u64 num_rm_grant;
-	u64 num_rm_release;
-	u64 num_rm_grant_imm;
-	u64 num_cons_perf_req;
-	u64 num_prod_perf_req;
-	u64 num_rx_drop;
-	u64 num_tx_desc_q_cnt;
-	u64 num_tx_desc_error;
-	u64 num_tx_comp_cnt;
-	u64 num_tx_queued;
-	u64 num_tx_dequeued;
-	u64 num_max_pm_queue;
-	u64 num_rx_excep;
-	u64 num_rx_no_iface_eapol;
-	u64 num_tx_fwd_ok;
-	u64 num_tx_fwd_err;
+	u64 send_msg;
+	u64 failed_msg;
+	u64 cons_perf_req;
+	u64 prod_perf_req;
+	u64 rx_drop_excep;
+	u64 tx_desc_q_cnt;
+	u64 tx_desc_error;
+	u64 rx_excep;
+	u64 rx_no_iface;
+	u64 sent_to_mac;
+	u64 rx_eapol;
 };
 
 /**
@@ -843,6 +829,8 @@ void ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 
 
 void ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
 				      u8 *mac_addr);
+
+void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
 
 #ifndef ETH_P_WAPI
 #define ETH_P_WAPI 0x88B4

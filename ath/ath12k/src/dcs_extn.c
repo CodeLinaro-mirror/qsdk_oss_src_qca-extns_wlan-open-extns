@@ -137,7 +137,8 @@ void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar, u16 type,
 	}
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-		   "CW intf notify event to userspace\n");
+		   "DCS intf notify event to userspace (type=0x%x bitmap=0x%x)\n",
+		   type, interference_bitmap);
 
 	list_for_each_entry(arvif, &ar->arvifs, list) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
@@ -153,14 +154,14 @@ void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar, u16 type,
 
 	if (!tmp_arvif || !tmp_arvif->ahvif) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-			   "No valid arvif found for CW Intf update\n");
+			   "No valid arvif found for DCS intf update\n");
 		rcu_read_unlock();
 		return;
 	}
 
 	if (!tmp_arvif->ahvif->vif) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-			   "vif is NULL for CW Intf update\n");
+			   "vif is NULL for DCS intf update\n");
 		rcu_read_unlock();
 		return;
 	}
@@ -171,7 +172,7 @@ void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar, u16 type,
 
 	if (!wdev) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-			   "wdev is NULL for CW Intf update\n");
+			   "wdev is NULL for DCS intf update\n");
 		return;
 	}
 
@@ -205,15 +206,13 @@ void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar, u16 type,
 		goto nla_put_failure;
 	}
 
-	if (type == WMI_DCS_OBSS_INTF) {
-		ret = nla_put_u32(vendor_event,
+	ret = nla_put_u32(vendor_event,
 				QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_BITMAP,
 				interference_bitmap);
 
-		if (ret) {
-			ath12k_warn(ar->ab, "Failed to put DCS interference bitmap\n");
-			goto nla_put_failure;
-		}
+	if (ret) {
+		ath12k_warn(ar->ab, "Failed to put DCS interference bitmap\n");
+		goto nla_put_failure;
 	}
 
 	cfg80211_vendor_event(vendor_event, GFP_ATOMIC);

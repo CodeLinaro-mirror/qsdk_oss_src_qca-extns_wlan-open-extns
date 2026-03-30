@@ -7299,6 +7299,129 @@ int ath12k_vendor_get_wiphy_sr_params_extn(struct wiphy *wiphy,
 	return ret;
 }
 
+const struct nla_policy
+ath12k_vendor_scan_policy[QCA_WLAN_VENDOR_ATTR_SCAN_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_SCAN_RESTTIME]    = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_SCAN_WAITTIME]    = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES] = { .type = NLA_NESTED },
+	[QCA_WLAN_VENDOR_ATTR_SCAN_DWELL_TIME]  = { .type = NLA_U64 },
+	[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN]       = { .type = NLA_NESTED },
+};
+
+const struct nla_policy
+ath12k_vendor_split_scan_params_policy[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_DWELL]     = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_DWELLREST] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_TYPE]      = { .type = NLA_U8 },
+};
+
+int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
+					struct wireless_dev *wdev,
+					const void *data,
+					int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_SCAN_MAX + 1];
+	struct nlattr *tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX + 1];
+	struct ath12k *ar;
+	struct ath12k_cbs_scan_params cbs = {0};
+	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+	struct genl_info *info;
+	struct nlattr *freq_attr;
+	u32 *freq_list = NULL;
+	int num_freqs = 0;
+	int rem, ret;
+
+	if (!data || !data_len)
+		return -EINVAL;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_SCAN_MAX,
+			data, data_len, ath12k_vendor_scan_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "CBS: failed to parse top-level attrs: %d\n", ret);
+		return ret;
+	}
+
+	info = rdev->cur_cmd_info;
+	if (info && info->attrs[NL80211_ATTR_MLO_LINK_ID])
+		cbs.link_id = nla_get_u8(info->attrs[NL80211_ATTR_MLO_LINK_ID]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_RESTTIME])
+		cbs.resttime = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_SCAN_RESTTIME]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_WAITTIME])
+		cbs.waittime = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_SCAN_WAITTIME]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_DWELL_TIME])
+		cbs.totaldwell = (u32)nla_get_u64(tb[QCA_WLAN_VENDOR_ATTR_SCAN_DWELL_TIME]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES]) {
+		nla_for_each_nested(freq_attr,
+				    tb[QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES],
+				    rem)
+			num_freqs++;
+
+		if (num_freqs > 0) {
+			freq_list = kcalloc(num_freqs, sizeof(u32), GFP_KERNEL);
+			if (!freq_list)
+				return -ENOMEM;
+
+			num_freqs = 0;
+			nla_for_each_nested(freq_attr,
+					    tb[QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES],
+					    rem)
+				freq_list[num_freqs++] = nla_get_u32(freq_attr);
+
+			cbs.freq_list = freq_list;
+			cbs.num_freqs = (u8)num_freqs;
+		}
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN]) {
+		ret = nla_parse_nested(tb_split,
+				       QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX,
+				       tb[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN],
+				       ath12k_vendor_split_scan_params_policy,
+				       NULL);
+		if (ret) {
+			ath12k_err(NULL,
+				   "CBS: failed to parse SPLIT_SCAN nested attrs: %d\n",
+				   ret);
+			kfree(freq_list);
+			return ret;
+		}
+
+		if (tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_DWELL])
+			cbs.dwellsplit =
+				nla_get_u32(tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_DWELL]);
+
+		if (tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_DWELLREST])
+			cbs.dwellrest =
+				nla_get_u32(tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_DWELLREST]);
+
+		if (tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_TYPE])
+			cbs.enable =
+				nla_get_u8(tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_TYPE]);
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
+		   "CBS scan params: enable=%u resttime=%u dwellrest=%u waittime=%u dwellsplit=%u totaldwell=%u num_freqs=%u link_id=%u\n",
+		   cbs.enable, cbs.resttime, cbs.dwellrest,
+		   cbs.waittime, cbs.dwellsplit, cbs.totaldwell, cbs.num_freqs,
+		   cbs.link_id);
+
+	/* Store parsed params into ar_extn */
+	ar = ath12k_get_ar_from_wdev(wdev, cbs.link_id);
+	if (!ar) {
+		ath12k_err(NULL, "CBS: failed to find ar\n");
+		kfree(freq_list);
+		return -ENODATA;
+	}
+
+	kfree(ar->ar_extn.cbs_params.freq_list);
+	memcpy(&ar->ar_extn.cbs_params, &cbs, sizeof(ar->ar_extn.cbs_params));
+	return 0;
+}
+
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)
 {

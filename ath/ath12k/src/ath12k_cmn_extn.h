@@ -278,6 +278,18 @@ struct wlan_intf_extn {
 	struct dcs_wlan_intr_user_cfg dcs_cfg;
 };
 
+struct ath12k_cbs_scan_params {
+	u8 enable;
+	u32 resttime;
+	u32 dwellrest;
+	u32 waittime;
+	u32 dwellsplit;
+	u32 totaldwell;
+	u32 *freq_list;
+	u8 num_freqs;
+	u8 link_id;
+};
+
 /**
  * struct ath12k_extn - ath12k driver private extensions
  * @esp:  esp extensions structure
@@ -307,6 +319,7 @@ struct ath12k_extn {
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;
 	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
+	struct ath12k_cbs_scan_params cbs_params;
 	struct wlan_intf_extn wlan_intf;
 	u8 intf_detect_cnt;
 	u8 samp_cnt;
@@ -968,6 +981,7 @@ void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 					    struct ieee80211_chanctx_conf *ctx);
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
+void ath12k_ar_extn_deinit(struct ath12k *ar);
 
 
 void ath12k_sysfs_init_extn(struct ath12k *ar);

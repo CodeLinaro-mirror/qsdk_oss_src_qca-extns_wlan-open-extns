@@ -1556,7 +1556,8 @@ static bool ath12k_dp_ipa_get_extended(struct ath12k_vif *ahvif,
 			arvif = rcu_dereference(ahvif->link[link_id]);
 		if (arvif) {
 			ar = arvif->ar;
-			is_extended = ar->fw_stats.en_vdev_stats_ol;
+			if(ar)
+				is_extended = ar->fw_stats.en_vdev_stats_ol;
 		}
 		rcu_read_unlock();
 	} else {
@@ -1566,7 +1567,8 @@ static bool ath12k_dp_ipa_get_extended(struct ath12k_vif *ahvif,
 				arvif = &ahvif->deflink;
 			if (arvif) {
 				ar = arvif->ar;
-				is_extended = ar->fw_stats.en_vdev_stats_ol;
+				if(ar)
+					is_extended = ar->fw_stats.en_vdev_stats_ol;
 			}
 		} else {
 			for_each_set_bit(link_id, &links_map, ATH12K_NUM_MAX_LINKS) {

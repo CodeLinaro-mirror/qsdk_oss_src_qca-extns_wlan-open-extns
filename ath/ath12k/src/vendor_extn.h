@@ -516,4 +516,30 @@ enum srtype {
 };
 
 #define SR_TYPE_LENGTH 16
+#define IEEE80211_EHT_LTF_4X      0x3
+#define IEEE80211_EHT_BW_IDX_MAX  4
+
+/* GI Modes. */
+#define IEEE80211_GI_0DOT8_US           0   /*800 nano secs/0.8 us is default/GI disabled mode in HT,VHT, HE*/
+#define IEEE80211_GI_0DOT4_US           1   /*400 nano secs/0.4 us is supported in HT and VHT modes */
+#define IEEE80211_GI_1DOT6_US           2   /*1600 nano secs/1.6 us is only in HE mode */
+#define IEEE80211_GI_3DOT2_US           3   /*3600 nano secs/3.2 us is only in HE mode */
+
+#define IEEE80211_RTS_CTS_MASK          0x0f
+#define IEEE80211_RTS_CTS_SHIFT         0
+#define IEEE80211_RTS_CTS_PROFILE_MASK  0xf0
+#define IEEE80211_RTS_CTS_PROFILE_SHIFT 4
+
+/* macro indicating max available IEEE80211_RTSCTS_PROFILE. To be updated as and when a new profile is added */
+#define IEEE80211_RTSCTS_PROFILE_MAX_VALUE 4
+
+/* macro indicating max available IEEE80211_RTS_CTS flag. To be updated as and when a new flag is added */
+#define IEEE80211_RTSCTS_FLAG_MAX_VALUE 2
+
+#define IEEE80211_HE_BW_IDX_MAX               3
+
+/* Default VHT80 rate mask support all MCS rates except NSS=3 MCS 6 */
+#define MAX_VHT80_RATE_MASK   0x3bffffff /* NSS=1 MCS 0-9, NSS=2 MCS 0-9, NSS=3 MCS 0-5 7-9 */
+
+#define MAX_VHT_SGI_MASK   0x3ff /* MCS 0-9 */
 #endif /* VENDOR_EXTN_H */

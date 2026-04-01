@@ -1268,6 +1268,307 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			   value, arvif->vdev_id);
 	break;
 #endif
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BW_NSS_RATE:
+		u_int32_t bw, nss, ratemask, max_bw;
+
+		bw = (value & 0xff000000) >> 24;
+		nss = (value & 0x00ff0000) >> 16;
+		ratemask = (value & 0xffff);
+		max_bw = 6;
+
+		if (bw > max_bw) {
+			ath12k_err(NULL, "Not yet supported value for Band Width: %d\n", bw);
+			return -EINVAL;
+		} else if ((bw <= max_bw) && (bw >= 3) && (ratemask > 0x3ff)) {
+			ath12k_err(NULL, "Invalid ratemask for VHT Band: 0x%x\n", ratemask);
+			return -EINVAL;
+		} else if ((bw <= 2) && (bw >= 1) && (ratemask > 0xff)) {
+			ath12k_err(NULL, "Invalid ratemask for HT Band: 0x%x\n", ratemask);
+			return -EINVAL;
+		} else if ((bw <= max_bw) && (bw >= 1) && ((nss > 4) || (nss == 0)))  {
+			ath12k_err(NULL, "Invalid nss for VHT/HT Band: %d\n", nss);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_BW_NSS_RATEMASK, value);
+		if (!ret) {
+			arvif->vap_cfg.bw_nss_rate = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_BW_NSS_RATEMASK to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LDPC:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "EHT UL LDPC setting should either 0 or 1.\n");
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.eht_ul_ldpc ) {
+			ath12k_err(NULL, "value %d is already set for iv_eht_ul_ldpc", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_LDPC, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
+		if (!ret) {
+			arvif->vap_cfg.eht_ul_ldpc = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_LDPC to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LTF:
+		if (value > IEEE80211_EHT_LTF_4X) {
+			ath12k_err(NULL, "LTF value should be less than or equal to 0x%x\n", IEEE80211_EHT_LTF_4X);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_EHT_LTF, value);
+		if (!ret) {
+			arvif->vap_cfg.eht_ul_ltf = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_EHT_LTF to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_NSS:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_NSS, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
+		if (!ret) {
+			arvif->vap_cfg.eht_ul_nss = value;
+			if (!(arvif->vap_cfg.eht_ul_ldpc) && (arvif->vap_cfg.eht_ul_nss > 4)) {
+				arvif->vap_cfg.eht_ul_ldpc = 1;
+			}
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_NSS to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_PPDU_BW:
+		if (value > IEEE80211_EHT_BW_IDX_MAX) {
+			ath12k_err(NULL, "Channel width value should be less than IEEE80211_EHT_BW_IDX_MAX %d", IEEE80211_EHT_BW_IDX_MAX);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_PPDU_BW, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
+		if (!ret) {
+			arvif->vap_cfg.eht_ul_ppdu_bw = value;
+			if (!(arvif->vap_cfg.eht_ul_ldpc) && (arvif->vap_cfg.eht_ul_ppdu_bw > 0)) {
+				arvif->vap_cfg.eht_ul_ldpc = 1;
+			}
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_PPDU_BW to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_SHORTGI:
+		if ((value == IEEE80211_GI_0DOT4_US) || (value > IEEE80211_GI_3DOT2_US)) {
+			ath12k_err(NULL, "%d not supported setting for EHT UL Shortgi\n", IEEE80211_GI_0DOT4_US);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_GI, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
+		if (!ret) {
+			arvif->vap_cfg.eht_ul_shortgi = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_GI to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_STBC:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "EHT UL STBC setting should either 0 or 1.\n");
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.eht_ul_stbc) {
+			ath12k_err(NULL, "value %d is already set for iv_eht_ul_stbc", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_STBC, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
+		if (!ret) {
+			arvif->vap_cfg.eht_ul_stbc = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_STBC to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ENABLERTSCTS:
+		if (((value & (~0xff)) != 0) ||
+		    (((value & IEEE80211_RTS_CTS_MASK) == 0) &&
+		     (((value & IEEE80211_RTS_CTS_PROFILE_MASK) >> IEEE80211_RTS_CTS_PROFILE_SHIFT) != 0)) ||
+		    (((value & IEEE80211_RTS_CTS_MASK) != 0) &&
+		     (((value & IEEE80211_RTS_CTS_PROFILE_MASK) >> IEEE80211_RTS_CTS_PROFILE_SHIFT) == 0))) {
+			ath12k_err(NULL, "Invalid value for RTS-CTS: %x\n", value);
+			return -EINVAL;
+		}
+		if (((value & IEEE80211_RTS_CTS_MASK) > IEEE80211_RTSCTS_FLAG_MAX_VALUE) ||
+		    (((value & IEEE80211_RTS_CTS_PROFILE_MASK) >> IEEE80211_RTS_CTS_PROFILE_SHIFT) > IEEE80211_RTSCTS_PROFILE_MAX_VALUE)) {
+			ath12k_err(NULL, "Not yet supported value for RTS-CTS: %x\n", value);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_ENABLE_RTSCTS, value);
+		if (!ret) {
+			arvif->vap_cfg.enablertscts = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_ENABLE_RTSCTS to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_DCM:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "HE DCM setting should be 0 or 1 ");
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.he_dcm) {
+			ath12k_err(NULL, "value %d is already set for he_dcm", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_HE_DCM, value);
+		if (!ret) {
+			arvif->vap_cfg.he_dcm = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_HE_DCM to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_EXTRANGE:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "HE Extended Range setting should be 0 or 1 ");
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.he_extrange) {
+			ath12k_err(NULL, "value %d is already set for he_extrange", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_HE_RANGE_EXT, value);
+		if (!ret) {
+			arvif->vap_cfg.he_extrange = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_HE_RANGE_EXT to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_LDPC:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "UL LDPC setting should either 0 or 1.\n");
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.he_ul_ldpc) {
+			ath12k_err(NULL, "value %d is already set for he_ul_ldpc", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_LDPC, value);
+		if (!ret) {
+			arvif->vap_cfg.he_ul_ldpc = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_LDPC to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_NSS:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_NSS, value);
+		if (!ret) {
+			arvif->vap_cfg.he_ul_nss = value;
+			if (!(arvif->vap_cfg.he_ul_ldpc) && (arvif->vap_cfg.he_ul_nss > 4)) {
+				arvif->vap_cfg.he_ul_ldpc = 1;
+			}
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_NSS to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_PPDU_BW:
+		if (value >  IEEE80211_HE_BW_IDX_MAX) {
+			ath12k_err(NULL, "Channel width value should be less than 3.\n");
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_PPDU_BW, value);
+		if (!ret) {
+			arvif->vap_cfg.he_ul_ppdu_bw = value;
+			if (!(arvif->vap_cfg.he_ul_ldpc) && (arvif->vap_cfg.he_ul_ppdu_bw > 0)) {
+				arvif->vap_cfg.he_ul_ldpc = 1;
+			}
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_PPDU_BW to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_SHORTGI:
+		if ((value == IEEE80211_GI_0DOT4_US) ||
+		    (value > IEEE80211_GI_3DOT2_US)) {
+			ath12k_err(NULL, "%d not supported setting for HE UL Shortgi\n", IEEE80211_GI_0DOT4_US);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_GI, value);
+		if (!ret) {
+			arvif->vap_cfg.he_ul_shortgi = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_GI to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_STBC:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "UL STBC setting should either 0 or 1.\n");
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.he_ul_stbc) {
+			ath12k_err(NULL, "value %d is already set for he_ul_stbc", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_UL_STBC, value);
+		if (!ret) {
+			arvif->vap_cfg.he_ul_stbc = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_STBC to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RTSCTS_RATE:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_RTSCTS_RATE, value);
+		if (!ret) {
+			arvif->vap_cfg.rtscts_rate = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_RTSCTS_RATE to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_SGIMASK:
+		if (value > MAX_VHT_SGI_MASK) {
+			ath12k_err(NULL, "value can not be more than %d", MAX_VHT_SGI_MASK);
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.vht_sgimask) {
+			ath12k_err(NULL, "vht_sgimask %d is already set", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_VHT_SGIMASK, value);
+		if (!ret) {
+			arvif->vap_cfg.vht_sgimask = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_VHT_SGIMASK to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT80_RATE:
+		if (value > MAX_VHT80_RATE_MASK) {
+			ath12k_err(NULL, "value can not be more than %d", MAX_VHT80_RATE_MASK);
+			return -EINVAL;
+		}
+		if ((value & MAX_VHT80_RATE_MASK) == arvif->vap_cfg.vht80_rate) {
+			ath12k_err(NULL, "vht80_ratemask %d already set", value);
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_VHT80_RATEMASK, value);
+		if (!ret) {
+			arvif->vap_cfg.vht80_rate = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_VHT80_RATEMASK to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DIS_LPI_ANT_OPTIMIZE:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_DISABLE_LPI_ANT_OPTIMIZATION, value);
+		if (!ret) {
+			arvif->vap_cfg.dis_lpi_ant_optimize = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_DISABLE_LPI_ANT_OPTIMIZATION to firmware");
+		}
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -3312,7 +3613,83 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		ret = 0;
 	break;
 #endif
-        default:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BW_NSS_RATE:
+		*value = arvif->vap_cfg.bw_nss_rate;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LDPC:
+		*value = arvif->vap_cfg.eht_ul_ldpc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LTF:
+		*value = arvif->vap_cfg.eht_ul_ltf;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_NSS:
+		*value = arvif->vap_cfg.eht_ul_nss;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_PPDU_BW:
+		*value = arvif->vap_cfg.eht_ul_ppdu_bw;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_SHORTGI:
+		*value = arvif->vap_cfg.eht_ul_shortgi;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_STBC:
+		*value = arvif->vap_cfg.eht_ul_stbc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ENABLERTSCTS:
+		*value = arvif->vap_cfg.enablertscts;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_DCM:
+		*value = arvif->vap_cfg.he_dcm;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_EXTRANGE:
+		*value = arvif->vap_cfg.he_extrange;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_LDPC:
+		*value = arvif->vap_cfg.he_ul_ldpc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_NSS:
+		*value = arvif->vap_cfg.he_ul_nss;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_PPDU_BW:
+		*value = arvif->vap_cfg.he_ul_ppdu_bw;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_SHORTGI:
+		*value = arvif->vap_cfg.he_ul_shortgi;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_STBC:
+		*value = arvif->vap_cfg.he_ul_stbc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RTSCTS_RATE:
+		*value = arvif->vap_cfg.rtscts_rate;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_SGIMASK:
+		*value = arvif->vap_cfg.vht_sgimask;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT80_RATE:
+		*value = arvif->vap_cfg.vht80_rate;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DIS_LPI_ANT_OPTIMIZE:
+		*value = arvif->vap_cfg.dis_lpi_ant_optimize;
+		ret = 0;
+		break;
+       default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
                 break;

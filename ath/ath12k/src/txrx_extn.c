@@ -360,11 +360,12 @@ static int ath12k_validate_offchan_operation(struct ath12k *ar,
 					     struct ath12k_link_vif *arvif)
 {
 	struct ath12k_vif *ahvif;
-	if (!ar || !arvif) {
-		ath12k_err(NULL, "Invalid ar or arvif\n");
+	if (!arvif->ahvif) {
+		ath12k_err(NULL, "Invalid ahvif\n");
 		return -EINVAL;
 	}
-	ahvif = container_of((void *)arvif, struct ath12k_vif, deflink);
+	ahvif = arvif->ahvif;
+
 	if (ahvif->vdev_type == WMI_VDEV_TYPE_MONITOR) {
 		ath12k_err(ar->ab, "Not supported on monitor interface\n");
 		return -EOPNOTSUPP;

@@ -988,23 +988,29 @@ void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
-void ath12k_peer_assoc_h_auth_extn(struct ath12k_link_vif *arvif,
+void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ath12k_link_sta *arsta,
+				   struct ieee80211_link_sta *link_sta,
 				   struct ath12k_wmi_peer_assoc_arg *arg)
 {
 	struct ath12k_vif *ahvif = arvif->ahvif;
 	struct ath12k *ar = arvif->ar;
 
-	if (!arsta || !arg) {
+	if (!arsta || !link_sta || !arg) {
 		ath12k_err(ar->ab, "Link STA/Peer assoc args is NULL\n");
 		return;
 	}
 
 	/* For statically added mesh peers, keys will be programmed by user.
-	 * Reset the need_ptk_4_way/need_gtk_2_way flag when sending peer assoc. */
+	 * Reset the need_ptk_4_way/need_gtk_2_way flag when sending peer assoc.
+	 *
+	 * Save calculated phymode and nss for peer lookup.
+	 */
 	if (ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
 		arg->need_ptk_4_way = false;
 		arg->need_gtk_2_way = false;
+		link_sta->sta->sta_extn.peer_info.mesh_peer_phymode = arg->peer_phymode;
+		link_sta->sta->sta_extn.peer_info.mesh_peer_nss = arg->peer_nss;
 	}
 
 	return;

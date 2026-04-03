@@ -805,8 +805,9 @@ void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr
 void ath12k_extn_reconfig_extn_params(struct ath12k *ar);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
-void ath12k_peer_assoc_h_auth_extn(struct ath12k_link_vif *arvif,
+void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ath12k_link_sta *arsta,
+				   struct ieee80211_link_sta *link_sta,
 				   struct ath12k_wmi_peer_assoc_arg *arg);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 

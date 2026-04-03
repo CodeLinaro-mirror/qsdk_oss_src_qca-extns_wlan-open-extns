@@ -3795,6 +3795,196 @@ clean:
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+static const char *ath12k_phymode_str(enum wmi_phy_mode mode)
+{
+	switch (mode) {
+	case MODE_11A:
+		return "11a";
+	case MODE_11G:
+		return "11g";
+	case MODE_11B:
+		return "11b";
+	case MODE_11GONLY:
+		return "11gonly";
+	case MODE_11NA_HT20:
+		return "11na-ht20";
+	case MODE_11NG_HT20:
+		return "11ng-ht20";
+	case MODE_11NA_HT40:
+		return "11na-ht40";
+	case MODE_11NG_HT40:
+		return "11ng-ht40";
+	case MODE_11AC_VHT20:
+		return "11ac-vht20";
+	case MODE_11AC_VHT40:
+		return "11ac-vht40";
+	case MODE_11AC_VHT80:
+		return "11ac-vht80";
+	case MODE_11AC_VHT160:
+		return "11ac-vht160";
+	case MODE_11AC_VHT80_80:
+		return "11ac-vht80+80";
+	case MODE_11AC_VHT20_2G:
+		return "11ac-vht20-2g";
+	case MODE_11AC_VHT40_2G:
+		return "11ac-vht40-2g";
+	case MODE_11AC_VHT80_2G:
+		return "11ac-vht80-2g";
+	case MODE_11AX_HE20:
+		return "11ax-he20";
+	case MODE_11AX_HE40:
+		return "11ax-he40";
+	case MODE_11AX_HE80:
+		return "11ax-he80";
+	case MODE_11AX_HE80_80:
+		return "11ax-he80+80";
+	case MODE_11AX_HE160:
+		return "11ax-he160";
+	case MODE_11AX_HE20_2G:
+		return "11ax-he20-2g";
+	case MODE_11AX_HE40_2G:
+		return "11ax-he40-2g";
+	case MODE_11AX_HE80_2G:
+		return "11ax-he80-2g";
+	case MODE_11BE_EHT20:
+		return "11be-eht20";
+	case MODE_11BE_EHT40:
+		return "11be-eht40";
+	case MODE_11BE_EHT80:
+		return "11be-eht80";
+	case MODE_11BE_EHT80_80:
+		return "11be-eht80+80";
+	case MODE_11BE_EHT160:
+		return "11be-eht160";
+	case MODE_11BE_EHT160_160:
+		return "11be-eht160+160";
+	case MODE_11BE_EHT320:
+		return "11be-eht320";
+	case MODE_11BE_EHT20_2G:
+		return "11be-eht20-2g";
+	case MODE_11BE_EHT40_2G:
+		return "11be-eht40-2g";
+	case MODE_11BN_UHR20:
+		return "11bn-uhr20";
+	case MODE_11BN_UHR40:
+		return "11bn-uhr40";
+	case MODE_11BN_UHR80:
+		return "11bn-uhr80";
+	case MODE_11BN_UHR80_80:
+		return "11bn-uhr80+80";
+	case MODE_11BN_UHR160:
+		return "11bn-uhr160";
+	case MODE_11BN_UHR160_160:
+		return "11bn-uhr160+160";
+	case MODE_11BN_UHR320:
+		return "11bn-uhr320";
+	case MODE_11BN_UHR20_2G:
+		return "11bn-uhr20-2g";
+	case MODE_11BN_UHR40_2G:
+		return "11bn-uhr40-2g";
+	case MODE_UNKNOWN:
+		/* skip */
+		break;
+	}
+
+	return "<unknown>";
+}
+
+/**
+ * ath12k_vendor_mesh_peer_dump - Dump mesh peer information
+ *
+ * @wiphy: wiphy pointer
+ * @vif: virtual interface pointer
+ * @peer_mld_mac: MAC address of specific peer to dump, or NULL for all peers
+ *
+ * Prints the MAC address, AID, and all mesh_peer_info fields for a specific
+ * mesh peer (when peer_mld_mac is non-NULL) or for every mesh peer on the
+ * interface (when peer_mld_mac is NULL).
+ *
+ * Return: 0 on success, -ENOENT if the specified peer was not found,
+ *         or a negative error code on other failures.
+ */
+static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
+					struct ieee80211_vif *vif,
+					const u8 *peer_mld_mac)
+{
+	struct ieee80211_sub_if_data *sdata;
+	struct sta_info *sta;
+	struct mesh_peer_info *peer_info;
+	bool found = false;
+
+	if (!vif)
+		return -EINVAL;
+
+	sdata = vif_to_sdata(vif);
+
+	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+		ath12k_err(NULL, "mesh_peer_dump: not a mesh VAP\n");
+		return -EINVAL;
+	}
+
+	lockdep_assert_wiphy(wiphy);
+
+	list_for_each_entry_rcu(sta, &sdata->local->sta_list, list) {
+		if (sta->sdata != sdata)
+			continue;
+
+		if (!sta->sta.sta_extn.peer_info.is_mesh_peer)
+			continue;
+
+		/* If a specific MAC is provided, skip non-matching peers */
+		if (peer_mld_mac && !ether_addr_equal(sta->sta.addr, peer_mld_mac))
+			continue;
+
+		peer_info = &sta->sta.sta_extn.peer_info;
+		found = true;
+
+		pr_info("\t----------------------------------------------------------\n");
+		pr_info("\tMesh Peer MAC : %pM\n", sta->sta.addr);
+		pr_info("\tAID           : %u\n", sta->sta.aid);
+		pr_info("\t  -- Peer Info --\n");
+		pr_info("\t  is_mesh_peer   : %s\n",
+		       peer_info->is_mesh_peer ? "true" : "false");
+		pr_info("\t  phymode        : %s\n",
+		       ath12k_phymode_str(peer_info->mesh_peer_phymode));
+		pr_info("\t  nss            : %u\n",
+		       peer_info->mesh_peer_nss);
+		pr_info("\t  -- Beacon Tracking --\n");
+		pr_info("\t  miss_count     : %u\n",
+		       peer_info->beacon_miss_count);
+		{
+			unsigned long now = jiffies;
+			unsigned long delta_ms = peer_info->last_beacon_time ?
+						 jiffies_to_msecs(now - peer_info->last_beacon_time) : 0;
+			pr_info("\t  current_time   : %lu jiffies\n", now);
+			pr_info("\t  last_beacon    : %lu jiffies\n",
+			       peer_info->last_beacon_time);
+			pr_info("\t  beacon_age     : %lu sec\n", delta_ms / 1000);
+		}
+		pr_info("\t  -- Beacon Intersection --\n");
+		pr_info("\t  done           : %s\n",
+		       peer_info->intersection_done ? "true" : "false");
+		pr_info("\t  attempts       : %u\n",
+		       peer_info->intersect_attempts);
+		pr_info("\t  successes      : %u\n",
+		       peer_info->intersect_successes);
+		pr_info("\t  failures       : %u\n",
+		       peer_info->intersect_failures);
+		pr_info("\t----------------------------------------------------------\n");
+
+		if (peer_mld_mac)
+			break;
+	}
+
+	if (peer_mld_mac && !found) {
+		ath12k_err(NULL, "mesh_peer_dump: peer %pM not found\n",
+			   peer_mld_mac);
+		return -ENOENT;
+	}
+
+	return 0;
+}
+
 int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     struct ath12k_wifi_generic_params *params)
@@ -3846,6 +4036,11 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 		ret = ieee80211_vendor_mesh_peer_timeout_en(wiphy, vif,
 							    mesh_params->
 							    peer_cleanup_timer_enable);
+		break;
+	case ATH12K_EXTN_MESH_CONF_PEER_DUMP:
+		ret = ath12k_vendor_mesh_peer_dump(wiphy, vif,
+						   is_zero_ether_addr(mesh_params->peer_mld_mac) ?
+						   NULL : mesh_params->peer_mld_mac);
 		break;
 	default:
 		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);

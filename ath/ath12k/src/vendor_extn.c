@@ -2125,6 +2125,31 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MSDU_TTL_CMDID to firmware");
                 }
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_DFS_NOL_SUBCHANNEL_MARKING:
+	{
+		bool enable;
+		enable = !!value;
+		if (ar->dfs_sub_channel_marking == enable) {
+			ret = 0;
+			break;
+		}
+
+		ar->dfs_sub_channel_marking = enable;
+		ret = 0;
+
+		if (ar->ah->state != ATH12K_HW_STATE_ON) {
+			break;
+		}
+
+		ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SUB_CHANNEL_MARKING,
+						enable ? 1 : 0, ar->pdev->pdev_id);
+		if (ret) {
+			ath12k_warn(ar->ab, "failed to set sub channel marking: %d\n", ret);
+			break;
+		}
+
+		break;
+	}
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -2695,6 +2720,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 *value = ar->radio_cfg.msdu_ttl;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_DFS_NOL_SUBCHANNEL_MARKING:
+		*value = ar->dfs_sub_channel_marking;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);

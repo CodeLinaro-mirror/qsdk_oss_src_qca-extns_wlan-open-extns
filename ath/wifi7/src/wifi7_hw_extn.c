@@ -88,6 +88,10 @@ int ath12k_mac_op_mesh_peer_update_caps_extn(struct ieee80211_hw *hw,
 	ath12k_peer_assoc_prepare(ar, arvif, arsta,
 				  peer_arg, true, link_sta);
 
+	/* Update mesh peer phymode and nss from the prepared peer assoc args */
+	sta->sta_extn.peer_info.mesh_peer_phymode = peer_arg->peer_phymode;
+	sta->sta_extn.peer_info.mesh_peer_nss = peer_arg->peer_nss;
+
 	/* Set is_assoc = false to indicate this is a capability
 	 * update for an existing peer, not a new association
 	 */

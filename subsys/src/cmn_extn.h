@@ -110,6 +110,8 @@ struct mesh_bss_conf {
 /**
  * struct mesh_peer_info - Mesh peer beacon intersection state
  * @is_mesh_peer: True if this station is a configured mesh peer
+ * @mesh_peer_phymode: Peer phymode
+ * @mesh_peer_nss: Peer nss
  * @beacon_ie_checksum: CRC32 checksum of critical IEs from last beacon
  * @beacon_miss_count: Number of consecutive missed beacons
  * @last_beacon_time: Timestamp of last received beacon (jiffies)
@@ -120,6 +122,8 @@ struct mesh_bss_conf {
  */
 struct mesh_peer_info {
 	bool is_mesh_peer;
+	u32 mesh_peer_phymode;
+	u32 mesh_peer_nss;
 	u32 beacon_ie_checksum;
 	u8 beacon_miss_count;
 	unsigned long last_beacon_time;

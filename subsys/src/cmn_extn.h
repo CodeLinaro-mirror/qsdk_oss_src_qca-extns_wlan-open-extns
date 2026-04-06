@@ -6,6 +6,7 @@
 #ifndef CMN_EXTN_H
 #define CMN_EXTN_H
 
+#include <net/mac80211.h>
 #include "../../../include/net/cfg80211.h"
 
 struct ieee802_11_elems;
@@ -19,6 +20,7 @@ struct link_sta_info;
 struct ieee80211_supported_band;
 struct ieee80211_link_sta;
 struct ieee80211_rx_data;
+struct ieee80211_rx_status;
 struct wiphy;
 typedef unsigned int __bitwise ieee80211_rx_result;
 struct wireless_dev;
@@ -27,6 +29,7 @@ struct sta_info;
 struct ieee80211_bss_conf;
 struct ieee80211_hw;
 struct ieee80211_sta;
+extern unsigned int mmeshsim;
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define MESH_CAPS_VER1 0x8000
@@ -41,6 +44,7 @@ struct ieee80211_sta;
 #define MESH_PEER_MAX_LINKS 3
 
 #define MESH_PEER_TIMEOUT_CNT 3			/* Peer inactivity timeout threshold */
+#define MMESH_TX_META_HDR 16
 #define MESH_PEER_INACTIVITY_PERIOD 20000	/* Peer inactivity timer in milliseconds */
 
 #define MESH_AID_WORDS ((2008 + 31) / 32)  /* 63 words for 2008 AIDs */
@@ -366,6 +370,8 @@ void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 				       u32 *hw_reconf_flags);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);
+void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status);
 int
 ieee80211_mesh_ap_config_save(struct cfg80211_ap_settings *params,
 			      struct ieee80211_bss_conf *link_conf);
@@ -436,6 +442,14 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 
 void
 ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
+
+int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
+				    int link_id,
+				    const u8 *peer_mac,
+				    bool pairwise,
+				    u8 key_idx,
+				    u8 *out_key, u8 out_key_max,
+				    u8 *out_key_len);
 
 /**
  * struct ieee80211_vendor_mesh_ops - vendor mesh operation function pointers

@@ -2308,6 +2308,8 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 	int ret = 0;
 	struct ath12k_wlan_ipa_priv *ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
 	struct device *dev = ab->dev;
+	struct ath12k_dp_hw_group *dp_hw_grp = ab->dp->dp_hw_grp;
+	struct ath12k_ipa_global_ctx *ipa_global_ctx = dp_hw_grp->ipa_global_ctx;
 
 	ath12k_info(ab, "enter in uc ol deinit");
 
@@ -2323,6 +2325,11 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		ath12k_err(ab, "IPA is already deinit for hdl:%d",ipa_ctx->hdl);
 		ret = 0;
 		goto out;
+	}
+
+	if (ipa_global_ctx) {
+		ath12k_info(ab, "flushing IPA Event queue");
+		flush_work(&ipa_global_ctx->work);
 	}
 
 	wlan_ipa_disable_pipes(ipa_ctx);

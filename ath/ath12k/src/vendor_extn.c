@@ -61,6 +61,86 @@ ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] =
 	} while (0)
 #endif
 
+#define LOW_BAND_MIN_FIVEG_FREQ   5180
+#define LOW_BAND_MAX_FIVEG_FREQ   5320
+#define MAX_FREQ_IN_TWOG          2484
+#define LOW_BAND_MAX_SIXG_FREQ    6515
+#define HIGH_BAND_MIN_SIXG_FREQ   6535
+
+enum ath12k_radio_band_info {
+	NO_BAND_INFORMATION_AVAILABLE	= 0,
+	HIGH_BAND_5G_RADIO		= 1,
+	FULL_BAND_5G_RADIO		= 2,
+	LOW_BAND_5G_RADIO		= 3,
+	NON_5G_RADIO			= 4,
+	FULL_BAND_6G_RADIO		= 5,
+	BAND_5G_6G_RADIO		= 6,
+	LOW_BAND_6G_RADIO		= 7,
+	HIGH_BAND_6G_RADIO		= 8,
+};
+
+static bool ath12k_vendor_get_freq_range_for_band_info(struct ath12k *ar,
+							u32 *low_freq,
+							u32 *high_freq)
+{
+	if (!ar->freq_range.start_freq || !ar->freq_range.end_freq)
+		return false;
+
+	*low_freq = KHZ_TO_MHZ(ar->freq_range.start_freq);
+	*low_freq += ATH12K_HALF_20MHZ_BW;
+	*high_freq = KHZ_TO_MHZ(ar->freq_range.end_freq);
+	*high_freq -= ATH12K_HALF_20MHZ_BW;
+
+	return true;
+}
+
+static u32 ath12k_vendor_classify_radio_band(u32 low_freq, u32 high_freq)
+{
+	if (low_freq >= ATH12K_MIN_6GHZ_FREQ && high_freq <= LOW_BAND_MAX_SIXG_FREQ)
+		return LOW_BAND_6G_RADIO;
+
+	if (low_freq >= HIGH_BAND_MIN_SIXG_FREQ && high_freq <= ATH12K_MAX_6GHZ_FREQ)
+		return HIGH_BAND_6G_RADIO;
+
+	if (low_freq >= ATH12K_MIN_6GHZ_FREQ &&
+	    low_freq <= LOW_BAND_MAX_SIXG_FREQ &&
+	    high_freq >= HIGH_BAND_MIN_SIXG_FREQ &&
+	    high_freq <= ATH12K_MAX_6GHZ_FREQ)
+		return FULL_BAND_6G_RADIO;
+
+	if (low_freq >= ATH12K_MIN_5GHZ_FREQ &&
+	    low_freq <= ATH12K_MAX_5GHZ_FREQ &&
+	    high_freq >= ATH12K_MIN_6GHZ_FREQ &&
+	    high_freq <= ATH12K_MAX_6GHZ_FREQ)
+		return BAND_5G_6G_RADIO;
+
+	if (low_freq >= LOW_BAND_MIN_FIVEG_FREQ && high_freq <= LOW_BAND_MAX_FIVEG_FREQ)
+		return LOW_BAND_5G_RADIO;
+
+	if (low_freq > LOW_BAND_MAX_FIVEG_FREQ &&
+	    high_freq <= ATH12K_MAX_5GHZ_FREQ)
+		return HIGH_BAND_5G_RADIO;
+
+	if (low_freq >= ATH12K_MIN_5GHZ_FREQ &&
+	    high_freq <= ATH12K_MAX_5GHZ_FREQ)
+		return FULL_BAND_5G_RADIO;
+
+	return NO_BAND_INFORMATION_AVAILABLE;
+}
+
+static u32 ath12k_vendor_get_radio_band_info(struct ath12k *ar)
+{
+	u32 low_freq = 0, high_freq = 0;
+
+	if (!ath12k_vendor_get_freq_range_for_band_info(ar, &low_freq, &high_freq))
+		return NO_BAND_INFORMATION_AVAILABLE;
+
+	if (high_freq <= MAX_FREQ_IN_TWOG)
+		return NON_5G_RADIO;
+
+	return ath12k_vendor_classify_radio_band(low_freq, high_freq);
+}
+
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
 #define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
@@ -7323,6 +7403,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_WSI_BYPASS:
 		/* Report 1 if device is currently bypassed, else 0 */
 		*value = ar->ab->is_bypassed ? 1 : 0;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_BAND_INFO:
+		*value = ath12k_vendor_get_radio_band_info(ar);
 		ret = 0;
 		break;
         default:

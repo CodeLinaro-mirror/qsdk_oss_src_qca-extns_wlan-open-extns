@@ -8,6 +8,27 @@
 
 #include "../vendor.h"
 
+#define ATH12K_VENDOR_NOL_PERSIST_PATH_PRIMARY_FMT   "/etc/ath12k_nol_radio%u.bin"
+#define ATH12K_VENDOR_NOL_PERSIST_PATH_FALLBACK_FMT  "/tmp/ath12k_nol_radio%u.bin"
+#define ATH12K_VENDOR_NOL_BIN_MAGIC                  "ATHNOL1"
+
+struct ath12k_vendor_nol_bin_hdr {
+	u8 magic[8];
+	__le16 version;
+	__le16 hdr_len;
+	__le32 nop_ms;
+	__le64 dump_time_real_ns;
+	__le32 entry_count;
+	__le32 reserved;
+} __packed;
+
+struct ath12k_vendor_nol_bin_entry {
+	__le32 freq_mhz;
+	__le32 left_ms;
+	__le32 bw_mhz;
+	__le32 reserved;
+} __packed;
+
 extern const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1];
 
@@ -314,6 +335,44 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy,
 }
 
 /**
+ * ath12k_vendor_set_nol_chan_list_extn() - Stub setnol helper without extn
+ * support
+ * @wiphy: Wiphy passed to the helper
+ * @radio_idx: Radio index requested by userspace
+ * @path: Optional dump file path
+ * @num_updated: Returned number of restored channels
+ *
+ * Return: -EOPNOTSUPP because the extension implementation is unavailable.
+ */
+static inline int
+ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
+				     const char *path, u32 *num_updated)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
+ath12k_vendor_nol_chan_matches_radio(struct wiphy *wiphy,
+				     struct ieee80211_channel *chan,
+				     int radio_idx)
+{
+	if (radio_idx < 0)
+		return true;
+
+	return cfg80211_get_hw_idx_by_chan(wiphy, chan) == radio_idx;
+}
+
+static inline int ath12k_vendor_validate_radio_idx(struct wiphy *wiphy,
+						   u8 radio_idx)
+{
+	if (!wiphy || radio_idx == INVALID_RADIO_INDEX ||
+	    radio_idx >= wiphy->n_radio)
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
  * ath12k_vendor_mesh_params_config_extn - Mesh peer configurations command handler.
  *
  * @wiphy - WIPHY pointer
@@ -483,6 +542,15 @@ int ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
 
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params);
+
+int ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
+					 const char *path, u32 *num_updated);
+
+bool ath12k_vendor_nol_chan_matches_radio(struct wiphy *wiphy,
+					  struct ieee80211_channel *chan,
+					  int radio_idx);
+
+int ath12k_vendor_validate_radio_idx(struct wiphy *wiphy, u8 radio_idx);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 /**

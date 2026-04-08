@@ -8,7 +8,13 @@
 #include <net/mac80211.h>
 #include <net/genetlink.h>
 #include <net/cfg80211.h>
+#include <linux/byteorder/generic.h>
+#include <linux/ctype.h>
 #include <linux/etherdevice.h>
+#include <linux/fs.h>
+#include <linux/limits.h>
+#include <linux/timekeeping.h>
+#include <linux/vmalloc.h>
 #include "../core.h"
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
@@ -661,6 +667,12 @@ int ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
 
 	return ath12k_vendor_send_hw_blocked_chans_reply_extn(wiphy, ar, (u8)radio_id);
 }
+
+static int ath12k_vendor_resolve_nol_path_from_data_extn(const void *data,
+							 u32 data_len,
+							 u8 radio_idx,
+							 char **path);
+static int ath12k_vendor_reply_u32_extn(struct wiphy *wiphy, u32 value);
 
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
 					   u8 *mac_addr)
@@ -2932,7 +2944,9 @@ static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
 /* Set radio level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_radio_params(struct ath12k *ar,
-                                          u32 param, u32 value, bool *reload)
+					  u32 param, u32 value,
+					  struct ath12k_wifi_generic_params *params,
+					  bool *reload)
 {
         int ret = -1;
 	u16 rx_ack_timeout = (value & 0xFFFF);
@@ -4042,6 +4056,33 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ret = 0;
                 }
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_NOL_CHAN_LIST:
+	{
+		struct wiphy *wiphy;
+		char *path;
+		u32 updated = 0;
+
+		if (!ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+			return -EINVAL;
+
+		wiphy = ar->ah->hw->wiphy;
+		ret = ath12k_vendor_resolve_nol_path_from_data_extn(params->data,
+								    params->data_len,
+								    params->radio_idx,
+								    &path);
+		if (ret)
+			return ret;
+
+		ret = ath12k_vendor_set_nol_chan_list_extn(wiphy,
+							   params->radio_idx,
+							   path, &updated);
+		kfree(path);
+		if (ret)
+			return ret;
+
+		ret = ath12k_vendor_reply_u32_extn(wiphy, updated);
+		break;
+	}
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -4988,6 +5029,1163 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 	return ret;
 }
 
+#define ATH12K_VENDOR_NOL_LOG_LIMIT         64
+
+/**
+ * ath12k_vendor_nol_chan_matches_radio() - Check whether a channel
+ * matches a requested radio
+ * @wiphy: Wiphy that owns the channel table
+ * @chan: Channel to evaluate
+ * @radio_idx: Target radio index, or negative to match all radios
+ *
+ * Return: %true if @chan belongs to @radio_idx or no radio filter is set.
+ */
+bool
+ath12k_vendor_nol_chan_matches_radio(struct wiphy *wiphy,
+				     struct ieee80211_channel *chan,
+				     int radio_idx)
+{
+	if (radio_idx < 0)
+		return true;
+
+	return cfg80211_get_hw_idx_by_chan(wiphy, chan) == radio_idx;
+}
+
+/**
+ * ath12k_vendor_build_default_nol_path_extn() - Build the default NOL dump
+ * path
+ * @fallback: %true to build the fallback path, %false for the primary path
+ * @radio_idx: Radio index encoded in the file name
+ *
+ * Return: Allocated path string on success, or %NULL on allocation failure.
+ */
+static char *ath12k_vendor_build_default_nol_path_extn(bool fallback, u8 radio_idx)
+{
+	return kasprintf(GFP_KERNEL,
+			 fallback ? ATH12K_VENDOR_NOL_PERSIST_PATH_FALLBACK_FMT :
+				    ATH12K_VENDOR_NOL_PERSIST_PATH_PRIMARY_FMT,
+			 radio_idx);
+}
+
+/**
+ * ath12k_vendor_validate_dump_path_extn() - Validate a NOL dump file path
+ * @path: Absolute path provided for dump persistence
+ *
+ * Return: 0 if @path is acceptable for kernel file access, else -EINVAL.
+ */
+static int ath12k_vendor_validate_dump_path_extn(const char *path)
+{
+	if (!path || !path[0] || path[0] != '/')
+		return -EINVAL;
+
+	if (strstr(path, "/../") || strstr(path, "/..") == path ||
+	    (strlen(path) >= 3 && !strcmp(path + strlen(path) - 3, "/..")))
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_alloc_nol_paths_extn() - Allocate default primary and
+ * fallback paths
+ * @radio_idx: Radio index encoded in the file names
+ * @primary_path: Returned primary path string
+ * @fallback_path: Returned fallback path string
+ *
+ * Return: 0 if both paths were allocated, or -ENOMEM on failure.
+ */
+static int ath12k_vendor_alloc_nol_paths_extn(u8 radio_idx,
+					      char **primary_path,
+					      char **fallback_path)
+{
+	*primary_path = ath12k_vendor_build_default_nol_path_extn(false,
+								 radio_idx);
+	*fallback_path = ath12k_vendor_build_default_nol_path_extn(true,
+								  radio_idx);
+	if (*primary_path && *fallback_path)
+		return 0;
+
+	kfree(*primary_path);
+	kfree(*fallback_path);
+	return -ENOMEM;
+}
+
+/**
+ * ath12k_vendor_open_dump_write_file_extn() - Open a NOL dump file for
+ * writing
+ * @path: Requested destination path
+ * @primary_path: Default primary path for this radio
+ * @fallback_path: Default fallback path for this radio
+ * @filp: Returned open file pointer
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_open_dump_write_file_extn(const char *path,
+						   const char *primary_path,
+						   const char *fallback_path,
+						   struct file **filp)
+{
+	int ret;
+
+	ret = ath12k_vendor_validate_dump_path_extn(path);
+	if (ret)
+		return ret;
+
+	*filp = filp_open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (IS_ERR(*filp) && PTR_ERR(*filp) == -ENOENT &&
+	    !strcmp(path, primary_path)) {
+		ret = ath12k_vendor_validate_dump_path_extn(fallback_path);
+		if (ret)
+			return ret;
+		*filp = filp_open(fallback_path, O_WRONLY | O_CREAT | O_TRUNC,
+				  0644);
+	}
+
+	return IS_ERR(*filp) ? PTR_ERR(*filp) : 0;
+}
+
+/**
+ * ath12k_vendor_write_file_contents_extn() - Write a full buffer to an open
+ * file
+ * @filp: File to write and close
+ * @buf: Buffer containing serialized NOL data
+ * @len: Number of bytes to write from @buf
+ *
+ * Return: 0 if all bytes were written, otherwise a negative error code.
+ */
+static int ath12k_vendor_write_file_contents_extn(struct file *filp,
+						  const char *buf, size_t len)
+{
+	loff_t pos = 0;
+	ssize_t wrote;
+
+	wrote = kernel_write(filp, buf, len, &pos);
+	filp_close(filp, NULL);
+	if (wrote < 0)
+		return (int)wrote;
+
+	return (size_t)wrote == len ? 0 : -ENOSPC;
+}
+
+static int ath12k_vendor_write_buf_to_file_extn(const char *path,
+						u8 radio_idx,
+						const char *buf, size_t len);
+
+/**
+ * ath12k_vendor_mirror_tmp_nol_dump_extn() - Mirror a /tmp dump to persistent
+ * storage
+ * @path: Path used for the original dump
+ * @radio_idx: Radio index used to derive the persistent path
+ * @buf: Serialized NOL data to mirror
+ * @len: Number of bytes in @buf
+ *
+ * Return: 0 if mirroring is skipped or attempted, or -ENOMEM on failure.
+ */
+static int ath12k_vendor_mirror_tmp_nol_dump_extn(const char *path,
+						  u8 radio_idx,
+						  const char *buf, size_t len)
+{
+	char *persist_path;
+	int ret;
+
+	if (strncmp(path, "/tmp/", 5))
+		return 0;
+
+	persist_path = ath12k_vendor_build_default_nol_path_extn(false,
+								 radio_idx);
+	if (!persist_path)
+		return -ENOMEM;
+
+	ret = ath12k_vendor_write_buf_to_file_extn(persist_path, radio_idx, buf,
+						       len);
+	kfree(persist_path);
+	if (ret)
+		ath12k_err(NULL,
+			   "NOL dump under /tmp is volatile; persistent mirror failed: %d\n",
+			   ret);
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_write_buf_to_file_extn() - Persist a serialized NOL buffer to
+ * disk
+ * @path: Destination path requested by userspace
+ * @radio_idx: Radio index used to resolve default paths
+ * @buf: Buffer to persist
+ * @len: Number of bytes in @buf
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_write_buf_to_file_extn(const char *path,
+						u8 radio_idx,
+						const char *buf, size_t len)
+{
+	struct file *filp;
+	char *primary_path;
+	char *fallback_path;
+	int ret;
+
+	ret = ath12k_vendor_alloc_nol_paths_extn(radio_idx, &primary_path,
+						 &fallback_path);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_open_dump_write_file_extn(path, primary_path,
+						      fallback_path, &filp);
+	if (!ret)
+		ret = ath12k_vendor_write_file_contents_extn(filp, buf, len);
+
+	kfree(primary_path);
+	kfree(fallback_path);
+	if (ret)
+		return ret;
+
+	return ath12k_vendor_mirror_tmp_nol_dump_extn(path, radio_idx, buf, len);
+}
+
+/**
+ * ath12k_vendor_try_open_dump_file_extn() - Open a validated dump file
+ * @path: Absolute path to open for reading
+ *
+ * Return: Open file pointer on success or an error pointer on failure.
+ */
+static struct file *ath12k_vendor_try_open_dump_file_extn(const char *path)
+{
+	int ret;
+
+	ret = ath12k_vendor_validate_dump_path_extn(path);
+	if (ret)
+		return ERR_PTR(ret);
+
+	return filp_open(path, O_RDONLY, 0);
+}
+
+/**
+ * ath12k_vendor_open_dump_read_file_extn() - Open a dump file with fallbacks
+ * @path: Requested source path
+ * @primary_path: Default primary path for this radio
+ * @fallback_path: Default fallback path for this radio
+ *
+ * Return: Open file pointer on success or an error pointer on failure.
+ */
+static struct file *
+ath12k_vendor_open_dump_read_file_extn(const char *path,
+				       const char *primary_path,
+				       const char *fallback_path)
+{
+	struct file *filp;
+
+	filp = ath12k_vendor_try_open_dump_file_extn(path);
+	if (!IS_ERR(filp) || PTR_ERR(filp) != -ENOENT)
+		return filp;
+	if (!strcmp(path, primary_path))
+		return ath12k_vendor_try_open_dump_file_extn(fallback_path);
+	if (strncmp(path, "/tmp/", 5))
+		return filp;
+
+	filp = ath12k_vendor_try_open_dump_file_extn(primary_path);
+	if (!IS_ERR(filp) || PTR_ERR(filp) != -ENOENT)
+		return filp;
+
+	return ath12k_vendor_try_open_dump_file_extn(fallback_path);
+}
+
+/**
+ * ath12k_vendor_read_filp_to_buf_extn() - Read a dump file into memory
+ * @filp: Open file to read from
+ * @out_buf: Returned buffer holding the file contents
+ * @out_len: Returned number of bytes stored in @out_buf
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_read_filp_to_buf_extn(struct file *filp,
+					       char **out_buf, size_t *out_len)
+{
+	loff_t pos = 0;
+	ssize_t read_len;
+	size_t size;
+	char *buf;
+
+	size = i_size_read(file_inode(filp));
+	if (!size)
+		return -EINVAL;
+
+	size = min_t(size_t, size, 128 * 1024);
+	buf = vzalloc(size + 1);
+	if (!buf)
+		return -ENOMEM;
+
+	read_len = kernel_read(filp, buf, size, &pos);
+	if (read_len < 0) {
+		vfree(buf);
+		return (int)read_len;
+	}
+
+	buf[read_len] = '\0';
+	*out_buf = buf;
+	*out_len = (size_t)read_len;
+	return 0;
+}
+
+/**
+ * ath12k_vendor_read_file_to_buf_extn() - Read a dump file with fallbacks
+ * @path: Requested source path
+ * @radio_idx: Radio index used to resolve default paths
+ * @out_buf: Returned buffer holding the file contents
+ * @out_len: Returned number of bytes stored in @out_buf
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_read_file_to_buf_extn(const char *path,
+					       u8 radio_idx,
+					       char **out_buf, size_t *out_len)
+{
+	struct file *filp;
+	char *primary_path;
+	char *fallback_path;
+	int ret;
+
+	if (!out_buf || !out_len)
+		return -EINVAL;
+
+	ret = ath12k_vendor_validate_dump_path_extn(path);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_alloc_nol_paths_extn(radio_idx, &primary_path,
+						 &fallback_path);
+	if (ret)
+		return ret;
+
+	filp = ath12k_vendor_open_dump_read_file_extn(path, primary_path,
+							 fallback_path);
+	if (IS_ERR(filp)) {
+		ret = PTR_ERR(filp);
+		goto out_free;
+	}
+
+	ret = ath12k_vendor_read_filp_to_buf_extn(filp, out_buf, out_len);
+	filp_close(filp, NULL);
+out_free:
+	kfree(primary_path);
+	kfree(fallback_path);
+	return ret;
+}
+
+/**
+ * ath12k_vendor_get_nol_left_ms_extn() - Compute remaining NOP time for a
+ * channel
+ * @chan: Channel whose DFS state is inspected
+ * @nop_ms: Configured NOP timeout in milliseconds
+ *
+ * Return: Remaining unavailable time in milliseconds, or 0 if expired.
+ */
+static u32 ath12k_vendor_get_nol_left_ms_extn(const struct ieee80211_channel *chan,
+					      u32 nop_ms)
+{
+	u32 elapsed_ms;
+
+	if (chan->dfs_state != NL80211_DFS_UNAVAILABLE)
+		return 0;
+
+	elapsed_ms = jiffies_to_msecs(jiffies - chan->dfs_state_entered);
+	return (elapsed_ms >= nop_ms) ? 0 : (nop_ms - elapsed_ms);
+}
+
+/**
+ * ath12k_vendor_count_nol_entries_extn() - Count NOL channels for one radio
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to filter, or negative to count all radios
+ * @nop_ms: NOP timeout used to age DFS state
+ *
+ * Return: Number of channels that are still in NOL.
+ */
+static u32 ath12k_vendor_count_nol_entries_extn(struct wiphy *wiphy,
+						int radio_idx, u32 nop_ms)
+{
+	u32 entry_count = 0;
+	int band, chan_idx;
+
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
+		struct ieee80211_supported_band *sband = wiphy->bands[band];
+
+		if (!sband || !sband->channels)
+			continue;
+
+		for (chan_idx = 0; chan_idx < sband->n_channels; chan_idx++) {
+			struct ieee80211_channel *chan = &sband->channels[chan_idx];
+
+			if (!ath12k_vendor_nol_chan_matches_radio(wiphy, chan,
+								  radio_idx))
+				continue;
+			if (!ath12k_vendor_get_nol_left_ms_extn(chan, nop_ms))
+				continue;
+			entry_count++;
+		}
+	}
+
+	return entry_count;
+}
+
+/**
+ * ath12k_vendor_init_nol_bin_hdr_extn() - Initialize a serialized NOL dump
+ * header
+ * @hdr: Header buffer to initialize
+ * @nop_ms: NOP timeout recorded in the dump
+ * @entry_count: Number of NOL entries stored after the header
+ *
+ * Return: None.
+ */
+static void ath12k_vendor_init_nol_bin_hdr_extn(
+	struct ath12k_vendor_nol_bin_hdr *hdr, u32 nop_ms, u32 entry_count)
+{
+	memset(hdr, 0, sizeof(*hdr));
+	memcpy(hdr->magic, ATH12K_VENDOR_NOL_BIN_MAGIC, sizeof(hdr->magic));
+	hdr->version = cpu_to_le16(1);
+	hdr->hdr_len = cpu_to_le16(sizeof(*hdr));
+	hdr->nop_ms = cpu_to_le32(nop_ms);
+	hdr->dump_time_real_ns = cpu_to_le64(ktime_get_real_ns());
+	hdr->entry_count = cpu_to_le32(entry_count);
+}
+
+/**
+ * ath12k_vendor_fill_nol_entries_extn() - Fill serialized NOL entries for a
+ * radio
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to filter, or negative to include all radios
+ * @nop_ms: NOP timeout used to age DFS state
+ * @entries: Output array for serialized NOL entries
+ * @entry_count: Capacity of @entries in elements
+ *
+ * Return: Number of entries written to @entries.
+ */
+static u32 ath12k_vendor_fill_nol_entries_extn(
+	struct wiphy *wiphy, int radio_idx, u32 nop_ms,
+	struct ath12k_vendor_nol_bin_entry *entries, u32 entry_count)
+{
+	u32 entry_idx = 0;
+	int band, chan_idx;
+
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
+		struct ieee80211_supported_band *sband = wiphy->bands[band];
+
+		if (!sband || !sband->channels)
+			continue;
+
+		for (chan_idx = 0; chan_idx < sband->n_channels; chan_idx++) {
+			struct ieee80211_channel *chan = &sband->channels[chan_idx];
+			u32 left_ms;
+
+			if (!ath12k_vendor_nol_chan_matches_radio(wiphy, chan,
+								  radio_idx))
+				continue;
+
+			left_ms = ath12k_vendor_get_nol_left_ms_extn(chan, nop_ms);
+			if (!left_ms || entry_idx >= entry_count)
+				continue;
+
+			entries[entry_idx].freq_mhz =
+				cpu_to_le32((u32)chan->center_freq);
+			entries[entry_idx].left_ms = cpu_to_le32(left_ms);
+			entries[entry_idx].bw_mhz = cpu_to_le32(20);
+			entry_idx++;
+		}
+	}
+
+	return entry_idx;
+}
+
+/**
+ * ath12k_vendor_build_nol_chan_list_extn() - Build a serialized NOL snapshot
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to serialize
+ * @out_buf: Returned serialized buffer
+ * @out_len: Returned length of @out_buf in bytes
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_build_nol_chan_list_extn(struct wiphy *wiphy,
+						  int radio_idx,
+						  char **out_buf,
+						  size_t *out_len)
+{
+	struct ath12k_vendor_nol_bin_hdr hdr;
+	struct ath12k_vendor_nol_bin_entry *entries;
+	char *buf;
+	u32 entry_count;
+	u32 nop_ms = IEEE80211_DFS_MIN_NOP_TIME_MS;
+	u32 entry_idx;
+
+	if (!out_buf || !out_len)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	entry_count = ath12k_vendor_count_nol_entries_extn(wiphy, radio_idx,
+							    nop_ms);
+	buf = kzalloc(sizeof(hdr) + ((size_t)entry_count * sizeof(*entries)),
+		      GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ath12k_vendor_init_nol_bin_hdr_extn(&hdr, nop_ms, entry_count);
+	memcpy(buf, &hdr, sizeof(hdr));
+	entries = (void *)(buf + sizeof(hdr));
+	entry_idx = ath12k_vendor_fill_nol_entries_extn(wiphy, radio_idx,
+							 nop_ms, entries,
+							 entry_count);
+	*out_buf = buf;
+	*out_len = sizeof(hdr) + ((size_t)entry_idx * sizeof(*entries));
+	return 0;
+}
+
+/**
+ * ath12k_vendor_log_nol_band_extn() - Log active NOL entries for one band
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to filter, or negative to include all radios
+ * @tag: Prefix string used in log messages
+ * @nop_ms: NOP timeout used to age DFS state
+ * @band: nl80211 band index to scan
+ * @total: Running count of matching NOL entries
+ * @printed: Running count of entries already logged
+ *
+ * Return: None.
+ */
+static void ath12k_vendor_log_nol_band_extn(struct wiphy *wiphy, int radio_idx,
+					    const char *tag, u32 nop_ms,
+					    int band, int *total, int *printed)
+{
+	struct ieee80211_supported_band *sband = wiphy->bands[band];
+	int chan_idx;
+
+	if (!sband || !sband->channels)
+		return;
+
+	for (chan_idx = 0; chan_idx < sband->n_channels; chan_idx++) {
+		struct ieee80211_channel *chan = &sband->channels[chan_idx];
+		u32 left_ms;
+		int ch;
+
+		if (!ath12k_vendor_nol_chan_matches_radio(wiphy, chan,
+							 radio_idx))
+			continue;
+
+		left_ms = ath12k_vendor_get_nol_left_ms_extn(chan, nop_ms);
+		if (!left_ms)
+			continue;
+
+		(*total)++;
+		if (*printed >= ATH12K_VENDOR_NOL_LOG_LIMIT)
+			continue;
+
+		ch = ieee80211_frequency_to_channel(chan->center_freq);
+		wiphy_info(wiphy, "%s: freq=%d MHz chan=%d left=%u ms\n",
+			   tag, chan->center_freq, ch, left_ms);
+		(*printed)++;
+	}
+}
+
+/**
+ * ath12k_vendor_log_nol_chan_list_extn() - Log the current NOL state
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to filter, or negative to include all radios
+ * @tag: Prefix string used in log messages
+ *
+ * Return: None.
+ */
+static void ath12k_vendor_log_nol_chan_list_extn(struct wiphy *wiphy,
+						 int radio_idx, const char *tag)
+{
+	u32 nop_ms = IEEE80211_DFS_MIN_NOP_TIME_MS;
+	int band;
+	int total = 0;
+	int printed = 0;
+
+	if (!wiphy)
+		return;
+
+	if (!tag)
+		tag = "nol";
+
+	lockdep_assert_wiphy(wiphy);
+
+	wiphy_info(wiphy, "%s: current NOL channels (NOP=%u ms)\n", tag,
+		   nop_ms);
+	for (band = 0; band < NUM_NL80211_BANDS; band++)
+		ath12k_vendor_log_nol_band_extn(wiphy, radio_idx, tag, nop_ms,
+						band, &total, &printed);
+
+	if (!total) {
+		wiphy_info(wiphy, "%s: NOL empty\n", tag);
+		return;
+	}
+
+	if (total > printed)
+		wiphy_info(wiphy, "%s: total=%d (truncated after %d)\n",
+			   tag, total, printed);
+	else
+		wiphy_info(wiphy, "%s: total=%d\n", tag, total);
+}
+
+/**
+ * ath12k_vendor_skip_spaces_extn() - Skip leading whitespace in a string
+ * @str: String to advance in place
+ *
+ * Return: Pointer to the first non-space character in @str.
+ */
+static char *ath12k_vendor_skip_spaces_extn(char *str)
+{
+	while (*str && isspace(*str))
+		str++;
+
+	return str;
+}
+
+/**
+ * ath12k_vendor_get_nol_dump_delta_ms_extn() - Age a dump timestamp in
+ * milliseconds
+ * @dump_ns: Real-time dump timestamp in nanoseconds
+ *
+ * Return: Elapsed milliseconds since @dump_ns, or 0 if unavailable.
+ */
+static u64 ath12k_vendor_get_nol_dump_delta_ms_extn(u64 dump_ns)
+{
+	u64 now_ns;
+
+	if (!dump_ns)
+		return 0;
+
+	now_ns = ktime_get_real_ns();
+	return div_u64((now_ns > dump_ns) ? (now_ns - dump_ns) : 0, 1000000ULL);
+}
+
+/**
+ * ath12k_vendor_parse_nol_text_header_extn() - Parse metadata from a text
+ * dump header
+ * @line: Header line starting with '#'
+ * @dump_ns: Returned dump timestamp in nanoseconds
+ * @nop_ms: Returned NOP timeout in milliseconds
+ *
+ * Return: None.
+ */
+static void ath12k_vendor_parse_nol_text_header_extn(char *line, u64 *dump_ns,
+						     u32 *nop_ms)
+{
+	char *tok;
+	char *p = ath12k_vendor_skip_spaces_extn(line + 1);
+
+	while ((tok = strsep(&p, " \t")) != NULL) {
+		u64 tmp_u64;
+		u32 tmp_u32;
+
+		if (!*tok)
+			continue;
+		if (!strncmp(tok, "dump_time_real_ns=", 18)) {
+			if (!kstrtou64(tok + 18, 0, &tmp_u64))
+				*dump_ns = tmp_u64;
+			continue;
+		}
+		if (strncmp(tok, "nop_ms=", 7) || kstrtou32(tok + 7, 0, &tmp_u32))
+			continue;
+
+		tmp_u32 = min_t(u32, tmp_u32,
+				(u32)IEEE80211_DFS_MIN_NOP_TIME_MS);
+		if (tmp_u32)
+			*nop_ms = tmp_u32;
+	}
+}
+
+/**
+ * ath12k_vendor_nol_left_ms_token_extn() - Match a token carrying remaining
+ * NOL time
+ * @tok: Token from a text dump line
+ *
+ * Return: Pointer to the numeric substring if @tok matches, else %NULL.
+ */
+static const char *ath12k_vendor_nol_left_ms_token_extn(const char *tok)
+{
+	if (!strncmp(tok, "nol_left_ms=", 12))
+		return tok + 12;
+	if (!strncmp(tok, "nol_timeout_ms=", 15))
+		return tok + 15;
+	if (!strncmp(tok, "left_ms=", 8))
+		return tok + 8;
+
+	return NULL;
+}
+
+/**
+ * ath12k_vendor_parse_nol_text_entry_extn() - Parse one text NOL entry
+ * @line: Entry line to parse in place
+ * @nop_ms: Default NOP timeout in milliseconds
+ * @freq_mhz: Returned center frequency in MHz
+ * @left_ms: Returned remaining NOL time in milliseconds
+ *
+ * Return: 0 if an entry was parsed, or -ENOENT if the line has no usable
+ * entry.
+ */
+static int ath12k_vendor_parse_nol_text_entry_extn(char *line, u32 nop_ms,
+						   int *freq_mhz, u32 *left_ms)
+{
+	char *tok;
+	bool has_left = false;
+
+	*freq_mhz = -1;
+	*left_ms = nop_ms;
+
+	while ((tok = strsep(&line, " \t")) != NULL) {
+		const char *left_ms_ptr;
+		u32 tmp_u32;
+
+		if (!*tok)
+			continue;
+		if (!strncmp(tok, "freq=", 5)) {
+			int tmp_freq;
+
+			if (!kstrtoint(tok + 5, 0, &tmp_freq))
+				*freq_mhz = tmp_freq;
+			continue;
+		}
+
+		left_ms_ptr = ath12k_vendor_nol_left_ms_token_extn(tok);
+		if (!left_ms_ptr || kstrtou32(left_ms_ptr, 0, &tmp_u32))
+			continue;
+
+		*left_ms = tmp_u32;
+		has_left = true;
+	}
+
+	if (*freq_mhz <= 0)
+		return -ENOENT;
+	if (!has_left)
+		*left_ms = nop_ms;
+
+	*left_ms = min_t(u32, *left_ms, nop_ms);
+	return *left_ms ? 0 : -ENOENT;
+}
+
+/**
+ * ath12k_vendor_adjust_nol_left_ms_extn() - Age a saved NOL timeout
+ * @left_ms: Saved remaining NOL time in milliseconds
+ * @nop_ms: Maximum NOP timeout in milliseconds
+ * @delta_ms: Elapsed wall-clock time since the dump
+ * @remaining_ms: Returned remaining NOL time after aging
+ *
+ * Return: %true if the entry still has time left, otherwise %false.
+ */
+static bool ath12k_vendor_adjust_nol_left_ms_extn(u32 left_ms, u32 nop_ms,
+						  u64 delta_ms, u32 *remaining_ms)
+{
+	left_ms = min_t(u32, left_ms, nop_ms);
+	if (!left_ms || delta_ms >= left_ms)
+		return false;
+
+	*remaining_ms = left_ms - (u32)delta_ms;
+	return true;
+}
+
+/**
+ * ath12k_vendor_apply_nol_freq_extn() - Restore one channel into NOL state
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to filter, or negative to include all radios
+ * @freq_mhz: Channel center frequency to restore
+ * @left_ms: Saved remaining NOL time in milliseconds
+ * @nop_ms: Maximum NOP timeout in milliseconds
+ * @delta_ms: Elapsed wall-clock time since the dump
+ *
+ * Return: %true if a channel was updated, otherwise %false.
+ */
+static bool ath12k_vendor_apply_nol_freq_extn(struct wiphy *wiphy, int radio_idx,
+					      u32 freq_mhz, u32 left_ms,
+					      u32 nop_ms, u64 delta_ms)
+{
+	struct ieee80211_channel *chan;
+	unsigned long delta_j;
+	u32 remaining_ms;
+
+	if (!freq_mhz || !ath12k_vendor_adjust_nol_left_ms_extn(left_ms, nop_ms,
+								delta_ms,
+								&remaining_ms))
+		return false;
+
+	chan = ieee80211_get_channel(wiphy, (int)freq_mhz);
+	if (!chan || !ath12k_vendor_nol_chan_matches_radio(wiphy, chan,
+							  radio_idx))
+		return false;
+
+	chan->dfs_state = NL80211_DFS_UNAVAILABLE;
+	delta_j = msecs_to_jiffies(nop_ms - remaining_ms);
+	chan->dfs_state_entered = jiffies - delta_j;
+	return true;
+}
+
+/**
+ * ath12k_vendor_apply_nol_from_text_buf_extn() - Restore NOL entries from a
+ * text dump
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to restore
+ * @buf: Writable text buffer containing dump contents
+ *
+ * Return: Number of channels restored on success or a negative error code.
+ */
+static int ath12k_vendor_apply_nol_from_text_buf_extn(struct wiphy *wiphy,
+						      int radio_idx, char *buf)
+{
+	char *line;
+	u64 dump_ns = 0;
+	u64 delta_ms = 0;
+	u32 nop_ms = IEEE80211_DFS_MIN_NOP_TIME_MS;
+	int updated = 0;
+
+	if (!wiphy || !buf)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	while ((line = strsep(&buf, "\n")) != NULL) {
+		int freq_mhz;
+		u32 left_ms;
+
+		line = ath12k_vendor_skip_spaces_extn(line);
+		if (!*line)
+			continue;
+
+		if (*line == '#') {
+			ath12k_vendor_parse_nol_text_header_extn(line, &dump_ns,
+								&nop_ms);
+			delta_ms = ath12k_vendor_get_nol_dump_delta_ms_extn(dump_ns);
+			continue;
+		}
+
+		if (ath12k_vendor_parse_nol_text_entry_extn(line, nop_ms, &freq_mhz,
+							    &left_ms))
+			continue;
+		if (ath12k_vendor_apply_nol_freq_extn(wiphy, radio_idx, freq_mhz,
+						      left_ms, nop_ms,
+						      delta_ms))
+			updated++;
+	}
+
+	cfg80211_schedule_dfs_chan_update(wiphy);
+
+	return updated;
+}
+
+struct ath12k_vendor_nol_bin_info_extn {
+	const struct ath12k_vendor_nol_bin_entry *entries;
+	u32 entry_count;
+	u32 nop_ms;
+	u64 delta_ms;
+};
+
+/**
+ * ath12k_vendor_parse_nol_bin_hdr_extn() - Validate a binary NOL dump header
+ * @buf: Binary dump buffer
+ * @len: Number of bytes available in @buf
+ * @info: Returned parsed header metadata
+ *
+ * Return: 0 if the header is valid or a negative error code otherwise.
+ */
+static int ath12k_vendor_parse_nol_bin_hdr_extn(
+	const u8 *buf, size_t len, struct ath12k_vendor_nol_bin_info_extn *info)
+{
+	const struct ath12k_vendor_nol_bin_hdr *hdr = (const void *)buf;
+	u16 hdr_len;
+	u16 version;
+	size_t need_len;
+
+	if (len < sizeof(*hdr))
+		return -EINVAL;
+	if (memcmp(hdr->magic, ATH12K_VENDOR_NOL_BIN_MAGIC, sizeof(hdr->magic)))
+		return -EINVAL;
+
+	version = le16_to_cpu(hdr->version);
+	hdr_len = le16_to_cpu(hdr->hdr_len);
+	if (version != 1 || hdr_len < sizeof(*hdr) || hdr_len > len)
+		return -EINVAL;
+
+	info->nop_ms = le32_to_cpu(hdr->nop_ms);
+	if (!info->nop_ms)
+		info->nop_ms = IEEE80211_DFS_MIN_NOP_TIME_MS;
+	info->nop_ms = min_t(u32, info->nop_ms,
+			     (u32)IEEE80211_DFS_MIN_NOP_TIME_MS);
+	info->entry_count = le32_to_cpu(hdr->entry_count);
+	need_len = (size_t)hdr_len + (size_t)info->entry_count *
+		   sizeof(*info->entries);
+	if (need_len > len)
+		return -EINVAL;
+
+	info->delta_ms = ath12k_vendor_get_nol_dump_delta_ms_extn(
+		le64_to_cpu(hdr->dump_time_real_ns));
+	info->entries = (const void *)(buf + hdr_len);
+	return 0;
+}
+
+/**
+ * ath12k_vendor_apply_nol_from_bin_buf_extn() - Restore NOL entries from a
+ * binary dump
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to restore
+ * @buf: Binary dump buffer
+ * @len: Number of bytes available in @buf
+ *
+ * Return: Number of channels restored on success or a negative error code.
+ */
+static int ath12k_vendor_apply_nol_from_bin_buf_extn(struct wiphy *wiphy,
+						     int radio_idx,
+						     const u8 *buf, size_t len)
+{
+	struct ath12k_vendor_nol_bin_info_extn info;
+	u32 i;
+	int updated = 0;
+	int ret;
+
+	if (!wiphy || !buf)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	ret = ath12k_vendor_parse_nol_bin_hdr_extn(buf, len, &info);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < info.entry_count; i++) {
+		if (ath12k_vendor_apply_nol_freq_extn(
+			    wiphy, radio_idx,
+			    le32_to_cpu(info.entries[i].freq_mhz),
+			    le32_to_cpu(info.entries[i].left_ms), info.nop_ms,
+			    info.delta_ms))
+			updated++;
+	}
+
+	cfg80211_schedule_dfs_chan_update(wiphy);
+
+	return updated;
+}
+
+/**
+ * ath12k_vendor_apply_nol_from_buf_extn() - Restore NOL entries from a dump
+ * buffer
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to restore
+ * @buf: Dump buffer, either text or binary
+ * @len: Number of bytes available in @buf
+ *
+ * Return: Number of channels restored on success or a negative error code.
+ */
+static int ath12k_vendor_apply_nol_from_buf_extn(struct wiphy *wiphy,
+						 int radio_idx, char *buf,
+						 size_t len)
+{
+	if (wiphy && buf && len >= sizeof(struct ath12k_vendor_nol_bin_hdr) &&
+	    !memcmp(buf, ATH12K_VENDOR_NOL_BIN_MAGIC,
+		    sizeof(ATH12K_VENDOR_NOL_BIN_MAGIC)))
+		return ath12k_vendor_apply_nol_from_bin_buf_extn(wiphy, radio_idx,
+								 (const u8 *)buf,
+								 len);
+
+	return ath12k_vendor_apply_nol_from_text_buf_extn(wiphy, radio_idx, buf);
+}
+
+/**
+ * ath12k_vendor_restore_nol_file_extn() - Restore NOL entries from a file
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to restore
+ * @path: Dump file path to read
+ *
+ * Return: Number of channels restored on success or a negative error code.
+ */
+static int ath12k_vendor_restore_nol_file_extn(struct wiphy *wiphy,
+					       u8 radio_idx, const char *path)
+{
+	char *file_buf = NULL;
+	size_t file_len = 0;
+	int ret;
+
+	ret = ath12k_vendor_read_file_to_buf_extn(path, radio_idx, &file_buf,
+						  &file_len);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_apply_nol_from_buf_extn(wiphy, radio_idx, file_buf,
+						    file_len);
+	vfree(file_buf);
+	return ret;
+}
+
+/**
+ * ath12k_vendor_validate_radio_idx() - Validate a radio index for setnol
+ * @wiphy: Wiphy exposing the radio count
+ * @radio_idx: Radio index from userspace
+ *
+ * Return: 0 if @radio_idx is valid, otherwise -EINVAL.
+ */
+int ath12k_vendor_validate_radio_idx(struct wiphy *wiphy, u8 radio_idx)
+{
+	if (!wiphy || radio_idx == INVALID_RADIO_INDEX ||
+	    radio_idx >= wiphy->n_radio)
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_resolve_nol_path_extn() - Resolve the dump path for setnol
+ * @path: Optional userspace path
+ * @radio_idx: Radio index used for the default path
+ * @resolved_path: Returned resolved path string
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_resolve_nol_path_extn(const char *path, u8 radio_idx,
+					       char **resolved_path)
+{
+	if (path && *path)
+		*resolved_path = kstrdup(path, GFP_KERNEL);
+	else
+		*resolved_path = ath12k_vendor_build_default_nol_path_extn(false,
+									  radio_idx);
+
+	return *resolved_path ? 0 : -ENOMEM;
+}
+
+/**
+ * ath12k_vendor_resolve_nol_path_from_data_extn() - Resolve the dump path for
+ * getnol/setnol command payload
+ * @data: Optional userspace path buffer
+ * @data_len: Number of bytes available in @data
+ * @radio_idx: Radio index used for the default path
+ * @path: Returned resolved path string
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_resolve_nol_path_from_data_extn(const void *data,
+							 u32 data_len,
+							 u8 radio_idx,
+							 char **path)
+{
+	if (!path)
+		return -EINVAL;
+
+	if (!data || !data_len)
+		*path = ath12k_vendor_build_default_nol_path_extn(false,
+								  radio_idx);
+	else
+		*path = kstrndup(data, min_t(u32, data_len, PATH_MAX - 1),
+				 GFP_KERNEL);
+
+	return *path ? 0 : -ENOMEM;
+}
+
+/**
+ * ath12k_vendor_reply_u32_extn() - Send a 32-bit vendor command reply
+ * @wiphy: Wiphy used to allocate the reply skb
+ * @value: Reply value to return through generic params
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+static int ath12k_vendor_reply_u32_extn(struct wiphy *wiphy, u32 value)
+{
+	struct sk_buff *reply;
+	size_t reply_len = nla_total_size(sizeof(u32)) * 3;
+
+	reply = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, reply_len);
+	if (!reply)
+		return -ENOMEM;
+
+	if (nla_put_u32(reply, QCA_WLAN_VENDOR_ATTR_PARAM_DATA, value) ||
+	    nla_put_u32(reply, QCA_WLAN_VENDOR_ATTR_PARAM_LENGTH,
+			sizeof(value)) ||
+	    nla_put_u32(reply, QCA_WLAN_VENDOR_ATTR_PARAM_FLAGS, 0)) {
+		kfree_skb(reply);
+		return -EINVAL;
+	}
+
+	return cfg80211_vendor_cmd_reply(reply);
+}
+
+/**
+ * ath12k_vendor_dump_nol_to_file_extn() - Dump the current NOL snapshot to
+ * disk
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to serialize
+ * @path: Destination file path
+ * @dump_len: Returned serialized dump length in bytes
+ *
+ * Return: 0 if the NOL snapshot was persisted, else a negative error code.
+ */
+static int ath12k_vendor_dump_nol_to_file_extn(struct wiphy *wiphy,
+					       u8 radio_idx, const char *path,
+					       u32 *dump_len)
+{
+	char *out = NULL;
+	size_t out_len = 0;
+	int ret;
+
+	ret = ath12k_vendor_build_nol_chan_list_extn(wiphy, radio_idx, &out,
+						     &out_len);
+	if (!ret)
+		ret = ath12k_vendor_write_buf_to_file_extn(path, radio_idx, out,
+							   out_len);
+	if (!ret)
+		ath12k_vendor_log_nol_chan_list_extn(wiphy, radio_idx, "getnol");
+	if (!ret && dump_len)
+		*dump_len = (u32)min_t(size_t, out_len, (size_t)~0U);
+
+	kfree(out);
+	return ret;
+}
+
+/**
+ * ath12k_vendor_set_nol_chan_list_extn() - Restore saved NOL state for a
+ * radio
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index to restore
+ * @path: Optional dump file path
+ * @num_updated: Returned number of channels restored
+ *
+ * Return: 0 if the dump was applied successfully, else a negative error code.
+ */
+int ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
+					 const char *path, u32 *num_updated)
+{
+	char *resolved_path = NULL;
+	int updated;
+	int ret;
+
+	if (!wiphy)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	ret = ath12k_vendor_validate_radio_idx(wiphy, radio_idx);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_resolve_nol_path_extn(path, radio_idx,
+						 &resolved_path);
+	if (ret)
+		return ret;
+
+	updated = ath12k_vendor_restore_nol_file_extn(wiphy, radio_idx,
+						      resolved_path);
+	if (updated < 0) {
+		kfree(resolved_path);
+		return updated;
+	}
+
+	if (num_updated)
+		*num_updated = updated;
+
+	wiphy_info(wiphy, "setnol: radio_idx=%u applied %d entries from %s\n",
+		   radio_idx, updated, resolved_path);
+	ath12k_vendor_log_nol_chan_list_extn(wiphy, radio_idx, "setnol");
+	kfree(resolved_path);
+
+	return 0;
+}
+
 /* Find the 'ar' radio instance using the radio index of the wiphy
  * to set params
  */
@@ -5025,7 +6223,7 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
                    ar, param, value,
                    params->ifindex, params->radio_idx);
 
-        ret = ath12k_vendor_set_radio_params(ar, param, value, &reload);
+        ret = ath12k_vendor_set_radio_params(ar, param, value, params, &reload);
 
         if (!ret && reload)
                 ath12k_vendor_event_iface_reload(wiphy, params->radio_idx);
@@ -5595,7 +6793,9 @@ static int ath12k_vendor_get_sr_radio_params(struct ath12k *ar,
 
 /* Get radio level parameters */
 static int ath12k_vendor_get_radio_params(struct ath12k *ar,
-                                          u32 param, u32 *value)
+					  u32 param,
+					  struct ath12k_wifi_generic_params *params,
+					  u32 *value)
 {
         int ret = -1;
 
@@ -5845,6 +7045,34 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 *value = ar->radio_cfg.pdev_to_reo_dest;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_NOL_CHAN_LIST:
+	{
+		struct wiphy *wiphy;
+		char *path;
+		u32 dump_len = 0;
+
+		if (!ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+			return -EINVAL;
+
+		wiphy = ar->ah->hw->wiphy;
+		ret = ath12k_vendor_resolve_nol_path_from_data_extn(params->data,
+								    params->data_len,
+								    params->radio_idx,
+								    &path);
+		if (ret)
+			return ret;
+
+		ret = ath12k_vendor_dump_nol_to_file_extn(wiphy,
+							  params->radio_idx,
+							  path, &dump_len);
+		kfree(path);
+		if (ret)
+			return ret;
+
+		*value = dump_len;
+		ret = 0;
+		break;
+	}
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -5922,7 +7150,7 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 	}
 
         ar = &ah->radio[params->radio_idx];
- if (!ar) {
+        if (!ar) {
                 ath12k_err(NULL, "Failed to find ar\n");
                 return -ENODATA;
         }
@@ -5930,7 +7158,7 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
         ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "ar: %p param: %d if: %d radio: %d\n",
                    ar, param, params->ifindex, params->radio_idx);
-        ret = ath12k_vendor_get_radio_params(ar, param, value);
+        ret = ath12k_vendor_get_radio_params(ar, param, params, value);
 
         return ret;
 }

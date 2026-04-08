@@ -297,6 +297,13 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 {
 	return -1;
 }
+
+static inline
+void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
+						 struct nlattr **tb,
+						 struct sk_buff *skb)
+{
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -462,6 +469,11 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 						 struct nlattr **tb,
 						 struct sk_buff *skb);
+
+enum ath12k_chan_144_state {
+	CHAN_144_DIS = 0,
+	CHAN_144_EN = 1,
+};
 #endif /* CPTCFG_QCN_EXTN */
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

@@ -52,6 +52,8 @@ ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] =
 #define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
 #define ATH12K_CONFIG_MAX_TX_ENCAP_TYPE 2
 #define ATH12K_CONFIG_MAX_RX_DECAP_TYPE 2
+#define ATH12K_CHAN144_FREQ 5720
+
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -816,6 +818,105 @@ static int ath12k_vendor_get_txpower_resolution(struct ath12k_link_vif *arvif, u
 
 	ath12k_info(NULL, "txpower in 1 dBm scale %d.%02d dBm",
 		    svalue / 2, abs(svalue % 2) * 50);
+	return 0;
+}
+
+static struct ieee80211_channel *
+ath12k_vendor_get_radio_chan144(struct wiphy *wiphy, struct ath12k *ar)
+{
+	struct ieee80211_channel *chan;
+	u32 chan144_khz = MHZ_TO_KHZ(ATH12K_CHAN144_FREQ);
+
+	if (ar->freq_range.start_freq && ar->freq_range.end_freq &&
+	    (chan144_khz < ar->freq_range.start_freq ||
+	     chan144_khz > ar->freq_range.end_freq)) {
+		ath12k_err(NULL, "CHAN144: radio %u does not support center freq %d MHz\n",
+			   ar->pdev_idx, ATH12K_CHAN144_FREQ);
+		return NULL;
+	}
+
+	chan = ieee80211_get_channel(wiphy, ATH12K_CHAN144_FREQ);
+	if (!chan) {
+		ath12k_err(NULL, "CHAN144: freq %d MHz not found in wiphy\n",
+			   ATH12K_CHAN144_FREQ);
+		return NULL;
+	}
+
+	return chan;
+}
+
+static void ath12k_vendor_chan144_notify_reg_change(struct wiphy *wiphy)
+{
+	const struct ieee80211_regdomain *regd;
+	int ret;
+
+	regd = get_wiphy_regdom(wiphy);
+	if (!regd)
+		return;
+
+	ret = regulatory_set_wiphy_regd(wiphy, (struct ieee80211_regdomain *)regd);
+	if (ret)
+		ath12k_err(NULL, "CHAN144: failed to notify userspace reg change, ret=%d\n",
+			   ret);
+}
+
+static int ath12k_vendor_chan144_apply(struct ath12k *ar, u8 enable)
+{
+	struct wiphy *wiphy = ath12k_ar_to_hw(ar)->wiphy;
+	struct ieee80211_channel *chan;
+	const struct ieee80211_reg_rule *reg_rule;
+	u32 old_flags;
+	int ret = 0;
+
+	if (enable > CHAN_144_EN) {
+		ath12k_err(NULL, "CHAN144: invalid input %u\n", enable);
+		return -EINVAL;
+	}
+
+	chan = ath12k_vendor_get_radio_chan144(wiphy, ar);
+	if (!chan)
+		return -ENODATA;
+
+	old_flags = chan->flags;
+	if (!enable) {
+		chan->flags |= IEEE80211_CHAN_DISABLED;
+		chan->orig_flags |= IEEE80211_CHAN_DISABLED;
+	} else {
+		chan->flags &= ~IEEE80211_CHAN_DISABLED;
+		chan->orig_flags &= ~IEEE80211_CHAN_DISABLED;
+	}
+
+	if (enable) {
+		reg_rule = freq_reg_info(wiphy, MHZ_TO_KHZ(ATH12K_CHAN144_FREQ));
+		if (IS_ERR_OR_NULL(reg_rule)) {
+			ath12k_err(NULL, "CHAN144: regulatory disallows enabling freq %d\n",
+				   ATH12K_CHAN144_FREQ);
+			return -EPERM;
+		}
+	}
+
+	if (ar->ah->state == ATH12K_HW_STATE_ON) {
+		ret = ath12k_reg_update_chan_list(ar, true);
+		if (ret) {
+			chan->flags = old_flags;
+			chan->orig_flags = old_flags;
+			ath12k_err(NULL, "CHAN144: failed to sync FW channel list, ret=%d\n",
+				   ret);
+			return ret;
+		}
+	}
+
+	ar->radio_cfg.chan144_enabled = enable;
+	ath12k_info(NULL, "CHAN144: policy %s applied on radio %u (flags 0x%x -> 0x%x)\n",
+		    enable ? "enable" : "disable", ar->pdev_idx, old_flags, chan->flags);
+
+	ath12k_vendor_chan144_notify_reg_change(wiphy);
+	return 0;
+}
+
+int ath12k_vendor_get_en_chan144(struct ath12k *ar, u32 *value)
+{
+	*value = ar->radio_cfg.chan144_enabled;
 	return 0;
 }
 
@@ -3443,6 +3544,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_CTLPWRSCALE:
 		ret = ath12k_vendor_set_ctlpwrscale(ar, value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_CHAN_144:
+		ret = ath12k_vendor_chan144_apply(ar, value);
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -5102,6 +5206,9 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_CTLPWRSCALE:
 		ret = ath12k_vendor_get_ctlpwrscale(ar, value);
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_CHAN_144:
+		ret = ath12k_vendor_get_en_chan144(ar, value);
 		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

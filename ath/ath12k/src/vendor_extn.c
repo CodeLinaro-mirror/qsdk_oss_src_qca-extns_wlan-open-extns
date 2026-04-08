@@ -1969,6 +1969,63 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		}
 		break;
 
+	case QCA_WLAN_VENDOR_VDEV_PARAM_ENABLE_RX_AMSDU:
+		{
+			struct ieee80211_vif *vif = ath12k_ahvif_to_vif(arvif->ahvif);
+			struct ieee80211_sub_if_data *sdata;
+
+			if (!vif) {
+				ath12k_err(NULL, "enable_rx_amsdu: vif is NULL\n");
+				return -EINVAL;
+			}
+			sdata = vif_to_sdata(vif);
+			if (!sdata) {
+				ath12k_err(NULL, "enable_rx_amsdu: sdata is NULL\n");
+				return -EINVAL;
+			}
+			if (value >= IEEE80211_FIRST_TSPEC_TSID) {
+				ath12k_err(NULL, "enable_rx_amsdu: invalid TID %u (max %u)\n",
+					   value, IEEE80211_FIRST_TSPEC_TSID - 1);
+				return -EINVAL;
+			}
+			sdata->rx_amsdu_tid_bitmap |= BIT(value);
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "enable_rx_amsdu TID %u bitmap=0x%x\n",
+				   value, sdata->rx_amsdu_tid_bitmap);
+			ret = 0;
+		}
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_DISABLE_RX_AMSDU:
+		{
+			struct ieee80211_vif *vif = ath12k_ahvif_to_vif(arvif->ahvif);
+			struct ieee80211_sub_if_data *sdata;
+
+			if (!vif) {
+				ath12k_err(NULL, "disable_rx_amsdu: vif is NULL\n");
+				return -EINVAL;
+			}
+			sdata = vif_to_sdata(vif);
+			if (!sdata) {
+				ath12k_err(NULL, "disable_rx_amsdu: sdata is NULL\n");
+				return -EINVAL;
+			}
+			/* Only TIDs 0-7 are standard data TIDs (< IEEE80211_FIRST_TSPEC_TSID = 8).
+			 * rx_amsdu_tid_bitmap is a u8, so bits 0-7 only.
+			 */
+			if (value >= IEEE80211_FIRST_TSPEC_TSID) {
+				ath12k_err(NULL, "disable_rx_amsdu: invalid TID %u (max %u)\n",
+					   value, IEEE80211_FIRST_TSPEC_TSID - 1);
+				return -EINVAL;
+			}
+			sdata->rx_amsdu_tid_bitmap &= ~BIT(value);
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "disable_rx_amsdu TID %u bitmap=0x%x\n",
+				   value, sdata->rx_amsdu_tid_bitmap);
+			ret = 0;
+		}
+		break;
+
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
 		if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
 			ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
@@ -6450,6 +6507,28 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMSDU:
 		*value = arvif->vap_cfg.amsdu_aggr_size;
 		ret = 0;
+		break;
+
+	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_RX_AMSDU_BITMAP:
+		{
+			struct ieee80211_vif *vif = ath12k_ahvif_to_vif(arvif->ahvif);
+			struct ieee80211_sub_if_data *sdata;
+
+			if (!vif) {
+				ath12k_err(NULL, "get_rx_amsdu_bitmap: vif is NULL\n");
+				return -EINVAL;
+			}
+			sdata = vif_to_sdata(vif);
+			if (!sdata) {
+				ath12k_err(NULL, "get_rx_amsdu_bitmap: sdata is NULL\n");
+				return -EINVAL;
+			}
+			*value = sdata->rx_amsdu_tid_bitmap;
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "get_rx_amsdu bitmap=0x%x\n",
+				   sdata->rx_amsdu_tid_bitmap);
+			ret = 0;
+		}
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:

@@ -3051,6 +3051,46 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	return 0;
 }
 
+void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
+						 struct nlattr **tb,
+						 struct sk_buff *skb)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar;
+	u8 radio_idx = 0;
+	u16 thresh_freq;
+	int pdev_idx;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_6GHZ_VLP_PRIORITY_THRESH_FREQ]) {
+		if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX])
+			radio_idx = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+
+		if (radio_idx >= ah->num_radio) {
+			ath12k_err(NULL,
+				   "Invalid radio index %u (valid range: 0..%u)\n",
+				   radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+			return;
+		}
+
+		ar = &ah->radio[radio_idx];
+		pdev_idx = ar->pdev_idx;
+		if (pdev_idx < 0 || pdev_idx >= MAX_RADIOS) {
+			ath12k_err(NULL, "Invalid pdev index %d for radio index %u\n",
+				   pdev_idx, radio_idx);
+			return;
+		}
+
+		thresh_freq = ar->ab->ath12k_base_extn.reg_6ghz_thresh_priority_freq[pdev_idx];
+		if (nla_put_u16(skb,
+				QCA_WLAN_VENDOR_ATTR_CONFIG_6GHZ_VLP_PRIORITY_THRESH_FREQ,
+				thresh_freq)) {
+			ath12k_err(NULL, "failed to put VLP priority threshold frequency\n");
+			return;
+		}
+	}
+}
+
 int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
 				      struct wireless_dev *wdev,
 				      const void *data, int data_len)

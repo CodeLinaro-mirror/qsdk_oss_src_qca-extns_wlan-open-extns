@@ -323,6 +323,18 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 				     struct ath12k_wifi_generic_params *params);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
+/**
+ * ath12k_vendor_get_wiphy_config_handler_extn - Wiphy configuration command handler
+ *
+ * @wiphy - WIPHY pointer
+ * @tb - netlink attribute table
+ * @skb - Pointer to Socket Buffer
+ *
+ * Return void
+ */
+void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
+						 struct nlattr **tb,
+						 struct sk_buff *skb);
 #endif /* CPTCFG_QCN_EXTN */
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

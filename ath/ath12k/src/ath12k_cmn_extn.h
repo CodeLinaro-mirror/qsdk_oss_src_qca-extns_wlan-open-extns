@@ -278,6 +278,15 @@ struct ath12k_extn {
 };
 
 /**
+ * struct ath12k_reg_info_extn - ath12k regulatory info extensions
+ * reg_6ghz_thresh_priority_freq: VLP priority threshold frequency
+ *
+ */
+struct ath12k_reg_info_extn {
+	u16 reg_6ghz_thresh_priority_freq;
+};
+
+/**
  * struct offchan_event_work_with_txn - Work structure for off-channel event
  * @work: Work structure for scheduling the event
  * @wdev: Pointer to the wireless device
@@ -561,6 +570,7 @@ struct ath12k_pci_extn {
 };
 
 struct ath12k_base_extn {
+	u16 reg_6ghz_thresh_priority_freq[MAX_RADIOS];
 #ifdef CPTCFG_EXT_IPA_OFFLOAD
 	struct ath12k_ipa *ipa_ctx;
 	/* This is to hold the rx_buffers allocated initially in RXDMA for IPA
@@ -811,6 +821,28 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 
 void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
+
+/**
+ * ath12k_reg_chan_list_cc_ext_parse_extn - Helper function to parse extn TLVs
+ * from WMI_TAG_REG_CHAN_LIST_CC_EXT_EVENT event
+ * @ab: Pointer to the ath12k base structure
+ * @next_tlv: Pointer to the next TLV to be parsed
+ * @reg_info_extn: Pointer to the output struct
+ */
+int ath12k_reg_chan_list_cc_ext_parse_extn(struct ath12k_base *ab,
+					   const void *next_tlv,
+					   struct ath12k_reg_info_extn *reg_info_extn);
+
+/**
+ * ath12k_reg_handle_chan_list_extn - Helper function to save the extn params
+ * from reg_info_extn to ar_extn
+ * @ab: Pointer to the ath12k base structure
+ * @pdev_idx: pdev identifier
+ * @reg_info_extn: Pointer to the input ath12k_reg_info_extn struct
+ */
+void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
+				      int pdev_idx,
+				      const struct ath12k_reg_info_extn *reg_info_extn);
 
 /**
  * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery

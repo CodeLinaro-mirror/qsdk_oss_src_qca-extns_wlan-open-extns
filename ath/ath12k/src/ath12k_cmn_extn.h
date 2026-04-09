@@ -61,6 +61,11 @@ struct esp_extn {
 	u32 fw_esp_air_time;
 	struct wiphy_work airtime_update_work;
 };
+struct ath12k_link_vif_extn {
+#ifdef CPTCFG_EXT_IPA_STATS
+	struct ath12k_dp_ipa_stats_vif_hw_stats *stats;
+#endif
+};
 
 struct sta_240mhz_info {
 	struct ieee80211_240mhz_vendor_oper_extn params_240MHz_extn;

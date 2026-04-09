@@ -9,6 +9,9 @@
 #include "dp_ipa.h"
 #include "../../wmi.h"
 #include "../../dp_peer.h"
+#ifdef CPTCFG_EXT_IPA_STATS
+#include "dp_ipa_stats.h"
+#endif
 
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 
@@ -3652,6 +3655,11 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 	u16 peer_id;
 	u8 vdev_id;
 	struct ieee80211_rx_status *status;
+#ifdef CPTCFG_EXT_IPA_STATS
+	struct ath12k_link_vif *arvif;
+	struct ath12k_dp_ipa_stats_vif_hw_stats *link_vif_stats;
+	bool is_mcast, is_bcast;
+#endif
 
 	skb = (struct sk_buff *)data;
 	if (!skb) {
@@ -3771,6 +3779,20 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 
 	status->link_id = dp_peer->hw_links[dp_pdev->hw_link_id];
 	status->link_valid = true;
+
+#ifdef CPTCFG_EXT_IPA_STATS
+	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
+	if (arvif) {
+		link_vif_stats = arvif->extn.stats;
+		is_bcast = is_broadcast_ether_addr(eth->h_dest);
+		is_mcast = is_bcast ? false : is_multicast_ether_addr(eth->h_dest);
+
+		if (ar->fw_stats.en_vdev_stats_ol && (is_mcast || is_bcast))
+			ath12k_dp_ipa_tx_rx_mcbc_stats(&link_vif_stats->rx.stats,
+						       is_mcast, is_bcast,
+						       skb->len);
+	}
+#endif
 
 	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
 	ipa_ctx->stats.sent_to_mac++;

@@ -717,6 +717,34 @@ static int ath12k_vendor_get_maxtxpower(struct ath12k *ar, u64 *value)
 	return 0;
 }
 
+/**
+ * ath12k_vendor_get_regtxpower - Get max reg tx power supported by current operating channel
+ * @arvif: pointer to ath12k_link_vif structure
+ * @value: pointer to store the retrieved max tx power
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_vendor_get_regtxpower(struct ath12k_link_vif *arvif, u64 *value)
+{
+	struct ieee80211_vif *vif;
+	struct cfg80211_chan_def def;
+	s32 svalue;
+
+	vif = ath12k_ahvif_to_vif(arvif->ahvif);
+	if (!vif)
+		return -EINVAL;
+
+	if (ath12k_mac_vif_link_chan(vif, arvif->link_id, &def))
+		return -ENOTCONN;
+
+	svalue = (s32)def.chan->max_reg_power;
+	if(svalue < S8_MIN || svalue > S8_MAX)
+		return -ERANGE;
+
+	*value = (s8)def.chan->max_reg_power;
+	return 0;
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 {
@@ -4318,6 +4346,9 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_MAXTXPOWER:
 		ret = ath12k_vendor_get_maxtxpower(ar, value);
                 break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_REGTXPOWER:
+		ret = ath12k_vendor_get_regtxpower(arvif, value);
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_VDEV_TSF:
 		if (!ar) {
 			ath12k_err(NULL, "No radio, use link ID \n");

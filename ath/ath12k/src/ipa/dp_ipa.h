@@ -719,6 +719,7 @@ struct dp_ipa_uc_rx_hdr {
 #define DP_IPA_UC_WLAN_TX_VLAN_HDR_LEN sizeof(struct dp_ipa_uc_tx_vlan_hdr)
 #define DP_IPA_UC_WLAN_RX_HDR_LEN      sizeof(struct dp_ipa_uc_rx_hdr)
 
+extern bool g_ipa_is_ready;
 
 int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx);
 int wlan_ipa_init_perf_level(struct ath12k_wlan_ipa_priv *ipa_ctx);

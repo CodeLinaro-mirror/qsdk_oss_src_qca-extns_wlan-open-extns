@@ -18,7 +18,7 @@ bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
 /* global control for IPA status */
 atomic_t g_instances_added;
 
-static bool g_ipa_is_ready;
+bool g_ipa_is_ready;
 static struct wlan_ipa_config *g_ipa_config;
 static DEFINE_MUTEX(g_ipa_config_lock);
 
@@ -70,9 +70,9 @@ void ath12k_dp_ipa_config_alloc(void)
 
 	g_ipa_config = kmalloc(sizeof(struct wlan_ipa_config), GFP_KERNEL);
 	if (!g_ipa_config) {
-		/*TODO: handle it properly you can not bug on here*/
+		ath12k_err(NULL, "Failed to allocate g_ipa_config\n");
 		mutex_unlock(&g_ipa_config_lock);
-		BUG_ON(1);
+		return;
 	} else {
 		printk("G_IPA_CONFIG is allocated");
 		ath12k_dp_ipa_component_config_update();
@@ -310,8 +310,13 @@ int ath12k_dp_ipa_tx_ipa_uc_attach(struct ath12k_base *ab)
 		return -EINVAL;
 	}
 
+	/* Use kvmalloc: num_entries * sizeof(void*) = 8192 * 8 = 64KB (order-4).
+	 * After repeated UMAC recoveries the buddy allocator may not have a
+	 * contiguous 64KB block, so fall back to vmalloc via kvmalloc rather
+	 * than failing the recovery entirely.
+	 */
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned =
-		kmalloc(num_entries *
+		kvmalloc(num_entries *
 		sizeof(*ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned), GFP_KERNEL);
 	if (!ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned) {
 		ath12k_err(ab, "IPA WBM Ring Tx buf pool vaddr alloc fail");
@@ -373,7 +378,7 @@ int ath12k_dp_ipa_tx_ipa_uc_attach(struct ath12k_base *ab)
 		ath12k_info(ab, "IPA WDI TX buffer: %d allocated", tx_buffer_count);
 	} else {
 		ath12k_err(ab, "No IPA WDI TX buffer allocated!");
-		kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
+		kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
 		ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned = NULL;
 		retval = -ENOMEM;
 	}
@@ -383,11 +388,28 @@ fail_dma_unmap:
 	dma_unmap_single(dp->dev, buffer_paddr, skb->len + skb_tailroom(skb),
 			 DMA_BIDIRECTIONAL);
 fail_free_skb:
+	ath12k_hal_srng_access_end(ab, wbm_srng);
 	spin_unlock_bh(&wbm_srng->lock);
 	dev_kfree_skb_any(skb);
-	kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
+	/* Free any previously allocated and DMA-mapped SKBs */
+	{
+		u32 i;
+		struct sk_buff *prev_skb;
+
+		for (i = 0; i < tx_buffer_count; i++) {
+			prev_skb = (struct sk_buff *)
+				ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned[i];
+			if (prev_skb) {
+				dma_unmap_single(dp->dev, ATH12K_SKB_CB(prev_skb)->paddr,
+						 prev_skb->len + skb_tailroom(prev_skb),
+						 DMA_BIDIRECTIONAL);
+				dev_kfree_skb_any(prev_skb);
+			}
+		}
+	}
+	kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned = NULL;
-	return retval;
+	return -ENOMEM;
 }
 
 /**
@@ -422,12 +444,11 @@ static void ath12k_dp_ipa_tx_ipa_uc_detach(struct ath12k_base *ab)
 						(void *)NULL;
 	}
 
-	kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
+	kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned = NULL;
 
-	//TODO: fix this code 
-	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
-	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
+	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
+	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
 }
 
 static int ath12k_dp_ipa_alt_tx_ipa_uc_attach(struct ath12k_base *ab)
@@ -533,11 +554,28 @@ fail_dma_unmap:
 	dma_unmap_single(dp->dev, buffer_paddr, skb->len + skb_tailroom(skb),
 			 DMA_BIDIRECTIONAL);
 fail_free_skb:
+	ath12k_hal_srng_access_end(ab, wbm_srng);
 	spin_unlock_bh(&wbm_srng->lock);
 	dev_kfree_skb_any(skb);
-	kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
+	/* Free any previously allocated and DMA-mapped SKBs */
+	{
+		u32 i;
+		struct sk_buff *prev_skb;
+
+		for (i = 0; i < tx_buffer_count; i++) {
+			prev_skb = (struct sk_buff *)
+				ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned[i];
+			if (prev_skb) {
+				dma_unmap_single(dp->dev, ATH12K_SKB_CB(prev_skb)->paddr,
+						 prev_skb->len + skb_tailroom(prev_skb),
+						 DMA_BIDIRECTIONAL);
+				dev_kfree_skb_any(prev_skb);
+			}
+		}
+	}
+	kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
-	return retval;
+	return -ENOMEM;
 }
 
 static void ath12k_dp_ipa_alt_tx_ipa_uc_detach(struct ath12k_base *ab)
@@ -596,21 +634,26 @@ static inline unsigned long
 ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_addr)
 {
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ab);
-	phys_addr_t addr;
+	phys_addr_t addr = 0;
 
-	if (!(pci_priv->ath12k_pci_extn.iommu_domain))
-		ath12k_err(ab, "IPA: iommu_domain is null");
-	if (pci_priv->ath12k_pci_extn.smmu_s1_enable && pci_priv->ath12k_pci_extn.iommu_domain) {
-		addr = iommu_iova_to_phys(pci_priv->ath12k_pci_extn.iommu_domain, dma_addr);
-		if (!addr) {
-			ath12k_err(ab, "IPA: iova returned is null");
-			return dma_addr;
-		}
-	}
-	if (addr)
-		return addr;
-	else
+	if (!pci_priv->ath12k_pci_extn.smmu_s1_enable) {
+		/* SMMU S1 is disabled (bypass mode): the DMA address is
+		 * already a physical address — return it directly.
+		 */
 		return dma_addr;
+	}
+
+	if (!(pci_priv->ath12k_pci_extn.iommu_domain)) {
+		ath12k_err(ab, "IPA: iommu_domain is null while smmu_s1 enabled");
+		return 0;
+	}
+
+	addr = iommu_iova_to_phys(pci_priv->ath12k_pci_extn.iommu_domain, dma_addr);
+	if (!addr)
+		ath12k_err(ab, "IPA: iommu_iova_to_phys returned 0 for iova 0x%lx",
+			   dma_addr);
+
+	return addr;
 }
 
 static inline void ipa_update_mem_map_table(struct ath12k_base *ab,
@@ -645,29 +688,61 @@ static int __dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 	 * Assuming single frag for now
 	 */
 	frag_addr = ATH12K_SKB_CB(skb)->paddr;
-	ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, size);
 
 	if (create) {
 		/* Skip if already mapped */
 		if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP)
 			return 0;
 
+		/* Translate PCIe IOVA to physical address via the PCIe iommu_domain.
+		 * This is only safe at map time when the domain is guaranteed live.
+		 */
+		ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, size);
+
 		/* Assert if PA is zero */
-		BUG_ON(mem_map_table.pa == 0);
+		if (WARN_ON(mem_map_table.pa == 0)) {
+			ath12k_err(NULL, "IPA SMMU map: physical address is zero in map\n");
+			return -EINVAL;
+		}
 
 		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
-		if (!ret)
+		if (!ret) {
+			/* Store the PA at map time so unmap can use it directly
+			 * without re-translating through the PCIe iommu_domain,
+			 * which may be NULL or re-created after SSR.
+			 * paddr_ext_desc is a TX-only field, unused for RX SKBs.
+			 */
+			ATH12K_SKB_CB(skb)->paddr_ext_desc = mem_map_table.pa;
 			ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
+		}
 	} else {
 		/* Skip if not mapped */
 		if (!(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
 			return 0;
 
+		/* Use the PA stored at map time — do not call
+		 * ipa_mem_paddr_from_dmaaddr() here, as the PCIe iommu_domain
+		 * may be NULL or point to a re-created domain after SSR,
+		 * causing iommu_iova_to_phys() to return 0 or a wrong PA.
+		 * paddr_ext_desc holds the PA saved at map time (TX-only field,
+		 * unused for RX SKBs).
+		 */
+		mem_map_table.pa   = ATH12K_SKB_CB(skb)->paddr_ext_desc;
+		mem_map_table.iova = frag_addr;
+		mem_map_table.size = size;
+
+		if (WARN_ON(mem_map_table.pa == 0)) {
+			ath12k_err(NULL, "IPA SMMU unmap: stored physical address is zero\n");
+			return 0;
+		}
 		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
 		if (!ret)
 			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
 	}
-	BUG_ON(ret);
+	if (WARN_ON(ret)) {
+		ath12k_err(NULL, "IPA SMMU %s failed: %d\n",
+			   create ? "map" : "unmap", ret);
+	}
 
 	/* TODO: Commenitng below code, just for experiment purpose, this is must
 	 * this need to be re-enabled.
@@ -706,12 +781,15 @@ static int dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 			if (!skb)
 				continue;
 
+			if (!rx_desc[j].ipa_mapped)
+				continue;
+
 			/* Unmap only if previously mapped to IPA */
 			if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP) {
 				ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb,
 									 DP_RX_BUFFER_SIZE,
 									 0,
-									 ab->ath12k_base_extn.ipa_ctx->hdl);
+									 rx_desc[j].ipa_hdl);
 			}
 		}
 	}
@@ -738,27 +816,19 @@ static int dp_ipa_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 		return 0;
 	}
 
-	ath12k_info(ab, "IPA: mapping %d Tx buffer",tx_buffer_cnt);
+	ath12k_info(ab, "IPA: mapping/unmapping:%d  %d Tx buffer",create, tx_buffer_cnt);
 	for (index = 0; index < tx_buffer_cnt; index++) {
 		skb = (struct sk_buff *)
 			ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned[index];
 		if (!skb)
 			continue;
-/*
-+------------------+------------------+------------------+------------------+
-|                  |                  |                  |                  |
-|     head         |      data        |      tail        |       end        |
-|  (start of buf)  | (start of data)  |  (end of data)   | (end of buffer)  |
-+------------------+------------------+------------------+------------------+
-^                  ^                  ^                  ^                  ^
-|                  |<-- skb->len ---->|                  |                  |
-|                  |<--------------- buf_len ----------->|                  |
-|                  |<---skb_end_pointer() - skb->data-->|                  |
-|                  |<---skb->len + skb_tailroom()------->|                  |
-|                                     |<--skb_tailroom-->|                  |
-|<--------- skb_end_pointer() = head + end_offset ------>|                  |
-*/
-		buf_len = skb_end_pointer(skb) - skb->data;
+		/* Use skb->len + skb_tailroom(skb) — the same expression used
+		 * in dma_map_single() at allocation time — so the SMMU mapping
+		 * covers the identical byte range as the DMA mapping.
+		 * (skb_end_pointer(skb) - skb->data diverges after skb_pull()
+		 * alignment and must not be used here.)
+		 */
+		buf_len = skb->len + skb_tailroom(skb);
 		ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb, buf_len,
 							 create, ipa_ctx->hdl);
 	}
@@ -943,21 +1013,41 @@ void dp_ipa_map_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ctx)
 	int ret;
 
 	tx_rsc->tx_comp_doorbell_vaddr = ioremap(tx_rsc->tx_comp_doorbell_paddr, 4);
+	if (!tx_rsc->tx_comp_doorbell_vaddr) {
+		ath12k_err(ipa_ctx->ab, "IPA: ioremap failed for tx_comp_doorbell\n");
+		return;
+	}
 
 	if (pci_priv->ath12k_pci_extn.smmu_s1_enable) {
 		ret = ath12k_smmu_map(ipa_ctx->ab,
 				      tx_rsc->tx_comp_doorbell_paddr,
 				      &tx_comp_doorbell_dmaaddr,
 				      sizeof(u32));
+		if (ret) {
+			ath12k_err(ipa_ctx->ab,
+				   "IPA: SMMU map tx_comp_doorbell failed: %d\n", ret);
+			iounmap(tx_rsc->tx_comp_doorbell_vaddr);
+			tx_rsc->tx_comp_doorbell_vaddr = NULL;
+			return;
+		}
 		tx_rsc->tx_comp_doorbell_paddr = tx_comp_doorbell_dmaaddr;
-		BUG_ON(ret != 0);
 
 		ret = ath12k_smmu_map(ipa_ctx->ab,
 				      rx_rsc->rx_ready_doorbell_paddr,
 				      &rx_ready_doorbell_dmaaddr,
 				      sizeof(u32));
+		if (ret) {
+			ath12k_err(ipa_ctx->ab,
+				   "IPA: SMMU map rx_ready_doorbell failed: %d\n", ret);
+			/* Unmap the TX doorbell we just mapped above */
+			ath12k_smmu_unmap(ipa_ctx->ab,
+					  tx_rsc->tx_comp_doorbell_paddr,
+					  sizeof(u32));
+			iounmap(tx_rsc->tx_comp_doorbell_vaddr);
+			tx_rsc->tx_comp_doorbell_vaddr = NULL;
+			return;
+		}
 		rx_rsc->rx_ready_doorbell_paddr = rx_ready_doorbell_dmaaddr;
-		BUG_ON(ret != 0);
 	}
 
 	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
@@ -1005,12 +1095,14 @@ static void dp_ipa_unmap_ring_doorbell_paddr(struct ath12k_wlan_ipa_priv *ipa_ct
 		ret = ath12k_smmu_unmap(ipa_ctx->ab,
 					rx_rsc->rx_ready_doorbell_paddr,
 					sizeof(u32));
-		BUG_ON(ret != 0);
+		if (WARN_ON(ret != 0))
+			ath12k_err(ipa_ctx->ab, "IPA: SMMU unmap rx_ready_doorbell failed: %d\n", ret);
 
 		ret = ath12k_smmu_unmap(ipa_ctx->ab,
 					tx_rsc->tx_comp_doorbell_paddr,
 					sizeof(u32));
-		BUG_ON(ret != 0);
+		if (WARN_ON(ret != 0))
+			ath12k_err(ipa_ctx->ab, "IPA: SMMU unmap tx_comp_doorbell failed: %d\n", ret);
 	}
 }
 
@@ -1115,13 +1207,9 @@ int wlan_ipa_disable_pipes(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	int result;
 
-	//TODO: implement sleep feature 
-	//sleep(TX_COMP_DRAIN_WAIT_TIMEOUT_MS);
-
 	result = ipa_wdi_disable_pipes_per_inst(ipa_ctx->hdl);
 	if (result) {
 		ath12k_err(ipa_ctx->ab, "%s: Disable WDI PIPE fail, code %d", __func__, result);
-		BUG_ON(1);
 		return -EFAULT;
 	}
 
@@ -1217,6 +1305,8 @@ static int ath12k_ipa_get_shared_mem_info(struct ath12k_base *ab,
 
 	if (domain)
 		paddr = iommu_iova_to_phys(domain, dma_addr);
+	else
+		paddr = dma_addr; /* no IOMMU: DMA addr == physical addr */
 	shared_mem->mem_info.pa = paddr;
 
 	ret = dma_get_sgtable(ab->dev,
@@ -1544,7 +1634,7 @@ void wlan_ipa_uc_op_cb(struct op_msg_type *op_msg,
 	struct op_msg_type *msg = op_msg;
 
 	if (!ipa_ctx || !op_msg) {
-		ath12k_err(ipa_ctx->ab, "INVALID ARG");
+		ath12k_err(NULL, "INVALID ARG: ipa_ctx=%p op_msg=%p", ipa_ctx, op_msg);
 		return;
 	}
 
@@ -1640,6 +1730,13 @@ void wlan_ipa_uc_fw_op_event_handler(struct work_struct *work)
 	ipa_ctx = uc_op_work->ipa_priv_bp;
 	msg = uc_op_work->msg;
 	uc_op_work->msg = NULL;
+
+	if (!ipa_ctx || !msg) {
+		ath12k_err(NULL, "IPA fw op handler: ipa_ctx=%p msg=%p\n", ipa_ctx, msg);
+		kfree(msg);
+		return;
+	}
+
 	ath12k_info(ipa_ctx->ab, "posted msg %d", msg->op_code);
 
 	wlan_ipa_uc_op_cb(msg, ipa_ctx);
@@ -2200,11 +2297,11 @@ int dp_ipa_cleanup(struct ath12k_wlan_ipa_priv *ipa_ctx)
 {
 	int ret = 0;
 
-	ath12k_info(ipa_ctx->ab,"disconn_pipes_per_inst is called");
 	ret = ipa_wdi_disconn_pipes_per_inst(ipa_ctx->hdl);
 	if (ret) {
-		ath12k_err(ipa_ctx->ab, "ipa_wdi_disconn_pipes: IPA pipe cleanup failed ret:%d",
-			ret);
+		ath12k_err(ipa_ctx->ab,
+			   "ipa_wdi_disconn_pipes: IPA pipe cleanup failed ret:%d",
+			   ret);
 		ret = -EFAULT;
 	}
 
@@ -2311,7 +2408,7 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 	struct ath12k_dp_hw_group *dp_hw_grp = ab->dp->dp_hw_grp;
 	struct ath12k_ipa_global_ctx *ipa_global_ctx = dp_hw_grp->ipa_global_ctx;
 
-	ath12k_info(ab, "enter in uc ol deinit");
+	ath12k_info(ab, "enter in uc ol deinit hdl:%d",ipa_ctx->hdl);
 
 	if (!dev) {
 		ath12k_err(ab, "dev null");
@@ -2360,6 +2457,13 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 
 		/* Unmap TX buffers and free TX pool */
 		ath12k_dp_ipa_uc_detach(ab);
+
+		/* Free scatter-gather tables allocated by dp_ipa_get_resources().
+		 * These are allocated via dma_get_sgtable() and must be freed
+		 * here to avoid a memory leak on every detach/SSR cycle.
+		 */
+		sg_free_table(&ipa_ctx->ipa_uc_rx_rsc.sgtable_reo);
+		sg_free_table((struct sg_table *)&ipa_ctx->ipa_uc_rx_rsc.sgtable_refill.sgtable);
 
 		/* Cleanup IPA pipes and ring doorbell address*/
 		ret = dp_ipa_cleanup(ipa_ctx);
@@ -2564,7 +2668,11 @@ EXPORT_SYMBOL(ath12k_ipa_plugin_register_ops);
 
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab)
 {
-	ath12k_info(ab, "De-register IPA_OFFLAD hdl:%d",ab->ath12k_base_extn.ipa_ctx->hdl);
+	if (!ab->ath12k_base_extn.ipa_ctx) {
+		ath12k_err(ab, "IPA context is NULL, skipping deregister\n");
+		return;
+	}
+	ath12k_info(ab, "De-register IPA_OFFLAD hdl:%d", ab->ath12k_base_extn.ipa_ctx->hdl);
 	wlan_ipa_uc_ol_deinit(ab);
 	g_ipa_is_ready = false;
 	ab->ath12k_base_extn.ipa_ctx->ipa_ops = NULL;
@@ -2976,8 +3084,10 @@ void wlan_ipa_cleanup_iface(struct wlan_ipa_iface_context *iface_context,
 			atomic_read(&iface_context->conn_count) - 1) {
 		atomic_inc(&iface_context->disconn_count);
 	} else {
-		ath12k_err(ipa_ctx->ab, "connect/disconnect out of sync\n");
-		BUG_ON(1);
+		ath12k_err(ipa_ctx->ab, "connect/disconnect out of sync: conn=%d disconn=%d\n",
+			   atomic_read(&iface_context->conn_count),
+			   atomic_read(&iface_context->disconn_count));
+		WARN_ON(1);
 	}
 
 	iface_context->is_mlo_vdev = false;
@@ -3056,8 +3166,10 @@ int wlan_ipa_setup_iface(struct ath12k_wlan_ipa_priv *ipa_ctx,
 			atomic_read(&iface_context->disconn_count)) {
 		atomic_inc(&iface_context->conn_count);
 	} else {
-		ath12k_err(ipa_ctx->ab,"connect/disconnect out of sync \n");
-		BUG_ON(1);
+		ath12k_err(ipa_ctx->ab, "connect/disconnect out of sync: conn=%d disconn=%d\n",
+			   atomic_read(&iface_context->conn_count),
+			   atomic_read(&iface_context->disconn_count));
+		WARN_ON(1);
 	}
 
 	iface_context->is_mlo_vdev = is_mlo_vdev;
@@ -3531,7 +3643,7 @@ int ath12k_wlan_ipa_send_msg(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	}
 	ab = ipa_ctx->ab;
 	if (!ab) {
-		ath12k_err(ab, "ab is NULL\n");
+		ath12k_err(NULL, "ab is NULL\n");
 		return -EINVAL;
 	}
 
@@ -3578,7 +3690,7 @@ int ath12k_wlan_ipa_send_msg_ex(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	}
 	ab = ipa_ctx->ab;
 	if (!ab) {
-		ath12k_err(ab, "ab is NULL\n");
+		ath12k_err(NULL, "ab is NULL\n");
 		return -EINVAL;
 	}
 
@@ -3615,9 +3727,11 @@ EXPORT_SYMBOL(ath12k_wlan_ipa_send_msg_ex);
 
 bool ath12k_ipa_get_is_tx1_used(struct ath12k_base *ab, u8 pdev_idx)
 {
+	struct ath12k_pdev *pdev;
+
 	if (!ab || pdev_idx >= ab->num_radios || pdev_idx >= MAX_RADIOS)
 		return false;
-	struct ath12k_pdev *pdev = &ab->pdevs[pdev_idx];
+	pdev = &ab->pdevs[pdev_idx];
 
 	if (!pdev)
 		return false;
@@ -4143,7 +4257,7 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 
 	if (!dp_link_peer || !dp_link_peer->dp_peer) {
 		ath12k_err(ab, "dp_link_peer=%p dp_peer=%p", dp_link_peer,
-			   dp_link_peer->dp_peer);
+			   dp_link_peer ? dp_link_peer->dp_peer : NULL);
 		goto exit;
 	}
 

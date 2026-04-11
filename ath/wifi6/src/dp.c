@@ -312,11 +312,6 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 	kfree(dp_peer);
 }
 
-int ath12k_wifi6_dp_link_peer_create(struct ath12k_base *ab, u32 vdev_id, u8 *addr)
-{
-	return 0;
-}
-
 int ath12k_wifi6_dp_peer_assoc(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
 			       struct ath12k_dp_vif *dp_vif, u8 *addr)
 {
@@ -333,7 +328,6 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_pdev_free = ath12k_wifi6_dp_pdev_free,
 	.dp_peer_create = ath12k_wifi6_dp_peer_create,
 	.dp_peer_delete = ath12k_wifi6_dp_peer_delete,
-	.dp_link_peer_create = ath12k_wifi6_dp_link_peer_create,
 	.dp_peer_assoc = ath12k_wifi6_dp_peer_assoc,
 };
 

@@ -29,6 +29,20 @@ struct ath12k_vif_extn {
 	spinlock_t data_lock;
 };
 
+struct ath12k_dp_vif_extn {
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	uint32_t mhdr; /* mesh header */
+	uint32_t mhdr_len; /* mesh header len */
+	uint32_t mdbg; /* mesh debug */
+#define MESH_DBG_TX		0x1
+#define MESH_DBG_RX		0x2
+#define MESH_DBG_TXHDR_DUMP	0x4
+#define MESH_DBG_RXHDR_DUMP	0x8
+	uint32_t rx_filter; /* mesh rx filter */
+	bool mesh_tx; /*  drop disassocition frames if configured */
+#endif
+};
+
 /**
  * struct esp_extn - ESP (Estimated Service Parameters) extension
  * @air_time_fraction: Configured airtime fraction
@@ -261,6 +275,15 @@ struct ath12k_extn {
 	struct wlan_intf_extn wlan_intf;
 	u8 intf_detect_cnt;
 	u8 samp_cnt;
+};
+
+/**
+ * struct ath12k_reg_info_extn - ath12k regulatory info extensions
+ * reg_6ghz_thresh_priority_freq: VLP priority threshold frequency
+ *
+ */
+struct ath12k_reg_info_extn {
+	u16 reg_6ghz_thresh_priority_freq;
 };
 
 /**
@@ -547,6 +570,7 @@ struct ath12k_pci_extn {
 };
 
 struct ath12k_base_extn {
+	u16 reg_6ghz_thresh_priority_freq[MAX_RADIOS];
 #ifdef CPTCFG_EXT_IPA_OFFLOAD
 	struct ath12k_ipa *ipa_ctx;
 	/* This is to hold the rx_buffers allocated initially in RXDMA for IPA
@@ -799,14 +823,37 @@ void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
 
 /**
+ * ath12k_reg_chan_list_cc_ext_parse_extn - Helper function to parse extn TLVs
+ * from WMI_TAG_REG_CHAN_LIST_CC_EXT_EVENT event
+ * @ab: Pointer to the ath12k base structure
+ * @next_tlv: Pointer to the next TLV to be parsed
+ * @reg_info_extn: Pointer to the output struct
+ */
+int ath12k_reg_chan_list_cc_ext_parse_extn(struct ath12k_base *ab,
+					   const void *next_tlv,
+					   struct ath12k_reg_info_extn *reg_info_extn);
+
+/**
+ * ath12k_reg_handle_chan_list_extn - Helper function to save the extn params
+ * from reg_info_extn to ar_extn
+ * @ab: Pointer to the ath12k base structure
+ * @pdev_idx: pdev identifier
+ * @reg_info_extn: Pointer to the input ath12k_reg_info_extn struct
+ */
+void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
+				      int pdev_idx,
+				      const struct ath12k_reg_info_extn *reg_info_extn);
+
+/**
  * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery
  * @ar: Pointer to the ath12k radio structure
  */
 void ath12k_extn_reconfig_extn_params(struct ath12k *ar);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
-void ath12k_peer_assoc_h_auth_extn(struct ath12k_link_vif *arvif,
+void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ath12k_link_sta *arsta,
+				   struct ieee80211_link_sta *link_sta,
 				   struct ath12k_wmi_peer_assoc_arg *arg);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 

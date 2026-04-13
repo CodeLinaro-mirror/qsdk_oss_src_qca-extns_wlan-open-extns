@@ -15,6 +15,11 @@
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define SUPPORTED_RATES_LEN 8
 
+unsigned int mmeshsim = 1;
+EXPORT_SYMBOL(mmeshsim);
+module_param_named(mmeshsim, mmeshsim, uint, 0644);
+MODULE_PARM_DESC(mmeshsim, "mmeshsim");
+
 u8 supported_rates_5g6g[SUPPORTED_RATES_LEN] = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
 u8 supported_rates_2g[SUPPORTED_RATES_LEN] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
@@ -31,6 +36,12 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)
+{
+	status->rx_flags |= IEEE80211_RX_MHDR;
+}
+EXPORT_SYMBOL(ieee80211_mark_mmesh_frame);
+
 int
 drv_mesh_peer_update_caps_extn(struct ieee80211_local *local,
 			       struct ieee80211_sub_if_data *sdata,
@@ -1447,6 +1458,46 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 
 	return 0;
 }
+
+int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
+				    int link_id,
+				    const u8 *peer_mac,
+				    bool pairwise,
+				    u8 key_idx,
+				    u8 *out_key, u8 out_key_max,
+				    u8 *out_key_len)
+{
+	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_key *key;
+	u8 len;
+
+	if (!vif || !out_key || !out_key_len || !out_key_max)
+		return -EINVAL;
+
+	if (pairwise && !peer_mac)
+		return -EINVAL;
+
+	sdata = vif_to_sdata(vif);
+	if (!sdata)
+		return -EINVAL;
+
+	rcu_read_lock();
+
+	key = ieee80211_lookup_key(sdata, link_id, key_idx, pairwise,
+				   pairwise ? peer_mac : NULL);
+	if (!key) {
+		rcu_read_unlock();
+		return -ENOENT;
+	}
+
+	len = min_t(u8, key->conf.keylen, out_key_max);
+	memcpy(out_key, key->conf.key, len);
+	*out_key_len = len;
+
+	rcu_read_unlock();
+	return 0;
+}
+EXPORT_SYMBOL(ieee80211_extn_get_key_material);
 
 /**
  * ieee80211_process_mesh_peer_beacon - Process beacon from mesh peer

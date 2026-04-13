@@ -659,6 +659,159 @@ static int ath12k_get_vdev_bcast_rate(struct ath12k_link_vif *arvif, u64 *value)
 	return 0;
 }
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	int preamble_type;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	preamble_type = (mhdr >> MESH_DBG_PRAMBLE_OFFSET) & MESH_NIBBLE_MASK;
+
+	if (preamble_type > METAHDR_PREAMBLE_EHT) {
+		pr_err("ERR: preamble type is greater than EHT\n");
+		return -EINVAL;
+	}
+
+	ahvif->dp_vif.dp_extn.mhdr = mhdr;
+	return 0;
+}
+
+int ath12k_mac_vif_set_mesh_dbg(struct ath12k_link_vif *arvif, uint32_t mdbg)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	ahvif->dp_vif.dp_extn.mdbg = mdbg;
+	return 0;
+}
+
+int ath12k_mac_vif_set_mesh_rx_filter(struct ath12k_link_vif *arvif, uint32_t rx_filter)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	/* rx filter shouldn't have bits set beyond MESH_FILTER_OUT_TA */
+	if (rx_filter > 0x1F)
+		return -EINVAL;
+
+	ahvif->dp_vif.dp_extn.rx_filter = rx_filter;
+	return 0;
+}
+
+int ath12k_mac_vif_set_mesh_tx(struct ath12k_link_vif *arvif, uint32_t mesh_tx)
+{
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+
+	/* Validate arvif, ar, and ab pointers first to get ab for logging */
+	if (!arvif || !arvif->ar || !arvif->ar->ab) {
+		pr_err("ath12k: invalid pointers in set_offload_mode\n");
+		return -EINVAL;
+	}
+
+	ar = arvif->ar;
+	ab = ar->ab;
+
+	/* Validate ahvif pointer */
+	ahvif = arvif->ahvif;
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+
+	/* Validate vif pointer */
+	vif = ath12k_ahvif_to_vif(ahvif);
+	if (!vif) {
+		ath12k_err(ab, "vif is NULL for vdev %d\n", arvif->vdev_id);
+		return -EINVAL;
+	}
+
+	ahvif->dp_vif.dp_extn.mesh_tx = mesh_tx;
+	return 0;
+}
+
 /**
  * ath12k_set_vdev_bcast_rate - Set broadcast rate for a vdev
  * @arvif: pointer to ath12k_link_vif structure
@@ -731,6 +884,7 @@ static int ath12k_set_vdev_bcast_rate(struct ath12k_link_vif *arvif, u32 bitrate
 
 	return 0;
 }
+#endif
 
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
@@ -740,7 +894,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 	struct ath12k *ar = arvif->ar;
         int ret = -1;
 
-        switch (param) {
+	switch (param) {
         case QCA_WLAN_VENDOR_VDEV_PARAM_TEST_RELOAD:
                 *reload = true;
                 ret = 0;
@@ -1049,6 +1203,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 		    ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_MCAST_DATA_RATE to firmware\n");
 		break;
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
 		ret = ath12k_set_vdev_bcast_rate(arvif, value);
 		if (ret)
@@ -1059,6 +1214,51 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		if (ret)
 			ath12k_err(NULL, "Failed to set PN RX Filter");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_HDR:
+		ret = ath12k_mac_vif_setmhdr(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh hdr 0x%x for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh hdr to 0x%x for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_DBG:
+		ret = ath12k_mac_vif_set_mesh_dbg(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh dbg %d for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh dbg to %d for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+	case QCA_WLAN_VENDOR_VDEV_RX_FILTER:
+		ret = ath12k_mac_vif_set_mesh_rx_filter(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh rx_filter 0x%x for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh rx_filter to 0x%x for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+	case QCA_WLAN_VENDOR_VDEV_TX_MESH:
+		ret = ath12k_mac_vif_set_mesh_tx(arvif, value);
+		if (ret) {
+			ath12k_err(ar->ab, "failed to set mesh tx_%d for vdev %d: %d\n",
+				   value, arvif->vdev_id, ret);
+			return ret;
+		}
+		ath12k_err(ar->ab,
+			   "Vendor cmd: Set mesh tx to %d for vdev %d\n Success",
+			   value, arvif->vdev_id);
+	break;
+#endif
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);
@@ -2130,6 +2330,31 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
                         ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SET_MSDU_TTL_CMDID to firmware");
                 }
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_DFS_NOL_SUBCHANNEL_MARKING:
+	{
+		bool enable;
+		enable = !!value;
+		if (ar->dfs_sub_channel_marking == enable) {
+			ret = 0;
+			break;
+		}
+
+		ar->dfs_sub_channel_marking = enable;
+		ret = 0;
+
+		if (ar->ah->state != ATH12K_HW_STATE_ON) {
+			break;
+		}
+
+		ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SUB_CHANNEL_MARKING,
+						enable ? 1 : 0, ar->pdev->pdev_id);
+		if (ret) {
+			ath12k_warn(ar->ab, "failed to set sub channel marking: %d\n", ret);
+			break;
+		}
+
+		break;
+	}
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -2465,6 +2690,24 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
 		ret = ath12k_get_vdev_bcast_rate(arvif, value);
 		break;
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_HDR:
+		*value = arvif->ahvif->dp_vif.dp_extn.mhdr;
+		ret = 0;
+	break;
+	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_DBG:
+		*value = arvif->ahvif->dp_vif.dp_extn.mdbg;
+		ret = 0;
+	break;
+	case QCA_WLAN_VENDOR_VDEV_RX_FILTER:
+		*value = arvif->ahvif->dp_vif.dp_extn.rx_filter;
+		ret = 0;
+	break;
+	case QCA_WLAN_VENDOR_VDEV_TX_MESH:
+		*value = arvif->ahvif->dp_vif.dp_extn.mesh_tx;
+		ret = 0;
+	break;
+#endif
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -2700,6 +2943,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 *value = ar->radio_cfg.msdu_ttl;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_DFS_NOL_SUBCHANNEL_MARKING:
+		*value = ar->dfs_sub_channel_marking;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -2802,6 +3049,46 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	}
 
 	return 0;
+}
+
+void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
+						 struct nlattr **tb,
+						 struct sk_buff *skb)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar;
+	u8 radio_idx = 0;
+	u16 thresh_freq;
+	int pdev_idx;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_6GHZ_VLP_PRIORITY_THRESH_FREQ]) {
+		if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX])
+			radio_idx = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+
+		if (radio_idx >= ah->num_radio) {
+			ath12k_err(NULL,
+				   "Invalid radio index %u (valid range: 0..%u)\n",
+				   radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+			return;
+		}
+
+		ar = &ah->radio[radio_idx];
+		pdev_idx = ar->pdev_idx;
+		if (pdev_idx < 0 || pdev_idx >= MAX_RADIOS) {
+			ath12k_err(NULL, "Invalid pdev index %d for radio index %u\n",
+				   pdev_idx, radio_idx);
+			return;
+		}
+
+		thresh_freq = ar->ab->ath12k_base_extn.reg_6ghz_thresh_priority_freq[pdev_idx];
+		if (nla_put_u16(skb,
+				QCA_WLAN_VENDOR_ATTR_CONFIG_6GHZ_VLP_PRIORITY_THRESH_FREQ,
+				thresh_freq)) {
+			ath12k_err(NULL, "failed to put VLP priority threshold frequency\n");
+			return;
+		}
+	}
 }
 
 int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
@@ -3800,6 +4087,196 @@ clean:
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+static const char *ath12k_phymode_str(enum wmi_phy_mode mode)
+{
+	switch (mode) {
+	case MODE_11A:
+		return "11a";
+	case MODE_11G:
+		return "11g";
+	case MODE_11B:
+		return "11b";
+	case MODE_11GONLY:
+		return "11gonly";
+	case MODE_11NA_HT20:
+		return "11na-ht20";
+	case MODE_11NG_HT20:
+		return "11ng-ht20";
+	case MODE_11NA_HT40:
+		return "11na-ht40";
+	case MODE_11NG_HT40:
+		return "11ng-ht40";
+	case MODE_11AC_VHT20:
+		return "11ac-vht20";
+	case MODE_11AC_VHT40:
+		return "11ac-vht40";
+	case MODE_11AC_VHT80:
+		return "11ac-vht80";
+	case MODE_11AC_VHT160:
+		return "11ac-vht160";
+	case MODE_11AC_VHT80_80:
+		return "11ac-vht80+80";
+	case MODE_11AC_VHT20_2G:
+		return "11ac-vht20-2g";
+	case MODE_11AC_VHT40_2G:
+		return "11ac-vht40-2g";
+	case MODE_11AC_VHT80_2G:
+		return "11ac-vht80-2g";
+	case MODE_11AX_HE20:
+		return "11ax-he20";
+	case MODE_11AX_HE40:
+		return "11ax-he40";
+	case MODE_11AX_HE80:
+		return "11ax-he80";
+	case MODE_11AX_HE80_80:
+		return "11ax-he80+80";
+	case MODE_11AX_HE160:
+		return "11ax-he160";
+	case MODE_11AX_HE20_2G:
+		return "11ax-he20-2g";
+	case MODE_11AX_HE40_2G:
+		return "11ax-he40-2g";
+	case MODE_11AX_HE80_2G:
+		return "11ax-he80-2g";
+	case MODE_11BE_EHT20:
+		return "11be-eht20";
+	case MODE_11BE_EHT40:
+		return "11be-eht40";
+	case MODE_11BE_EHT80:
+		return "11be-eht80";
+	case MODE_11BE_EHT80_80:
+		return "11be-eht80+80";
+	case MODE_11BE_EHT160:
+		return "11be-eht160";
+	case MODE_11BE_EHT160_160:
+		return "11be-eht160+160";
+	case MODE_11BE_EHT320:
+		return "11be-eht320";
+	case MODE_11BE_EHT20_2G:
+		return "11be-eht20-2g";
+	case MODE_11BE_EHT40_2G:
+		return "11be-eht40-2g";
+	case MODE_11BN_UHR20:
+		return "11bn-uhr20";
+	case MODE_11BN_UHR40:
+		return "11bn-uhr40";
+	case MODE_11BN_UHR80:
+		return "11bn-uhr80";
+	case MODE_11BN_UHR80_80:
+		return "11bn-uhr80+80";
+	case MODE_11BN_UHR160:
+		return "11bn-uhr160";
+	case MODE_11BN_UHR160_160:
+		return "11bn-uhr160+160";
+	case MODE_11BN_UHR320:
+		return "11bn-uhr320";
+	case MODE_11BN_UHR20_2G:
+		return "11bn-uhr20-2g";
+	case MODE_11BN_UHR40_2G:
+		return "11bn-uhr40-2g";
+	case MODE_UNKNOWN:
+		/* skip */
+		break;
+	}
+
+	return "<unknown>";
+}
+
+/**
+ * ath12k_vendor_mesh_peer_dump - Dump mesh peer information
+ *
+ * @wiphy: wiphy pointer
+ * @vif: virtual interface pointer
+ * @peer_mld_mac: MAC address of specific peer to dump, or NULL for all peers
+ *
+ * Prints the MAC address, AID, and all mesh_peer_info fields for a specific
+ * mesh peer (when peer_mld_mac is non-NULL) or for every mesh peer on the
+ * interface (when peer_mld_mac is NULL).
+ *
+ * Return: 0 on success, -ENOENT if the specified peer was not found,
+ *         or a negative error code on other failures.
+ */
+static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
+					struct ieee80211_vif *vif,
+					const u8 *peer_mld_mac)
+{
+	struct ieee80211_sub_if_data *sdata;
+	struct sta_info *sta;
+	struct mesh_peer_info *peer_info;
+	bool found = false;
+
+	if (!vif)
+		return -EINVAL;
+
+	sdata = vif_to_sdata(vif);
+
+	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+		ath12k_err(NULL, "mesh_peer_dump: not a mesh VAP\n");
+		return -EINVAL;
+	}
+
+	lockdep_assert_wiphy(wiphy);
+
+	list_for_each_entry_rcu(sta, &sdata->local->sta_list, list) {
+		if (sta->sdata != sdata)
+			continue;
+
+		if (!sta->sta.sta_extn.peer_info.is_mesh_peer)
+			continue;
+
+		/* If a specific MAC is provided, skip non-matching peers */
+		if (peer_mld_mac && !ether_addr_equal(sta->sta.addr, peer_mld_mac))
+			continue;
+
+		peer_info = &sta->sta.sta_extn.peer_info;
+		found = true;
+
+		pr_info("\t----------------------------------------------------------\n");
+		pr_info("\tMesh Peer MAC : %pM\n", sta->sta.addr);
+		pr_info("\tAID           : %u\n", sta->sta.aid);
+		pr_info("\t  -- Peer Info --\n");
+		pr_info("\t  is_mesh_peer   : %s\n",
+		       peer_info->is_mesh_peer ? "true" : "false");
+		pr_info("\t  phymode        : %s\n",
+		       ath12k_phymode_str(peer_info->mesh_peer_phymode));
+		pr_info("\t  nss            : %u\n",
+		       peer_info->mesh_peer_nss);
+		pr_info("\t  -- Beacon Tracking --\n");
+		pr_info("\t  miss_count     : %u\n",
+		       peer_info->beacon_miss_count);
+		{
+			unsigned long now = jiffies;
+			unsigned long delta_ms = peer_info->last_beacon_time ?
+						 jiffies_to_msecs(now - peer_info->last_beacon_time) : 0;
+			pr_info("\t  current_time   : %lu jiffies\n", now);
+			pr_info("\t  last_beacon    : %lu jiffies\n",
+			       peer_info->last_beacon_time);
+			pr_info("\t  beacon_age     : %lu sec\n", delta_ms / 1000);
+		}
+		pr_info("\t  -- Beacon Intersection --\n");
+		pr_info("\t  done           : %s\n",
+		       peer_info->intersection_done ? "true" : "false");
+		pr_info("\t  attempts       : %u\n",
+		       peer_info->intersect_attempts);
+		pr_info("\t  successes      : %u\n",
+		       peer_info->intersect_successes);
+		pr_info("\t  failures       : %u\n",
+		       peer_info->intersect_failures);
+		pr_info("\t----------------------------------------------------------\n");
+
+		if (peer_mld_mac)
+			break;
+	}
+
+	if (peer_mld_mac && !found) {
+		ath12k_err(NULL, "mesh_peer_dump: peer %pM not found\n",
+			   peer_mld_mac);
+		return -ENOENT;
+	}
+
+	return 0;
+}
+
 int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     struct ath12k_wifi_generic_params *params)
@@ -3851,6 +4328,11 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 		ret = ieee80211_vendor_mesh_peer_timeout_en(wiphy, vif,
 							    mesh_params->
 							    peer_cleanup_timer_enable);
+		break;
+	case ATH12K_EXTN_MESH_CONF_PEER_DUMP:
+		ret = ath12k_vendor_mesh_peer_dump(wiphy, vif,
+						   is_zero_ether_addr(mesh_params->peer_mld_mac) ?
+						   NULL : mesh_params->peer_mld_mac);
 		break;
 	default:
 		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);

@@ -24,6 +24,10 @@ struct ath12k_sta;
 #define ATH12K_NUM_CHANS 102
 #endif
 
+struct ath12k_mgmt;
+struct ath12k_mgmt_irq_grp;
+struct mgmt_srng;
+
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
 	spinlock_t data_lock;
@@ -379,6 +383,43 @@ struct ath12k_pdev_mon_dp_extn {
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
 
+/*
+ * struct ath12k_mgmt_irq_grp_extn - Driver private extension for mgmt irq_grp
+ * @priority: Priority interrupt
+ */
+struct ath12k_mgmt_irq_grp_extn {
+	bool priority;
+};
+
+/* keep it same as `struct mgmt_srng` */
+struct mgmt_srng_extn {
+	u32 *vaddr_unaligned;
+	u32 *vaddr;
+	dma_addr_t paddr_unaligned;
+	dma_addr_t paddr;
+	int size;
+	u32 ring_id;
+	u8 cached;
+};
+
+#define ATH12K_SRNG_STATS_EXTN_MGMT_FRM_STYPE_MAX 16
+/**
+ * struct ath12k_device_mgmt_srng_stats_extn - Driver private extension for
+ *                                             mgmt srng stats
+ * @rx_highpri_pkts: Per-Frame subtype stats for high priority packets
+ */
+struct ath12k_device_mgmt_srng_stats_extn {
+	u32 rx_highpri_pkts[ATH12K_SRNG_STATS_EXTN_MGMT_FRM_STYPE_MAX];
+};
+
+/**
+ * struct ath12k_mgmt_wifi8_extn - WiFi8 device-specific mgmt info
+ * @reo_dst_highpri_rx_ring: Ring interface for private high priority ring
+ */
+struct ath12k_mgmt_wifi8_extn {
+	struct mgmt_srng_extn reo_dst_highpri_rx_ring;
+};
+
 #ifndef CPTCFG_QCN_EXTN
 
 static inline void
@@ -547,6 +588,11 @@ ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
 	return -1;
 }
 
+int ath12k_pcic_mgmt_interrupt_handler_extn(struct ath12k_mgmt_irq_grp *irq_grp)
+{
+	return -1;
+}
+
 static inline int
 ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 			    const void *ptr, void *data)
@@ -556,6 +602,54 @@ ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 
 static inline void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 {
+}
+
+int ath12k_wifi8_mgmt_init_extn(struct ath12k_mgmt *mgmt)
+{
+	return 0;
+}
+
+void ath12k_wifi8_mgmt_deinit_extn(struct ath12k_mgmt *mgmt)
+{
+}
+
+int ath12k_mgmt_srng_type_valid_extn(struct ath12k_base *ab, enum hal_ring_type type)
+{
+	return -1;
+}
+
+int ath12k_mgmt_srng_setup_extn(struct ath12k_base *ab, enum hal_ring_type type,
+				bool *cached, struct hal_srng_params *params)
+{
+	return -1;
+}
+
+int ath12k_wifi8_mgmt_rx_ring_setup_extn(struct ath12k_base *ab)
+{
+	return -1;
+}
+
+void ath12k_wifi8_mgmt_rx_ring_free_extn(struct ath12k_base *ab)
+{
+}
+
+int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt,
+					    struct ath12k *partner_ar,
+					    struct sk_buff *mmpdu, u32 pkt_type)
+{
+	return -1;
+}
+
+ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, char *buf,
+							int len, int size)
+{
+	return len;
+}
+
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
+					   int len)
+{
+	return len;
 }
 
 #else
@@ -861,6 +955,137 @@ void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ieee80211_link_sta *link_sta,
 				   struct ath12k_wmi_peer_assoc_arg *arg);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
+/**
+ * ath12k_wifi8_mgmt_rx_reap_packets - Reap management packets from the rings
+ * @ab: ath12k_base instance
+ * @ring: HAL ring structure for the appropriate ring packets are reaped from
+ * @mmpdu_list: List to store reaped packets
+ *
+ * Return: Number of packets reaped, 0 if ring is empty
+ */
+int ath12k_wifi8_mgmt_rx_reap_packets(struct ath12k_base *ab, struct mgmt_srng *ring,
+				      struct sk_buff_head *mmpdu_list);
+
+/**
+ * ath12k_wifi8_mgmt_rx_process_packets - Process an MMPDU reaped from the ring
+ * @mgmt: ath12k_mgmt instance
+ * @mmpdu_list: List of buffers reaped from the ring
+ * @pkt_type: Packet type (based on rings)
+ *
+ * Return: None
+ */
+void ath12k_wifi8_mgmt_rx_process_packets(struct ath12k_mgmt *mgmt,
+					  struct sk_buff_head *mmpdu_list, u32 pkt_type);
+
+/**
+ * ath12k_wifi8_mgmt_rx_deliver_mmpdu - Deliver MMPDUs to the stack
+ * @mgmt: ath12k_mgmt instance
+ * @partner_ar: ath12k radio (resolved based on hw_link_id)
+ * @mmpdu: Management frame
+ * @status: skb cb to store rx info
+ * @pkt_type: Packet type (based on rings)
+ *
+ * Return: None
+ */
+void ath12k_wifi8_mgmt_rx_deliver_mmpdu(struct ath12k_mgmt *mgmt,
+					struct ath12k *partner_ar,
+					struct sk_buff *mmpdu,
+					struct ieee80211_rx_status *status,
+					u32 pkt_type);
+
+/**
+ * ath12k_pcic_mgmt_interrupt_handler_extn - Handle driver private high priority IRQ for
+ *                                           management frames
+ * @irq_grp: Interrupt group corresponding to this private IRQ
+ *
+ * Return: 0 on handling the IRQ, errors otherwise
+ */
+int ath12k_pcic_mgmt_interrupt_handler_extn(struct ath12k_mgmt_irq_grp *irq_grp);
+
+/**
+ * ath12k_wifi8_mgmt_init_extn - Initialize WiFi8 device-specific private objects
+ * @mgmt: ath12k mgmt instance
+ *
+ * Return: 0 on success, errors otherwise
+ */
+int ath12k_wifi8_mgmt_init_extn(struct ath12k_mgmt *mgmt);
+
+/**
+ * ath12k_wifi8_mgmt_deinit_extn - Deinitialize WiFi8 device-specific private objects
+ * @mgmt: ath12k_mgmt instance
+ *
+ * Return: Void
+ */
+void ath12k_wifi8_mgmt_deinit_extn(struct ath12k_mgmt *mgmt);
+
+/**
+ * ath12k_mgmt_srng_type_valid_extn - Validate if the ring type is supported for driver
+ *                                    private IRQ
+ * @ab: ath12k_base instance
+ * @type: HAL ring type
+ *
+ * Return: 0 if supported, error otherwise
+ */
+int ath12k_mgmt_srng_type_valid_extn(struct ath12k_base *ab, enum hal_ring_type type);
+
+/**
+ * ath12k_mgmt_srng_setup_extn - Set up driver private mgmt SRNG interface
+ * @ab: ath12k_base instance
+ * @type: HAL ring type
+ * @cached: Pointer to indicate whether cached alloc can be used
+ * @params: Pointer to configure IRQ batch threshold parameters
+ *
+ * Return: 0 on success, error otherwise
+ */
+int ath12k_mgmt_srng_setup_extn(struct ath12k_base *ab, enum hal_ring_type type,
+				bool *cached, struct hal_srng_params *params);
+
+/**
+ * ath12k_wifi8_mgmt_rx_ring_setup_extn - Set up driver private mgmt rings
+ * @ab: ath12k_base instance
+ *
+ * Return: 0 on success, error otherwise
+ */
+int ath12k_wifi8_mgmt_rx_ring_setup_extn(struct ath12k_base *ab);
+
+/**
+ * ath12k_wifi8_mgmt_rx_ring_free_extn - Free driver private mgmt rings
+ * @ab: ath12k_base instance
+ *
+ * Return: Void
+ */
+void ath12k_wifi8_mgmt_rx_ring_free_extn(struct ath12k_base *ab);
+
+/**
+ * ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn - Do driver private handling for mgmt frames
+ * @mgmt: ath12k_mgmt instance
+ * @ar: ath12k instance corresponding to hw_link_id of the frame
+ * @mmpdu: Management frame
+ * @pkt_type: Management ring type
+ */
+int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt, struct ath12k *ar,
+					    struct sk_buff *mmpdu, u32 pkt_type);
+
+/**
+ * ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn - Dump driver private stats
+ * @ab: ath12k_base instance
+ * @buf: Buffer to write stats
+ * @len: Length used
+ * @size: Max size of the buffer
+ */
+ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, char *buf,
+							int len, int size);
+
+/**
+ * ath12k_wifi8_mgmt_dump_ring_stats_extn - Dump driver private mgmt rings
+ * @mgmt: ath12k_mgmt instance
+ * @buf: Buffer to write stats
+ * @len: Length used
+ * @size: Max size of the buffer
+ */
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
+					   int len);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

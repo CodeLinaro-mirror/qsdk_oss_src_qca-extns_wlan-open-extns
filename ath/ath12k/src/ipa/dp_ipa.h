@@ -104,6 +104,79 @@ struct ipa_header {
 #define WLAN_IPA_AST_META_DATA_MASK htonl(0x000000FF)
 #define DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET	0
 
+#define ATH12K_IPA_DMA_MAP_SINGLE(ab, defrag_skb, buf_paddr) do { \
+	buf_paddr = dma_map_single((ab)->dev, \
+				   (defrag_skb)->data, \
+				   DP_RX_BUFFER_SIZE, \
+				   DMA_FROM_DEVICE); \
+	ATH12K_SKB_CB(defrag_skb)->paddr = buf_paddr; \
+} while (0)
+
+#define ATH12K_CORE_DMAC_INV_RANGE(...) ((void)0)
+#define VIRT_TO_PHYS(...) ((void)0)
+
+#define ATH12K_DMA_UNMAP_DEFRAG_SKB(ab, skb) \
+	ath12k_core_dma_unmap_single((ab)->dev, \
+				     ATH12K_SKB_CB(skb)->paddr, \
+				     DP_RX_BUFFER_SIZE, \
+				     DMA_FROM_DEVICE) \
+
+#define ATH12K_DMA_UNMAP_WITH_FREE_SKB(ab, skb) \
+	do { \
+		ATH12K_DMA_UNMAP_DEFRAG_SKB(ab, skb); \
+		dev_kfree_skb_any(skb); \
+	} while (0)
+
+#define IPA_SET_RX_BUF_SMMU_MAP(ab, skb) \
+	do { \
+		if (IPA_CTX(ab) && \
+			IPA_CTX(ab)->ipa_ops && \
+			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap) \
+			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap \
+				(ab, skb, DP_RX_BUFFER_SIZE, 1, \
+				IPA_CTX(ab)->hdl); \
+	} while (0)
+
+#define IPA_SET_RX_BUF_SMMU_UNMAP(ab, skb, unmap) \
+	do { \
+		if (IPA_CTX(ab) && IPA_CTX(ab)->ipa_ops && \
+			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap) \
+			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap \
+				(ab, skb, DP_RX_BUFFER_SIZE, 0, \
+				IPA_CTX(ab)->hdl); \
+		if (unmap) \
+			ATH12K_DMA_UNMAP_DEFRAG_SKB(ab, skb); \
+	} while (0)
+
+#define ATH12K_HAL_SRNG_ACCESS_BEGIN(ab, tcl_ring) \
+	ath12k_hal_srng_access_begin(ab, tcl_ring);
+
+#define ATH12K_HAL_SRNG_ACCESS_END(ab, tcl_ring) \
+	ath12k_hal_srng_access_end(ab, tcl_ring);
+
+#define IPA_TX_BUFFER_FREE(ab) \
+	if (IPA_CTX(ab) && IPA_CTX(ab)->ipa_ops && \
+	    IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_free) \
+		IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_free(ab);
+
+#define IPA_TX_BUFFER_ALLOC(ab) \
+	if (IPA_CTX(ab) && IPA_CTX(ab)->ipa_ops && \
+	    IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_alloc) \
+		IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_alloc(ab);
+
+#define RETURN_IPA_CODE(val) return val
+
+#define ATH12K_DP_RXDMA_RING_CONFIG(ring_id, dp) \
+	ring_id = dp->rx_mac_buf_ring[0].ring_id;
+
+#define ATH12K_SKB_COPY_PADDR(skb, ti) \
+	ATH12K_SKB_CB(skb)->paddr = ti.paddr;
+
+# define ATH12K_SET_IPA_TCL_RING(ti) \
+	if (ti.ring_id == ATH12K_IPA_TCL_RING) \
+		ti.ring_id = ATH12K_IPA_TCL_SW_RING;
+
+#define ATH12K_CORE_DMA_UNMAP_SINGLE(...) ((void)0)
 
 int ath12k_dp_ipa_plugin_register_ops_extn(struct ath12k_base *ab);
 void ath12k_dp_ipa_plugin_deregister_ops_extn(struct ath12k_base *ab);

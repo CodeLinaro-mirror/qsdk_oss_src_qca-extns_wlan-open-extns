@@ -882,6 +882,9 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 	case WMI_ESP_ESTIMATE_EVENTID:
 		ath12k_wmi_esp_estimate_event_extn(ab, skb);
 		break;
+	case WMI_PEER_RATECODE_LIST_EVENTID:
+		ath12k_wmi_peer_ratecode_list_event_handler(ab, skb);
+		break;
 	default:
 		return -EINVAL;
 	}

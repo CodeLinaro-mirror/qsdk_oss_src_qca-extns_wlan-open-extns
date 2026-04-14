@@ -54,4 +54,19 @@ int ath12k_register_smart_ant_ops(struct ath12k_smart_ant_ops *ops);
  */
 int ath12k_unregister_smart_ant_ops(void);
 
+/**
+ * ath12k_wmi_peer_ratecode_list_event_handler - Handle WMI RC list event
+ * @ab: ath12k base context
+ * @skb: event skb from firmware containing peer ratecode list
+ *
+ * Processes the peer ratecode list event from firmware and forwards it to the
+ * Smart Antenna core handler to update per-peer ratecode state.
+ */
+static inline
+void ath12k_wmi_peer_ratecode_list_event_handler(struct ath12k_base *ab,
+						 struct sk_buff *skb)
+{
+	sa_core_wmi_peer_rc_list_ev_handler(ab, skb);
+}
+
 #endif /* ATH12K_SA_API_H */

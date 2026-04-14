@@ -167,6 +167,17 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 	return -1;
 }
 
+static const struct nla_policy
+ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] = {};
+
+static inline int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
+						     struct wireless_dev *wdev,
+						     const void *data,
+						     int data_len)
+{
+	return -1;
+}
+
 static int ath12k_get_dp_rx_scan_radio_stats_len(void)
 {
 	return 0;
@@ -304,6 +315,14 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     const void *data,
 				     int data_len);
+
+extern const struct nla_policy
+ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1];
+
+int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
+				       struct wireless_dev *wdev,
+				       const void *data,
+				       int data_len);
 
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params);

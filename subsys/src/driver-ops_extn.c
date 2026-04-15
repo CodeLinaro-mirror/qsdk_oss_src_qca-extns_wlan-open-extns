@@ -35,6 +35,32 @@ drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 	return NULL;
 }
 
+int ieee80211_validate_6ghz_chandef_extn(struct ieee80211_local *local,
+					 struct ieee80211_vif *vif,
+					 unsigned int link_id,
+					 const struct cfg80211_chan_def *chandef,
+					 enum ieee80211_ap_reg_power power_type)
+{
+	int ret;
+
+	if (!chandef || !chandef->chan ||
+	    chandef->chan->band != NL80211_BAND_6GHZ)
+		return 0;
+
+	if (!local->ops_extn || !local->ops_extn->validate_6ghz_chandef_extn)
+		return 0;
+
+	ret = local->ops_extn->validate_6ghz_chandef_extn(
+		&local->hw, vif, link_id, chandef, power_type);
+	if (ret)
+		wiphy_dbg(local->hw.wiphy,
+			  "HWBL: 6 GHz chandef blocked (freq %u MHz, bw %d, power_type %d)\n",
+			  chandef->chan->center_freq,
+			  nl80211_chan_width_to_mhz(chandef->width),
+			  power_type);
+	return ret;
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)
 {

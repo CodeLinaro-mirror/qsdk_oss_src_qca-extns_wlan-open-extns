@@ -65,66 +65,6 @@ void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr
 	}
 }
 
-int ath12k_reg_chan_list_cc_ext_parse_extn(struct ath12k_base *ab,
-					   const void *next_tlv,
-					   struct ath12k_reg_info_extn *reg_info_extn)
-{
-	const struct wmi_tlv *prio_tlv;
-	const struct ath12k_wmi_reg_chan_priority *prio;
-	u16 wrapper_len;
-	u16 prio_tag;
-
-	if (!reg_info_extn)
-		return -EINVAL;
-
-	reg_info_extn->reg_6ghz_thresh_priority_freq = 0;
-
-	if (!next_tlv)
-		return -EINVAL;
-
-	prio_tlv = (const struct wmi_tlv *)next_tlv;
-	if (le32_get_bits(prio_tlv->header, WMI_TLV_TAG) != WMI_TAG_ARRAY_STRUCT ||
-	    !le32_get_bits(prio_tlv->header, WMI_TLV_LEN))
-		return -EPROTO;
-
-	wrapper_len = le32_get_bits(prio_tlv->header, WMI_TLV_LEN);
-	if (wrapper_len < sizeof(*prio))
-		return -EINVAL;
-
-	prio = (const struct ath12k_wmi_reg_chan_priority *)(prio_tlv + 1);
-	prio_tag = le32_get_bits(prio->tlv_header, WMI_TLV_TAG);
-	if (prio_tag != WMI_TAG_REG_CHAN_PRIORITY)
-		return -EINVAL;
-
-	reg_info_extn->reg_6ghz_thresh_priority_freq =
-		le32_to_cpu(prio->freq_info) & 0xFFFF;
-
-	ath12k_dbg(ab, ATH12K_DBG_REG,
-		   "6 GHz VLP priority threshold freq %u",
-		   reg_info_extn->reg_6ghz_thresh_priority_freq);
-
-	return 0;
-}
-
-void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
-				      int pdev_idx,
-				      const struct ath12k_reg_info_extn *reg_info_extn)
-{
-	if (!ab || !reg_info_extn)
-		return;
-
-	if (pdev_idx < 0 || pdev_idx >= MAX_RADIOS)
-		return;
-
-	ab->ath12k_base_extn.reg_6ghz_thresh_priority_freq[pdev_idx] =
-		reg_info_extn->reg_6ghz_thresh_priority_freq;
-
-	ath12k_dbg(ab, ATH12K_DBG_REG,
-		   "pdev %d 6 GHz priority threshold set to %u\n",
-		   pdev_idx,
-		   ab->ath12k_base_extn.reg_6ghz_thresh_priority_freq[pdev_idx]);
-}
-
 static void ath12k_mac_accumulate_avg_link_rssi(void *data,
 		struct ieee80211_sta *sta)
 {
@@ -924,6 +864,11 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 			  struct sk_buff *skb)
 {
 	switch (id) {
+	case WMI_HW_BLACKLIST_CHAN_EVENTID:
+		ath12k_dbg(ab, ATH12K_DBG_REG, "Received Blacklist Event");
+		if (ath12k_wmi_hw_blocklist_chan_event_extn(ab, skb))
+			ath12k_warn(ab, "HBL extn handler failed\n");
+		break;
 	case WMI_ESP_ESTIMATE_EVENTID:
 		ath12k_wmi_esp_estimate_event_extn(ab, skb);
 		break;

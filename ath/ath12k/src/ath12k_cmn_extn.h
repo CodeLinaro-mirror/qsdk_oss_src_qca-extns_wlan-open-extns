@@ -13,6 +13,9 @@
 #include "sa_api.h"
 
 struct ath12k_base;
+struct ath12k_hw_blocklist_state;
+struct ath12k_reg_info;
+struct ath12k_afc_info;
 struct ieee80211_240mhz_vendor_oper_extn;
 struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
@@ -20,6 +23,8 @@ struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
 struct ath12k_skb_cb;
 struct ath12k_sta;
+struct ath12k_wmi_resource_config_params;
+struct ath12k_wmi_resource_config_arg;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -298,11 +303,13 @@ struct ath12k_extn {
 
 /**
  * struct ath12k_reg_info_extn - ath12k regulatory info extensions
- * reg_6ghz_thresh_priority_freq: VLP priority threshold frequency
+ * @reg_6ghz_thresh_priority_freq: VLP priority threshold frequency
+ * @hw_blocklist: Parsed HW blocklist payload for the current reg event
  *
  */
 struct ath12k_reg_info_extn {
 	u16 reg_6ghz_thresh_priority_freq;
+	struct ath12k_hw_blocklist_update *hw_blocklist;
 };
 
 /**
@@ -673,6 +680,71 @@ int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, 
 	return len;
 }
 
+static int
+ath12k_wmi_pull_reg_hw_blocklist_extn(struct ath12k_base *ab, struct sk_buff *skb,
+				      struct ath12k_reg_info_extn *reg_info_extn)
+{
+	return 0;
+}
+
+static inline int
+ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
+					struct sk_buff *skb)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline bool
+ath12k_wmi_is_reg_hw_blocklist_fragment_only_extn(struct ath12k_base *ab,
+						  struct ath12k_reg_info *reg_info)
+{
+	return false;
+}
+
+static inline void
+ath12k_wmi_free_reg_hw_blocklist_extn(struct ath12k_reg_info_extn *reg_info_extn)
+{
+}
+
+static inline void
+ath12k_wmi_set_hw_blocklist_host_service_flag_extn(
+		struct ath12k_wmi_resource_config_params *wmi_cfg,
+		struct ath12k_wmi_resource_config_arg *tg_cfg)
+{
+}
+
+static inline void
+ath12k_wmi_set_hw_blocklist_service_support_extn(
+		struct ath12k_base *ab,
+		struct ath12k_wmi_resource_config_arg *res_cfg)
+{
+}
+
+static inline void
+ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab, int pdev_idx,
+					   enum wmi_reg_6g_ap_type pwr_type)
+{
+}
+
+static inline void
+ath12k_reg_hw_blocklist_free_extn(struct ath12k_base *ab)
+{
+}
+
+static inline bool
+ath12k_wmi_handle_afc_power_info_hwbl_extn(
+		struct ath12k_base *ab, struct sk_buff *skb,
+		struct ath12k_afc_info *afc_info)
+{
+	return false;
+}
+
+static inline bool
+ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
+					  struct ath12k_reg_info **reg_info)
+{
+	return false;
+}
 #else
 
 struct ath12k_pci_extn {
@@ -691,6 +763,12 @@ struct ath12k_pci_extn {
 
 struct ath12k_base_extn {
 	u16 reg_6ghz_thresh_priority_freq[MAX_RADIOS];
+	/* hw_blocklist: Per-pdev HW blocklist state; protected by ab->base_lock */
+	struct ath12k_hw_blocklist_state *hw_blocklist[MAX_RADIOS];
+	/* hw_bl_reg_info: Cached reg_info for multi-fragment HWBL reg events */
+	struct ath12k_reg_info *hw_bl_reg_info[MAX_RADIOS];
+	/* hw_bl_afc_info: Cached afc_info for multi-fragment HWBL AFC events */
+	struct ath12k_afc_info *hw_bl_afc_info[MAX_RADIOS];
 #ifdef CPTCFG_EXT_IPA_OFFLOAD
 	struct ath12k_ipa *ipa_ctx;
 	/* This is to hold the rx_buffers allocated initially in RXDMA for IPA
@@ -966,6 +1044,111 @@ int ath12k_reg_chan_list_cc_ext_parse_extn(struct ath12k_base *ab,
 void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
 				      int pdev_idx,
 				      const struct ath12k_reg_info_extn *reg_info_extn);
+
+/**
+ * ath12k_reg_hw_blocklist_free_for_mode_extn - Free HW blocklist for a given mode
+ * @ab: Pointer to the ath12k base structure
+ * @pdev_idx: pdev identifier
+ * @pwr_type: AP power type
+ */
+void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
+						int pdev_idx,
+						enum wmi_reg_6g_ap_type pwr_type);
+
+/**
+ * ath12k_reg_hw_blocklist_free_extn - Free all HW blocklist entries
+ * @ab: Pointer to the ath12k base structure
+ */
+void ath12k_reg_hw_blocklist_free_extn(struct ath12k_base *ab);
+
+/**
+ * ath12k_wmi_handle_afc_power_info_hwbl_extn - Handle AFC power info for HW blocklist
+ * @ab: Pointer to the ath12k base structure
+ * @skb: Socket buffer containing the WMI event data
+ * @afc_info: Pointer to the parsed AFC info
+ *
+ * Returns false if no HW blocklist data is present and normal source flow should
+ * continue. Returns true if the event was handled by the extension (deferred or
+ * fully processed).
+ */
+bool ath12k_wmi_handle_afc_power_info_hwbl_extn(struct ath12k_base *ab,
+						struct sk_buff *skb,
+						struct ath12k_afc_info *afc_info);
+
+/**
+ * ath12k_wmi_handle_reg_chan_list_hwbl_extn - Handle HW blocklist in reg chan list event
+ * @ab: Pointer to the ath12k base structure
+ * @reg_info: Pointer to pointer of the reg_info struct for the current event.
+ *   On first-fragment-with-more: ownership is stolen (*reg_info set to NULL).
+ *   On final fragment: *reg_info is swapped to the cached first-fragment reg_info
+ *   (the fragment-only event's reg_info is freed internally).
+ *
+ * Returns false if no HW blocklist data is present or on single-fragment / final
+ * fragment where normal source flow should call ath12k_reg_handle_chan_list.
+ * Returns true if the event was handled (deferred or error).
+ */
+bool ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
+					       struct ath12k_reg_info **reg_info);
+
+/**
+ * ath12k_wmi_pull_reg_hw_blocklist_extn - Pull HW blocklist information from WMI event
+ * @ab: Pointer to the ath12k base structure
+ * @skb: Socket buffer containing the WMI event data
+ * @reg_info_extn: Pointer to the output struct to store the parsed HW blocklist info
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_wmi_pull_reg_hw_blocklist_extn(
+		struct ath12k_base *ab, struct sk_buff *skb,
+		struct ath12k_reg_info_extn *reg_info_extn);
+
+/**
+ * ath12k_wmi_hw_blocklist_chan_event_extn - Handle HW blocklist channel event
+ * @ab: Pointer to the ath12k base structure
+ * @skb: Socket buffer containing the WMI event data
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
+					    struct sk_buff *skb);
+
+/**
+ * ath12k_wmi_is_reg_hw_blocklist_fragment_only_extn - Check if HW blocklist event is fragment-only
+ * @ab: Pointer to the ath12k base structure
+ * @reg_info: Pointer to the reg_info struct to be checked
+ *
+ * Return: true if the event is fragment-only, false otherwise
+ */
+bool ath12k_wmi_is_reg_hw_blocklist_fragment_only_extn(
+		struct ath12k_base *ab,
+		struct ath12k_reg_info *reg_info);
+
+/**
+ * ath12k_wmi_free_reg_hw_blocklist_extn - Free resources allocated for HW blocklist info
+ * @reg_info_extn: Pointer to the reg_info_extn struct containing the HW blocklist info
+ */
+void ath12k_wmi_free_reg_hw_blocklist_extn(
+		struct ath12k_reg_info_extn *reg_info_extn);
+
+/**
+ * ath12k_wmi_set_hw_blocklist_host_service_flag_extn - Set host service flag in
+ * WMI resource config
+ * @wmi_cfg: Pointer to the WMI resource config parameters
+ * @tg_cfg: Pointer to the WMI resource config argument containing the target service info
+ */
+void ath12k_wmi_set_hw_blocklist_host_service_flag_extn(
+		struct ath12k_wmi_resource_config_params *wmi_cfg,
+		struct ath12k_wmi_resource_config_arg *tg_cfg);
+
+/**
+ * ath12k_wmi_set_hw_blocklist_service_support_extn - Set HW blocklist support flag
+ * in WMI resource config argument
+ * @ab: Pointer to the ath12k base structure
+ * @res_cfg: Pointer to the WMI resource config argument to be updated
+ */
+void ath12k_wmi_set_hw_blocklist_service_support_extn(
+		struct ath12k_base *ab,
+		struct ath12k_wmi_resource_config_arg *res_cfg);
 
 /**
  * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery

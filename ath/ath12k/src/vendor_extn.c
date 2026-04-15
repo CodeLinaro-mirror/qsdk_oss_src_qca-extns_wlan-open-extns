@@ -22,6 +22,7 @@
 #include "dcs_extn.h"
 #include "rropinfo.h"
 #include "dp_stats_extn.h"
+#include "reg_extn.h"
 #include "../net/mac80211/ieee80211_i.h"
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #include "mesh_util.h"
@@ -46,6 +47,13 @@ ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] =
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMAX] = { .type = NLA_BINARY,
 						      .len = sizeof(u16) * WLAN_MAX_AC },
 };
+#ifndef nla_nest_end_checked
+#define nla_nest_end_checked(skb, nla)		\
+	do {					\
+		if ((skb) && (nla))		\
+			nla_nest_end((skb), (nla)); \
+	} while (0)
+#endif
 
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
@@ -177,6 +185,482 @@ ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID] = { .type = NLA_U8 },
 };
+
+#define ATH12K_HWBL_NL_CHAN_WIDTH_INVALID ((u32)-1)
+
+static struct ath12k_hw_blocklist_state *
+ath12k_vendor_hwbl_get_state_extn(struct ath12k_base *ab, int pdev_idx)
+{
+	if (!ab || pdev_idx < 0 || pdev_idx >= ab->num_radios)
+		return NULL;
+
+	return ab->ath12k_base_extn.hw_blocklist[pdev_idx];
+}
+
+static u8 ath12k_vendor_hwbl_pwr_mode_to_nl_extn(u8 pwr_mode)
+{
+	switch (pwr_mode) {
+	case WMI_REG_INDOOR_AP:
+		return NL80211_REG_AP_LPI;
+	case WMI_REG_STD_POWER_AP:
+		return NL80211_REG_AP_SP;
+	case WMI_REG_VLP_AP:
+		return NL80211_REG_AP_VLP;
+	default:
+		return NL80211_REG_NUM_POWER_MODES;
+	}
+}
+
+static u32 ath12k_vendor_hwbl_bw_to_nl_extn(u8 max_bw)
+{
+	switch (max_bw) {
+	case WMI_HOST_CHAN_WIDTH_20:
+		return NL80211_CHAN_WIDTH_20;
+	case WMI_HOST_CHAN_WIDTH_40:
+		return NL80211_CHAN_WIDTH_40;
+	case WMI_HOST_CHAN_WIDTH_80:
+		return NL80211_CHAN_WIDTH_80;
+	case WMI_HOST_CHAN_WIDTH_160:
+		return NL80211_CHAN_WIDTH_160;
+	case WMI_HOST_CHAN_WIDTH_320:
+		return NL80211_CHAN_WIDTH_320;
+	default:
+		return ATH12K_HWBL_NL_CHAN_WIDTH_INVALID;
+	}
+}
+
+static const struct nla_policy
+ath12k_hw_blocked_chans_query_policy_extn[QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_REQ_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_REQ_RADIO_INDEX] = { .type = NLA_S32 },
+};
+
+static int ath12k_hw_blocked_chans_event_update_or_get_len_extn(
+	struct sk_buff *vendor_event,
+	const struct ath12k_hw_blocklist_state *st,
+	u8 radio_id)
+{
+	struct nlattr *band_list = NULL;
+	struct nlattr *band_info = NULL;
+	struct nlattr *pwr_mode_list = NULL;
+	struct nlattr *pwr_mode_info = NULL;
+	struct nlattr *fb_chan_list = NULL;
+	struct nlattr *pc_chan_list = NULL;
+	struct nlattr *chan_info = NULL;
+	int len = 0;
+	enum wmi_reg_6g_ap_type pwr_mode;
+	int i;
+
+	if (vendor_event &&
+	    nla_put_s32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_RADIO_RADIO_INDEX,
+			radio_id)) {
+		goto fail;
+	} else {
+		len += nla_total_size(sizeof(u32));
+	}
+
+	if (vendor_event) {
+		band_list = nla_nest_start(vendor_event,
+					   QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_RADIO_BAND_LIST);
+		if (!band_list)
+			goto fail;
+	} else {
+		len += nla_total_size(0);
+	}
+
+	if (vendor_event) {
+		band_info = nla_nest_start(vendor_event, NL80211_BAND_6GHZ);
+		if (!band_info)
+			goto fail;
+	} else {
+		len += nla_total_size(0);
+	}
+
+	if (vendor_event &&
+	    nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_BAND_ID,
+			NL80211_BAND_6GHZ))
+		goto fail;
+	else
+		len += nla_total_size(sizeof(u32));
+
+	if (vendor_event) {
+		pwr_mode_list = nla_nest_start(vendor_event,
+					       QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_BAND_PWR_MODE_LIST);
+		if (!pwr_mode_list)
+			goto fail;
+	} else {
+		len += nla_total_size(0);
+	}
+
+	for (pwr_mode = 0; pwr_mode < WMI_REG_CURRENT_MAX_AP_TYPE; pwr_mode++) {
+		const struct ath12k_hw_blocklist_chans *chans = &st->pwr[pwr_mode];
+		u8 nl_pwr_mode;
+
+		nl_pwr_mode = ath12k_vendor_hwbl_pwr_mode_to_nl_extn(pwr_mode);
+		if (nl_pwr_mode >= NL80211_REG_NUM_POWER_MODES)
+			continue;
+
+		if (vendor_event) {
+			pwr_mode_info = nla_nest_start(vendor_event, pwr_mode);
+			if (!pwr_mode_info)
+				goto fail;
+		} else {
+			len += nla_total_size(0);
+		}
+
+		if (vendor_event &&
+		    nla_put_u8(vendor_event,
+			       QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_PWR_MODE_ID,
+			       nl_pwr_mode))
+			goto fail;
+		else {
+			len += nla_total_size(sizeof(u8));
+		}
+
+		if (vendor_event) {
+			fb_chan_list = nla_nest_start(vendor_event,
+						      QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_PWR_MODE_FB_CHAN_LIST);
+			if (!fb_chan_list)
+				goto fail;
+		} else {
+			len += nla_total_size(0);
+		}
+
+		for (i = 0; i < chans->nfbchans; i++) {
+			const struct ath12k_hw_blocklist_fb_chan *fb_chan = &chans->fb_chan[i];
+			u32 nl_bw = ath12k_vendor_hwbl_bw_to_nl_extn(fb_chan->max_bw);
+
+			if (nl_bw == ATH12K_HWBL_NL_CHAN_WIDTH_INVALID)
+				continue;
+
+			if (vendor_event) {
+				chan_info = nla_nest_start(vendor_event, i);
+				if (!chan_info)
+					goto fail;
+			} else {
+				len += nla_total_size(0);
+			}
+
+			if (vendor_event &&
+			    (nla_put_u32(vendor_event,
+					 QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_FB_CHAN_BW,
+					 nl_bw) ||
+			     nla_put_u16(vendor_event,
+					 QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_FB_CHAN_CENTER_FREQ,
+					 fb_chan->center_freq) ||
+			     nla_put_u16(vendor_event,
+					 QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_FB_CHAN_PRI20_BITMAP,
+					 fb_chan->pri20_bitmap)))
+				goto fail;
+			else {
+				len += nla_total_size(sizeof(u32));
+				len += nla_total_size(sizeof(u16)) * 2;
+			}
+
+			nla_nest_end_checked(vendor_event, chan_info);
+			chan_info = NULL;
+		}
+		nla_nest_end_checked(vendor_event, fb_chan_list);
+		fb_chan_list = NULL;
+
+		if (vendor_event) {
+			pc_chan_list = nla_nest_start(vendor_event,
+						      QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_PWR_MODE_PC_CHAN_LIST);
+			if (!pc_chan_list)
+				goto fail;
+		} else {
+			len += nla_total_size(0);
+		}
+
+		for (i = 0; i < chans->npcchans; i++) {
+			const struct ath12k_hw_blocklist_pc_chan *pc_chan = &chans->pc_chan[i];
+			u32 nl_bw = ath12k_vendor_hwbl_bw_to_nl_extn(pc_chan->max_bw);
+
+			if (nl_bw == ATH12K_HWBL_NL_CHAN_WIDTH_INVALID)
+				continue;
+
+			if (vendor_event) {
+				chan_info = nla_nest_start(vendor_event, i);
+				if (!chan_info)
+					goto fail;
+			} else {
+				len += nla_total_size(0);
+			}
+
+			if (vendor_event &&
+			    (nla_put_u32(vendor_event,
+					 QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_PC_CHAN_BW,
+					 nl_bw) ||
+			     nla_put_u16(vendor_event,
+					 QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_PC_CHAN_CENTER_FREQ,
+					 pc_chan->center_freq) ||
+			     nla_put_u32(vendor_event,
+					 QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_PC_CHAN_PUNC_PATTERN_BITMAP,
+					 /* Bitmap of puncture patterns (BIT(idx)). */
+					 pc_chan->punc_pat_bmap)))
+				goto fail;
+			else {
+				len += nla_total_size(sizeof(u32));
+				len += nla_total_size(sizeof(u16));
+				len += nla_total_size(sizeof(u32));
+			}
+
+			nla_nest_end_checked(vendor_event, chan_info);
+			chan_info = NULL;
+		}
+		nla_nest_end_checked(vendor_event, pc_chan_list);
+		pc_chan_list = NULL;
+
+		nla_nest_end_checked(vendor_event, pwr_mode_info);
+		pwr_mode_info = NULL;
+	}
+
+	nla_nest_end_checked(vendor_event, pwr_mode_list);
+	nla_nest_end_checked(vendor_event, band_info);
+	nla_nest_end_checked(vendor_event, band_list);
+	return vendor_event ? 0 : len;
+
+fail:
+	nla_nest_end_checked(vendor_event, chan_info);
+	nla_nest_end_checked(vendor_event, fb_chan_list);
+	nla_nest_end_checked(vendor_event, pc_chan_list);
+	nla_nest_end_checked(vendor_event, pwr_mode_info);
+	nla_nest_end_checked(vendor_event, pwr_mode_list);
+	nla_nest_end_checked(vendor_event, band_info);
+	nla_nest_end_checked(vendor_event, band_list);
+	return -EINVAL;
+}
+
+static int ath12k_vendor_validate_hw_blocked_chans_state_extn(struct ath12k *ar, u8 radio_id)
+{
+	struct ath12k_hw_blocklist_state *st;
+	int ret = 0;
+
+	if (ar->pdev_idx >= ar->ab->num_radios)
+		return -EINVAL;
+
+	spin_lock_bh(&ar->ab->base_lock);
+	st = ath12k_vendor_hwbl_get_state_extn(ar->ab, ar->pdev_idx);
+	if (!st || !st->valid)
+		goto unlock;
+
+	if (!st->complete) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "HW blocked channels query rejected: fragmented update in progress for radio %u",
+			   radio_id);
+		ret = -EAGAIN;
+	}
+
+unlock:
+	spin_unlock_bh(&ar->ab->base_lock);
+	return ret;
+}
+
+static int ath12k_vendor_send_hw_blocked_chans_reply_extn(struct wiphy *wiphy,
+							  struct ath12k *ar,
+							  u8 radio_id)
+{
+	struct ath12k_hw_blocklist_state snapshot;
+	struct sk_buff *reply_skb;
+	struct nlattr *radio_list = NULL;
+	struct nlattr *radio_info = NULL;
+	int reply_len, ret;
+
+	ret = ath12k_vendor_validate_hw_blocked_chans_state_extn(ar, radio_id);
+	if (ret)
+		return ret;
+
+	/* Take a deep copy of the blocklist state. */
+	ret = ath12k_reg_hw_blocklist_snapshot_extn(ar->ab, ar->pdev_idx, &snapshot);
+	if (ret)
+		return ret;
+
+	reply_len = ath12k_hw_blocked_chans_event_update_or_get_len_extn(NULL, &snapshot,
+									 radio_id);
+	if (reply_len <= 0) {
+		ret = -EINVAL;
+		goto free_snapshot;
+	}
+
+	reply_len += nla_total_size(0); /* radio_list nest header */
+	reply_len += nla_total_size(0); /* radio_info nest header */
+
+	reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_HDRLEN + reply_len);
+	if (!reply_skb) {
+		ret = -ENOMEM;
+		goto free_snapshot;
+	}
+
+	radio_list = nla_nest_start(reply_skb,
+				    QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_RESP_RADIO_LIST);
+	if (!radio_list) {
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	radio_info = nla_nest_start(reply_skb, 0);
+	if (!radio_info) {
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	ret = ath12k_hw_blocked_chans_event_update_or_get_len_extn(reply_skb, &snapshot,
+								   radio_id);
+	if (ret)
+		goto fail;
+
+	nla_nest_end_checked(reply_skb, radio_info);
+	radio_info = NULL;
+	nla_nest_end_checked(reply_skb, radio_list);
+	radio_list = NULL;
+
+	ath12k_reg_hw_blocklist_free_snapshot_extn(&snapshot);
+	return cfg80211_vendor_cmd_reply(reply_skb);
+
+fail:
+	nla_nest_end_checked(reply_skb, radio_info);
+	nla_nest_end_checked(reply_skb, radio_list);
+	kfree_skb(reply_skb);
+free_snapshot:
+	ath12k_reg_hw_blocklist_free_snapshot_extn(&snapshot);
+	return ret;
+}
+
+static int ath12k_vendor_send_hw_blocked_chans_reply_all_extn(struct wiphy *wiphy)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct sk_buff *reply_skb = NULL;
+	struct nlattr *radio_list = NULL;
+	struct nlattr *radio_info = NULL;
+	struct ath12k *ar;
+	int reply_len = 0;
+	int radio_reply_len;
+	u8 radio_id;
+	bool has_6ghz_radio = false;
+	int ret;
+
+	for (radio_id = 0; radio_id < ah->num_radio; radio_id++) {
+		struct ath12k_hw_blocklist_state snap = {};
+
+		ar = &ah->radio[radio_id];
+		if (!ar->supports_6ghz)
+			continue;
+
+		has_6ghz_radio = true;
+		ret = ath12k_vendor_validate_hw_blocked_chans_state_extn(ar, radio_id);
+		if (ret)
+			return ret;
+
+		ret = ath12k_reg_hw_blocklist_snapshot_extn(ar->ab, ar->pdev_idx, &snap);
+		if (ret)
+			memset(&snap, 0, sizeof(snap));
+
+		radio_reply_len =
+		    ath12k_hw_blocked_chans_event_update_or_get_len_extn(NULL, &snap,
+									 radio_id);
+		ath12k_reg_hw_blocklist_free_snapshot_extn(&snap);
+		if (radio_reply_len <= 0)
+			return -EINVAL;
+
+		reply_len += nla_total_size(0); /* radio_info nest header */
+		reply_len += radio_reply_len;
+	}
+
+	if (!has_6ghz_radio)
+		return -EOPNOTSUPP;
+
+	reply_len += nla_total_size(0); /* radio_list nest header */
+	reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_HDRLEN + reply_len);
+	if (!reply_skb)
+		return -ENOMEM;
+
+	radio_list = nla_nest_start(reply_skb,
+				    QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_RESP_RADIO_LIST);
+	if (!radio_list) {
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	for (radio_id = 0; radio_id < ah->num_radio; radio_id++) {
+		struct ath12k_hw_blocklist_state snap = {};
+
+		ar = &ah->radio[radio_id];
+		if (!ar->supports_6ghz)
+			continue;
+
+		ret = ath12k_reg_hw_blocklist_snapshot_extn(ar->ab, ar->pdev_idx, &snap);
+		if (ret)
+			memset(&snap, 0, sizeof(snap));
+
+		radio_info = nla_nest_start(reply_skb, radio_id);
+		if (!radio_info) {
+			ath12k_reg_hw_blocklist_free_snapshot_extn(&snap);
+			ret = -EINVAL;
+			goto fail;
+		}
+
+		ret = ath12k_hw_blocked_chans_event_update_or_get_len_extn(reply_skb,
+									   &snap,
+									   radio_id);
+		ath12k_reg_hw_blocklist_free_snapshot_extn(&snap);
+		if (ret)
+			goto fail;
+
+		nla_nest_end_checked(reply_skb, radio_info);
+		radio_info = NULL;
+	}
+
+	nla_nest_end_checked(reply_skb, radio_list);
+	radio_list = NULL;
+	return cfg80211_vendor_cmd_reply(reply_skb);
+
+fail:
+	nla_nest_end_checked(reply_skb, radio_info);
+	nla_nest_end_checked(reply_skb, radio_list);
+	kfree_skb(reply_skb);
+	return ret;
+}
+
+int ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
+					    struct wireless_dev *wdev,
+					    const void *data,
+					    int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_REQ_MAX + 1] = {};
+	struct ath12k *ar;
+	int radio_id = -1;
+
+	(void)wdev;
+
+	if (data_len) {
+		if (!data)
+			return -EINVAL;
+
+		if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_REQ_MAX, data, data_len,
+			      ath12k_hw_blocked_chans_query_policy_extn, NULL))
+			return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_REQ_RADIO_INDEX])
+		return ath12k_vendor_send_hw_blocked_chans_reply_all_extn(wiphy);
+
+	radio_id = nla_get_s32(tb[QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_REQ_RADIO_INDEX]);
+	if (radio_id < -1 || radio_id > U8_MAX)
+		return -EINVAL;
+	if (radio_id < 0)
+		return ath12k_vendor_send_hw_blocked_chans_reply_all_extn(wiphy);
+
+	ar = ath12k_get_radio_by_id(wiphy, (u8)radio_id);
+	if (!ar)
+		return -ENODATA;
+
+	if (!ar->supports_6ghz)
+		return -EOPNOTSUPP;
+
+	return ath12k_vendor_send_hw_blocked_chans_reply_extn(wiphy, ar, (u8)radio_id);
+}
 
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
 					   u8 *mac_addr)

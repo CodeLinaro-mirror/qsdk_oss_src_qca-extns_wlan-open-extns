@@ -886,6 +886,69 @@ static int ath12k_set_vdev_bcast_rate(struct ath12k_link_vif *arvif, u32 bitrate
 }
 #endif
 
+/**
+ * ath12k_chainmask_validate - Validate chainmask against capabilities
+ * @ar: pointer to ath12k structure
+ * @mask: chainmask value to validate
+ * @is_tx: true for TX chainmask, false for RX chainmask
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_chainmask_validate(struct ath12k *ar, u32 mask, bool is_tx)
+{
+	u32 max_mask;
+
+    	if (!ar || !ar->pdev) {
+        	ath12k_err(NULL, "Invalid ar or pdev pointer\n");
+        	return -EINVAL;
+    	}
+
+	max_mask = is_tx ? ar->pdev->cap.tx_chain_mask :
+			       ar->pdev->cap.rx_chain_mask;
+
+	if (!max_mask) {
+		ath12k_err(ar->ab, "Invalid %s chainmask capability (0x%x)\n",
+			is_tx ? "TX" : "RX", max_mask);
+		return -EINVAL;
+	}
+
+	if (!mask) {
+		ath12k_err(ar->ab, "Mask should be non-zero\n");
+		return -EINVAL;
+	}
+
+	if((mask & max_mask) != mask){
+		ath12k_err(ar->ab, "Mask invalid value=%u\t max_mask=%u\n",
+			   mask, max_mask);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * ath12k_set_chainmask - Validate and set TX/RX chainmask
+ * @ar: pointer to ath12k structure
+ * @value: chainmask value to set
+ * @is_tx: true for TX chainmask, false for RX chainmask
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_set_chainmask(struct ath12k *ar, u32 value, bool is_tx)
+{
+	int ret;
+
+	ret = ath12k_chainmask_validate(ar, value, is_tx);
+
+	if (ret)
+        	return ret;
+
+    	if (is_tx)
+        	return ath12k_mac_set_tx_antenna(ar, value);
+
+    	return ath12k_mac_set_rx_antenna(ar, value);
+}
+
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
@@ -899,11 +962,11 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
                 *reload = true;
                 ret = 0;
                 break;
-        case PARAM_RADIO_TXCHAINSOFT:
-                ret = ath12k_mac_set_tx_antenna(ar, value);
-                break;
-        case ACFG_PARAM_RADIO_RXCHAINMASK:
-                ret = ath12k_mac_set_rx_antenna(ar, value);
+	case PARAM_RADIO_TXCHAINSOFT:
+		ret = ath12k_set_chainmask(ar, value, true);
+		break;
+   	case ACFG_PARAM_RADIO_RXCHAINMASK:
+		ret = ath12k_set_chainmask(ar, value, false);
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_DYN_BW_RTS:
 		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
@@ -1300,6 +1363,12 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 			return -EINVAL;
 		}
 		ar->mgmt_tx_retry_limit = value;
+		break;
+	case PARAM_RADIO_TXCHAINSOFT:
+		ret = ath12k_set_chainmask(ar, value, true);
+		break;
+	case ACFG_PARAM_RADIO_RXCHAINMASK:
+		ret = ath12k_set_chainmask(ar, value, false);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RTS_CTS_RATE:
                 if (value > 4) {
@@ -2411,7 +2480,7 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         ar = arvif->ar;
         rcu_read_unlock();
 
-        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "vif: %p param: %d value: %d if: %d link: %d\n",
                    vif, param, value,
                    params->ifindex, params->link_id);
@@ -2494,11 +2563,11 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
         ar = &ah->radio[params->radio_idx];
         if (!ar) {
-                ath12k_err(NULL, "Failed to find ar\n");
+		ath12k_err(NULL, "Failed to find ar\n");
                 return -ENODATA;
         }
 
-        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "ar: %p param: %d value: %d if: %d radio: %d\n",
                    ar, param, value,
                    params->ifindex, params->radio_idx);
@@ -2531,15 +2600,15 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	struct ath12k *ar = arvif->ar;
         int ret = -1;
 
-        switch (param) {
-        case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
-                *value = 0;
-                ret = 0;
-                break;
+	switch (param) {
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
+		*value = 0;
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_DYN_BW_RTS:
-                *value = arvif->vap_cfg.dyn_bw_rts;
-                ret = 0;
-                break;
+		*value = arvif->vap_cfg.dyn_bw_rts;
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_CWM_ENABLE:
                 *value = arvif->vap_cfg.cwm_enable;
                 ret = 0;
@@ -2730,6 +2799,14 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_MGMT_RETRY_LIMIT:
 		*value = ar->mgmt_tx_retry_limit;
+		ret = 0;
+		break;
+	case PARAM_RADIO_TXCHAINSOFT:
+		*value = ar->cfg_tx_chainmask;
+		ret = 0;
+		break;
+	case ACFG_PARAM_RADIO_RXCHAINMASK:
+		*value = ar->cfg_rx_chainmask;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RTS_CTS_RATE:

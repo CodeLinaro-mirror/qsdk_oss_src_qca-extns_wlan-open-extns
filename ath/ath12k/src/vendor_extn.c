@@ -2947,6 +2947,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		*value = ar->dfs_sub_channel_marking;
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_RADAR_DETECT_COUNT:
+		*value = ar->radar_detect_count;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);

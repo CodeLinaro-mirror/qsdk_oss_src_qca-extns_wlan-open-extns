@@ -79,7 +79,10 @@ static u32 ath12k_transform_intf_bitmap(int input_bitmap,
 	u32 output_bitmap = 0;
 	u16 primary_index = -1;
 
-	bandwidth = ath12k_mac_nlwidth_to_chwidth(chandef->width);
+	if (chandef->width == NL80211_CHAN_WIDTH_80P80)
+		bandwidth = ATH12K_CHWIDTH_80;
+	else
+		bandwidth = ath12k_mac_nlwidth_to_chwidth(chandef->width);
 	num_sub_chans = bandwidth / ATH12K_CHWIDTH_20;
 	start_freq = (chandef->center_freq1 - bandwidth / 2) + 10;
 
@@ -280,6 +283,7 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 	struct ath12k_hw *ah;
 	struct ath12k_link_vif *arvif;
 	bool ap_started = false;
+	bool sta_present = false;
 	int ret;
 
 	rcu_read_lock();
@@ -305,12 +309,24 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 		if (!vif)
 			continue;
 
+		if (vif->type == NL80211_IFTYPE_STATION) {
+			sta_present = true;
+			break;
+		}
+
 		if (vif->type == NL80211_IFTYPE_AP) {
 			ap_started = true;
 			break;
 		}
 	}
 	spin_unlock_bh(&ar->data_lock);
+
+	if (sta_present) {
+		ath12k_err(ab,
+			   "dropping OBSS interference event on pdev=%d (STA vif present)\n",
+			   pdev_id);
+		goto exit;
+	}
 
 	if (!ap_started) {
 		ath12k_dbg(ab, ATH12K_DBG_WMI,
@@ -350,6 +366,15 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 		goto exit;
 	}
 
+	if (obss_info.chan_freq &&
+	    obss_info.chan_freq != chanctx_conf->def.chan->center_freq) {
+		ath12k_err(ab,
+			   "dropping OBSS interference event on pdev=%d (cur_freq=%u obss_chan_freq=%u)\n",
+			   pdev_id, chanctx_conf->def.chan->center_freq,
+			   obss_info.chan_freq);
+		goto exit;
+	}
+
 	ath12k_dbg(ab, ATH12K_DBG_WMI, "OBSS Interference detected for pdev=%d\n",
 		   pdev_id);
 
@@ -365,6 +390,18 @@ void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,
 
 	if (modified_host_bitmap == 0 && intf_bitmap != 0) {
 		ath12k_err(ab, "Bitmap transformation failed\n");
+	}
+
+	if (chanctx_conf->def.radar_bitmap) {
+		u16 bandwidth = ath12k_mac_nlwidth_to_chwidth(chanctx_conf->def.width);
+		u16 num_sub_chans = bandwidth / ATH12K_CHWIDTH_20;
+		u32 bw_mask = num_sub_chans ? (BIT(num_sub_chans) - 1) : 0;
+
+		modified_host_bitmap |= (chanctx_conf->def.radar_bitmap & bw_mask);
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "OBSS: radar_bitmap=0x%x bw_mask=0x%x merged_bitmap=0x%x\n",
+			   chanctx_conf->def.radar_bitmap, bw_mask,
+			   modified_host_bitmap);
 	}
 
 	ath12k_vendor_send_intf_notify_extn(ar, WMI_DCS_OBSS_INTF, modified_host_bitmap);

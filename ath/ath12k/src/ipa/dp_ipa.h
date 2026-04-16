@@ -16,6 +16,7 @@
 #include "../../hif.h"
 #include "../../dp_rx.h" //Require to allocate RX buffers and use RX alloc/free api
 #include "../../dp_peer.h"
+#include "../../wmi.h"
 
 //TODO: Enable below inclusion with IPA driver
 #include <linux/ipa.h>
@@ -904,6 +905,10 @@ void ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 pe
 				      u8 *mac_addr);
 
 void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
+
+void ath12k_wmi_copy_resource_config_ipa(struct ath12k_base *ab,
+					 struct ath12k_wmi_resource_config_params *wmi_cfg,
+					 struct ath12k_wmi_resource_config_arg *tg_cfg);
 
 #ifndef ETH_P_WAPI
 #define ETH_P_WAPI 0x88B4

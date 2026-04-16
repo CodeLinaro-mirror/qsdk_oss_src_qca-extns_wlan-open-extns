@@ -3498,6 +3498,24 @@ ath12k_dp_ipa_get_if_ctx(struct ath12k_ipa *ipa_ctx, u8 vdev_id)
 	return if_ctx;
 }
 
+/**
+ * ath12k_wmi_copy_resource_config_ipa() - Update WMI resource config for SDX
+ * @ab: base ath12k device structure
+ * @wmi_cfg: WMI resource configuration parameters to be sent to firmware
+ * @tg_cfg: target resource configuration arguments
+ *
+ * Clears the WMI_RSRC_CFG_FLAGS2_FW_AST_INDICATION_DISABLE bit in the
+ * @wmi_cfg->flags2 field, enabling peer map/unmap indication for backend
+ * clients toward the host on SDX platforms.
+ */
+void
+ath12k_wmi_copy_resource_config_ipa(struct ath12k_base *ab,
+				    struct ath12k_wmi_resource_config_params *wmi_cfg,
+				    struct ath12k_wmi_resource_config_arg *tg_cfg)
+{
+	wmi_cfg->flags2 &= ~(WMI_RSRC_CFG_FLAGS2_FW_AST_INDICATION_DISABLE);
+}
+
 void
 ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
 				   u8 *mac_addr)

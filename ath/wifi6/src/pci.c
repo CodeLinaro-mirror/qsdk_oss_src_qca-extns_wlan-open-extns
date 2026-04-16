@@ -62,6 +62,7 @@ static int ath12k_wifi6_pci_probe(struct pci_dev *pdev,
 	switch (pci_dev->device) {
 	case QCN9074_DEVICE_ID:
 		ab_pci->pci_ops = &ath12k_wifi6_pci_ops_qcn9074;
+		ab_pci->window_reg_addr = PCIE_WINDOW_REG_ADDRESS;
 		ab->hw_rev = ATH12K_HW_QCN9074_HW10;
 		ab->msi.config = &ath12k_wifi7_msi_config[ATH12K_MSI_CONFIG_PCI_16];
 		ab->static_window_map = true;
@@ -84,7 +85,6 @@ static int ath12k_wifi6_pci_probe(struct pci_dev *pdev,
 static const struct ath12k_reg_base ath12k_wifi6_reg_base = {
 	.umac_base = HAL_SEQ_WCSS_UMAC_OFFSET,
 	.ce_reg_base = HAL_CE_WFSS_CE_REG_BASE,
-	.pcie_window_reg_address = PCIE_WINDOW_REG_ADDRESS,
 	.window_value_mask = WINDOW_VALUE_MASK,
 	.window_static_mask = WINDOW_STATIC_MASK,
 	.window_dynamic_mask = WINDOW_DYNAMIC_MASK,

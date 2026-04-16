@@ -474,13 +474,19 @@ ath12k_cfg_store_alloc(const char *path,
  */
 static void ath12k_cfg_store_free(struct ath12k_cfg_value_store *store)
 {
-	if (store) {
-		spin_lock_bh(&ath12k_cfg_stores_lock);
+	if (!store)
+		return;
+
+	spin_lock_bh(&ath12k_cfg_stores_lock);
+	if (!list_empty(&store->node))
 		list_del_init(&store->node);
-		spin_unlock_bh(&ath12k_cfg_stores_lock);
-		kfree(store->path);
-		vfree(store);
-	}
+	spin_unlock_bh(&ath12k_cfg_stores_lock);
+
+	/* Free path if allocated (NULL is safe to free) */
+	kfree(store->path);
+
+	/* Free the store itself */
+	vfree(store);
 }
 
 /**
@@ -534,7 +540,7 @@ int list_peek_next(struct list_head *list, struct list_head *node,
  * @out_store: Reference to cfg value store
  * Return: 0 on success, Non-zero on error
  */
-static int
+static __maybe_unused int
 ath12k_cfg_store_get(const char *path, struct ath12k_cfg_value_store **out_store)
 {
 	int ret;
@@ -574,12 +580,27 @@ static void ath12k_cfg_store_put(struct ath12k_cfg_value_store *store)
 /**
  * ath12k_cfg_store_set - set reference of the store to the ath12k_base
  * @cfg_ctx: Pointer to ath12k_cfg_ctx
- * Return: void
+ * Return: 0 on success, Non-zero on error
  */
-static void ath12k_cfg_store_set(struct ath12k_cfg_ctx *cfg_ctx)
+static int ath12k_cfg_store_set(struct ath12k_cfg_ctx *cfg_ctx)
 {
-	atomic_inc(&ath12k_cfg_global_store->users);
-	cfg_ctx->store = ath12k_cfg_global_store;
+	struct ath12k_cfg_value_store *store;
+
+	if (!cfg_ctx || !ath12k_cfg_global_store)
+		return -EINVAL;
+
+	store = vzalloc(sizeof(*store));
+	if (!store)
+		return -ENOMEM;
+
+	memcpy(&store->values, &ath12k_cfg_global_store->values,
+	       sizeof(store->values));
+
+	atomic_set(&store->users, 1);
+	INIT_LIST_HEAD(&store->node);
+	cfg_ctx->store = store;
+
+	return 0;
 }
 
 /**
@@ -687,6 +708,7 @@ static int
 ath12k_cfg_on_create(struct ath12k_base *ab)
 {
 	struct ath12k_cfg_ctx *cfg_ctx;
+	int ret;
 
 	WARN_ON(!ath12k_cfg_global_store);
 	if (!ath12k_cfg_global_store)
@@ -697,7 +719,12 @@ ath12k_cfg_on_create(struct ath12k_base *ab)
 	if (!cfg_ctx)
 		return -ENOMEM;
 
-	ath12k_cfg_store_set(cfg_ctx);
+	ret = ath12k_cfg_store_set(cfg_ctx);
+	if (ret) {
+		kfree(cfg_ctx);
+		return ret;
+	}
+
 	ab->cfg_ctx = cfg_ctx;
 	return 0;
 }
@@ -771,42 +798,26 @@ static int
 ath12k_cfg_ab_parse(struct ath12k_base *ab, const char *path)
 {
 	int ret;
-	struct ath12k_cfg_value_store *store;
 	struct ath12k_cfg_ctx *cfg_ctx;
 
-	if (!ath12k_cfg_global_store || !ath12k_cfg_global_init_done || !ab || !path) {
+	if (!ath12k_cfg_global_init_done || !ab || !path) {
 		ath12k_err(ab, "Failed to parse the file investigate \n");
 		return -EINVAL;
 	}
 
 	cfg_ctx = ath12k_cfg_get_ctx(ab);
+	if (!cfg_ctx)
+		return -EINVAL;
 
-	if (!cfg_ctx || cfg_ctx->store != ath12k_cfg_global_store)
-		return 0;
-
-	/* check if @path has been parsed before */
-	ret = ath12k_cfg_store_get(path, &store);
-	if (ret) {
-		ret = ath12k_cfg_store_alloc(path, &store);
-		if (ret)
-			return ret;
-
-		/* inherit global configuration */
-		memcpy(&store->values, &ath12k_cfg_global_store->values,
-		       sizeof(store->values));
-
-		ret = ath12k_cfg_ini_parse_to_store(path, store);
-		if (ret)
-			goto put_store;
+	if (!cfg_ctx->store) {
+		ath12k_err(ab, "cfg_ctx->store is NULL\n");
+		return -EINVAL;
 	}
 
-	cfg_ctx->store = store;
-	ath12k_cfg_store_put(ath12k_cfg_global_store);
-
-	return 0;
-
-put_store:
-	ath12k_cfg_store_put(store);
+	ret = ath12k_cfg_ini_parse_to_store(path, cfg_ctx->store);
+	if (ret)
+		ath12k_err(ab, "Failed to parse external INI %s; status:%d\n",
+			   path, ret);
 
 	return ret;
 }

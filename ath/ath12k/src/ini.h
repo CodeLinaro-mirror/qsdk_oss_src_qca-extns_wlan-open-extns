@@ -219,6 +219,7 @@
 	ATH12K_CFG(ATH12K_CFG_NAPI_POLL_BUDGET) \
 	ATH12K_CFG(ATH12K_CFG_TX_COMP_BUDGET) \
 	ATH12K_CFG(ATH12K_CFG_PPEDS_HOTLIST_LEN) \
+	ATH12K_CFG(ATH12K_CFG_DP_TX_MONITOR) \
 
 #define ATH12K_CFG_MAX_DESC \
 	ATH12K_CFG_INI_UINT("max_descs", \
@@ -263,6 +264,11 @@
 #define ATH12K_CFG_HTT_LOGGING_ENABLE \
 	ATH12K_CFG_INI_BOOL("htt_logging_enable", false, \
 	"Enable HTT interface logging at initialization")
+
+
+#define ATH12K_CFG_DP_TX_MONITOR \
+	ATH12K_CFG_INI_BOOL("dp_tx_monitor", false, \
+	"Enable dp tx monitor")
 
 #define ATH12K_CFG_DP_REO_CMD_RING_SIZE \
 	ATH12K_CFG_INI_UINT("dp_reo_cmd_ring", \

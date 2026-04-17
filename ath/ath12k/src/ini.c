@@ -1104,6 +1104,127 @@ void ath12k_cfg_deinit(struct ath12k_base *ab)
 	ath12k_info(ab, "Successfully deinitialized per-radio INI configuration\n");
 }
 
+
+/* mutex to protect debugfs operations from multiple SoCs */
+static DEFINE_MUTEX(ath12k_extn_ini_debugfs_lock);
+
+/**
+ * ath12k_extn_ini_config_read - Read handler for ini_config debugfs file
+ * @file: File pointer
+ * @user_buf: User buffer
+ * @count: Size of user buffer
+ * @ppos: Position in file
+ * Return: Number of bytes read
+ */
+static ssize_t ath12k_extn_ini_config_read(struct file *file,
+					   char __user *user_buf,
+					   size_t count, loff_t *ppos)
+{
+	struct ath12k_base *ab = file->private_data;
+	ssize_t len = 0;
+	char *buf;
+	int ret;
+
+	buf = kzalloc(ATH12K_EXTN_INI_CONFIG_BUF_SIZE, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	mutex_lock(&ath12k_extn_ini_debugfs_lock);
+	ret = ath12k_cfg_ini_config_print(ab, buf, &len,
+					  ATH12K_EXTN_INI_CONFIG_BUF_SIZE);
+	mutex_unlock(&ath12k_extn_ini_debugfs_lock);
+	if (ret) {
+		kfree(buf);
+		return ret;
+	}
+
+	ret = simple_read_from_buffer(user_buf, count, ppos, buf, len);
+	kfree(buf);
+
+	return ret;
+}
+
+static const struct file_operations fops_ath12k_extn_ini_config = {
+	.read = ath12k_extn_ini_config_read,
+	.open = simple_open,
+	.owner = THIS_MODULE,
+	.llseek = default_llseek,
+};
+
+/**
+ * ath12k_extn_ini_debugfs_get_root - Get debugfs root directory
+ * @ab: ath12k_base reference
+ * Return: debugfs root dentry
+ */
+static struct dentry *ath12k_extn_ini_debugfs_get_root(struct ath12k_base *ab)
+{
+	/* created by ath12k_debugfs_soc_create() */
+	if (!ab || !ab->debugfs_soc)
+		return NULL;
+
+	return ab->debugfs_soc;
+}
+
+/**
+ * ath12k_extn_ini_debugfs_soc_dir - Get directory for debugfs entries
+ * @ab: ath12k_base reference
+ * @soc_name: SoC name buffer
+ * @soc_name_len: Length of SoC name buffer
+ * Return: Parent directory for debugfs entries
+ */
+static struct dentry *ath12k_extn_ini_debugfs_soc_dir(struct ath12k_base *ab,
+						      char *soc_name,
+						      size_t soc_name_len)
+{
+	return ath12k_extn_ini_debugfs_get_root(ab);
+}
+
+/**
+ * ath12k_extn_ini_debugfs_register - Register INI debugfs
+ * @ab: ath12k_base reference
+ * Return: void
+ */
+void ath12k_extn_ini_debugfs_register(struct ath12k_base *ab)
+{
+	struct dentry *ini_dir;
+	char soc_name[64] = { 0 };
+
+	if (!ab)
+		return;
+
+	ini_dir = ath12k_extn_ini_debugfs_soc_dir(ab, soc_name, sizeof(soc_name));
+	if (IS_ERR_OR_NULL(ini_dir))
+		return;
+
+	/* /sys/kernel/debug/ath12k/<soc>/ini_config */
+	debugfs_create_file("ini_config", 0400, ini_dir, ab,
+			    &fops_ath12k_extn_ini_config);
+}
+EXPORT_SYMBOL(ath12k_extn_ini_debugfs_register);
+
+/**
+ * ath12k_extn_ini_debugfs_unregister - Unregister INI debugfs
+ * @ab: ath12k_base reference
+ * Return: void
+ */
+void ath12k_extn_ini_debugfs_unregister(struct ath12k_base *ab)
+{
+	struct dentry *ini_dir, *ini_file;
+	char soc_name[64] = { 0 };
+
+	if (!ab)
+		return;
+
+	ini_dir = ath12k_extn_ini_debugfs_soc_dir(ab, soc_name, sizeof(soc_name));
+	if (IS_ERR_OR_NULL(ini_dir))
+		return;
+
+	ini_file = debugfs_lookup("ini_config", ini_dir);
+	if (ini_file)
+		debugfs_remove(ini_file);
+}
+EXPORT_SYMBOL(ath12k_extn_ini_debugfs_unregister);
+
 void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 {
 	struct ath12k_pdev *pdev;

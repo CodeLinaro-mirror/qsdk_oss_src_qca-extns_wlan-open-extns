@@ -1061,3 +1061,99 @@ void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 	return;
 }
 #endif
+#ifndef CONFIG_IO_COHERENCY
+void ath12k_dp_srng_dst_invalidate_entries(struct ath12k_dp *dp,
+					   struct hal_srng *srng,
+					   int num_entries)
+{
+	u32 *first_desc, *last_desc;
+	u32 last_desc_index;
+
+	if (!(srng->flags & HAL_SRNG_FLAGS_CACHED) || !num_entries)
+		return;
+
+	first_desc = &srng->ring_base_vaddr[srng->u.dst_ring.tp];
+	last_desc_index = (srng->u.dst_ring.tp +
+			   (num_entries * srng->entry_size)) % srng->ring_size;
+	last_desc =  &srng->ring_base_vaddr[last_desc_index];
+
+	if (last_desc > (uint32_t *)first_desc)
+		/* invalidate from tp to last_desc */
+		ath12k_core_dmac_inv_range_no_dsb((void *)first_desc,
+						  (void *)last_desc);
+	else {
+		/* This is wrap-around case.
+		 * invalidate from tp to end of the ring
+		 */
+		ath12k_core_dmac_inv_range_no_dsb((void *)first_desc,
+						  (void *)srng->ring_vaddr_end);
+
+		/* invalidate from start of the ring to remaining entries */
+		ath12k_core_dmac_inv_range_no_dsb((void *)srng->ring_base_vaddr,
+						  (void *)last_desc);
+	}
+}
+
+void ath12k_dsb(void)
+{
+	dsb(st);
+}
+
+dma_addr_t  ath12k_dp_rx_buffer_map(struct ath12k_dp *dp,
+				    struct ath12k_rx_desc_info *rx_sw_desc)
+{
+	if (unlikely(!rx_sw_desc->skb->fast_recycled))
+		ath12k_core_dmac_inv_range_no_dsb(rx_sw_desc->vaddr,
+						  rx_sw_desc->vaddr +
+						  DP_RX_BUFFER_SIZE);
+
+	return virt_to_phys(rx_sw_desc->vaddr);
+}
+
+void ath12k_dp_rx_buffer_unmap(struct ath12k_dp *dp,
+			       struct ath12k_rx_desc_info *rx_sw_desc)
+{
+	ath12k_core_dmac_inv_range_no_dsb(rx_sw_desc->vaddr,
+					  rx_sw_desc->vaddr +
+					  DP_RX_BUFFER_SIZE);
+}
+#else
+void ath12k_dp_srng_dst_invalidate_entries(struct ath12k_dp *dp,
+					   struct hal_srng *srng,
+					   int num_entries)
+{
+}
+
+void ath12k_dsb(void)
+{
+}
+
+dma_addr_t ath12k_dp_rx_buffer_map(struct ath12k_dp *dp,
+				   struct ath12k_rx_desc_info *rx_sw_desc)
+{
+	return (dma_addr_t)virt_to_phys(rx_sw_desc->vaddr);
+}
+
+void ath12k_dp_rx_buffer_unmap(struct ath12k_dp *dp,
+			       struct ath12k_rx_desc_info *rx_sw_desc)
+{
+}
+#endif
+
+EXPORT_SYMBOL(ath12k_dp_srng_dst_invalidate_entries);
+EXPORT_SYMBOL(ath12k_dsb);
+EXPORT_SYMBOL(ath12k_dp_rx_buffer_map);
+EXPORT_SYMBOL(ath12k_dp_rx_buffer_unmap);
+
+#ifdef CPTCFG_MAC80211_SFE_SUPPORT
+struct sk_buff *ath12k_dp_alloc_skb(int size)
+{
+	return netdev_alloc_skb_fast(NULL, size);
+}
+#else
+struct sk_buff *ath12k_dp_alloc_skb(int size)
+{
+	return dev_alloc_skb(DP_RX_BUFFER_SIZE);
+}
+#endif
+EXPORT_SYMBOL(ath12k_dp_alloc_skb);

@@ -470,6 +470,12 @@ static inline void ath12k_mac_setup_extn(struct ath12k *ar)
 {
 }
 
+static inline void
+ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
+				       struct ieee80211_chanctx_conf *ctx)
+{
+}
+
 static inline void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 }
@@ -807,6 +813,9 @@ void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb);
 
 void ath12k_mac_setup_extn(struct ath12k *ar);
+
+void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
+					    struct ieee80211_chanctx_conf *ctx);
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
 

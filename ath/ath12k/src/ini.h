@@ -94,6 +94,7 @@
 #define ATH12K_CFG_DP \
 	ATH12K_CFG(ATH12K_CFG_DP_RXDMA_BUF_RING) \
 	ATH12K_CFG(ATH12K_CFG_HTT_LOGGING_ENABLE) \
+	ATH12K_CFG(ATH12K_CFG_DP_TX_MONITOR) \
 
 #define ATH12K_CFG_MAX_DESC \
 	ATH12K_CFG_INI_UINT("max_descs", \
@@ -138,6 +139,10 @@
 #define ATH12K_CFG_HTT_LOGGING_ENABLE \
 	ATH12K_CFG_INI_BOOL("htt_logging_enable", false, \
 	"Enable HTT interface logging at initialization")
+
+#define ATH12K_CFG_DP_TX_MONITOR \
+	ATH12K_CFG_INI_BOOL("dp_tx_monitor", false, \
+	"Enable dp tx monitor")
 
 #define ATH12K_CFG_REP_UL_RESP \
 	ATH12K_CFG_INI_UINT("rep_ul_resp", \

@@ -12,6 +12,7 @@ ath12k_wifi6-y += core.o \
 		  dp.o \
 		  hal.o \
 		  hal_qcn9074.o \
+		  hal_qcn9160.o \
 		  hal_mon.o \
 		  dp_mon.o \
 		  dp_mon_filter.o

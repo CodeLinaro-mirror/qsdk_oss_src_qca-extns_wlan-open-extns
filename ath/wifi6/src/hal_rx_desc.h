@@ -1108,9 +1108,26 @@ struct hal_rx_desc_qcn9074 {
 	u8 msdu_payload[];
 } __packed;
 
+struct hal_rx_desc_qcn9160 {
+	__le32 msdu_end_tag;
+	struct rx_msdu_end_qcn9074 msdu_end;
+	__le32 rx_attn_tag;
+	struct rx_attention attention;
+	__le32 msdu_start_tag;
+	struct rx_msdu_start_qcn9074 msdu_start;
+	u8 rx_padding0[HAL_RX_DESC_PADDING0_BYTES];
+	__le32 mpdu_start_tag;
+	struct rx_mpdu_start_qcn9074 mpdu_start;
+	__le32 mpdu_end_tag;
+	struct rx_mpdu_end mpdu_end;
+	u8 rx_padding1[HAL_RX_DESC_PADDING1_BYTES];
+	u8 msdu_payload[];
+} __packed;
+
 struct hal_rx_desc {
 	union {
 		struct hal_rx_desc_qcn9074 qcn9074;
+		struct hal_rx_desc_qcn9160 qcn9160;
 	} u;
 } __packed;
 

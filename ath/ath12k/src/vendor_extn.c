@@ -4675,6 +4675,7 @@ int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 	u32 intf_bitmap = 0;
 	int ret, link_id = 0;
 	struct ath12k *ar;
+	struct ath12k_mac_get_any_chanctx_conf_arg arg;
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
 
 	ath12k_err(NULL, "Inside ath12k_vendor_dcs_sim_handler");
@@ -4716,6 +4717,35 @@ int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 	if (!ar) {
 		ath12k_err(NULL, "Invalid ar from wdev\n");
 		goto exit;
+	}
+
+	if (intf_type_bitmap == WMI_DCS_AWGN_INTF) {
+		struct cfg80211_chan_def *chandef;
+
+		arg.ar = ar;
+		arg.chanctx_conf = NULL;
+		ieee80211_iter_chan_contexts_atomic(ath12k_ar_to_hw(ar),
+						    ath12k_mac_get_any_chanctx_conf_iter,
+						    &arg);
+		if (!arg.chanctx_conf) {
+			ath12k_err(NULL,
+				   "failed to get chanctx for dcs sim awgn\n");
+			goto exit;
+		}
+
+		chandef = &arg.chanctx_conf->def;
+		ar->awgn_intf_handling_in_prog = true;
+		ath12k_info(ar->ab,
+			    "DCS SIM AWGN: pdev=%d freq=%d width=%d cf1=%d cf2=%d bitmap=0x%x\n",
+			    ar->pdev->pdev_id,
+			    chandef->chan ? chandef->chan->center_freq : 0,
+			    chandef->width,
+			    chandef->center_freq1,
+			    chandef->center_freq2,
+			    intf_bitmap);
+		cfg80211_awgn_event(wihpy, chandef, GFP_ATOMIC, intf_bitmap);
+		rcu_read_unlock();
+		return 0;
 	}
 
 	ath12k_vendor_send_intf_notify_extn(ar, intf_type_bitmap, intf_bitmap);

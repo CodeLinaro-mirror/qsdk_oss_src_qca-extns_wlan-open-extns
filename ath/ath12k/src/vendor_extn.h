@@ -48,6 +48,18 @@ ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
 #define MAX(x,y) (x > y ? x : y)
 #endif
 
+#define WMI_HE_EXTRA_MCS_L80_SHIFT	16
+#define WMI_HE_EXTRA_MCS_G80_SHIFT	24
+#define WMI_HE_EXTRA_MCS_L80_MASK	GENMASK(23, 16)
+#define WMI_HE_EXTRA_MCS_G80_MASK	GENMASK(31, 24)
+
+/* Pack a 16-bit HE MCS 12/13 capability value into the upper 16 bits of a
+ * u32 mcs_set word.  bits[7:0] of cap → bits[23:16], bits[15:8] → bits[31:24].
+ */
+#define WMI_HE_EXTRA_MCS_PACK(cap)	\
+	((((u32)((cap) & 0xff)) << WMI_HE_EXTRA_MCS_L80_SHIFT) |	\
+	 (((u32)((cap) >> 8))   << WMI_HE_EXTRA_MCS_G80_SHIFT))
+
 /* CTL table size definitions */
 #define QCA_WLAN_CTL_5G_SIZE    1536
 #define QCA_WLAN_CTL_2G_SIZE    684
@@ -62,6 +74,20 @@ ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
 				  int data_len)
 {
 	return -1;
+}
+
+static inline int
+ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy, struct nlattr **tb,
+					   u64 *value)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline void
+ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
+				      struct ath12k_wmi_peer_assoc_arg *arg)
+{
+	return;
 }
 
 int ath12k_vendor_rule_config_notify(struct wiphy *wiphy,
@@ -449,6 +475,32 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     struct ath12k_wifi_generic_params *params);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
+/**
+ * ath12k_vendor_get_wifi_config_handler_extn - Handle GET_WIFI_CONFIGURATION
+ * for extension subcmds.
+ *
+ * @wiphy:    wiphy pointer
+ * @tb:       parsed netlink attribute table
+ * @value:    output — fetched capability value (u64, caller casts as needed)
+ *
+ * Returns 0 on success, -EOPNOTSUPP for unknown subcmds,
+ * negative error code on failure.
+ */
+int ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy, struct nlattr **tb,
+					       u64 *value);
+
+/**
+ * ath12k_peer_assoc_h_he_mcs_12_13_extn - Apply intersected HE MCS 12/13
+ * peer capability to the WMI peer assoc argument.
+ * @ar:  ath12k radio instance
+ * @arg: WMI peer assoc argument being prepared
+ *
+ * Populates the peer capability for HE MCS 12/13, which is used during the
+ * WMI PEER ASSOC command sent to the firmware.
+ */
+void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
+					   struct ath12k_wmi_peer_assoc_arg *arg);
 
 /**
  * ath12k_vendor_get_wiphy_config_handler_extn - Wiphy configuration command handler

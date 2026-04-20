@@ -901,12 +901,9 @@ static inline u8 ath12k_dp_ipa_skb_get_vdev_id(struct sk_buff *skb)
  */
 static inline u16 ath12k_dp_ipa_skb_get_peer_id(struct sk_buff *skb)
 {
-	u16 peer_id = skb->cb[DP_IPA_SKB_CB_PEER_ID_LO];
+	u16 peer_id = *(u16 *)(skb->cb + DP_IPA_SKB_CB_PEER_ID_LO);
 
-	peer_id |= (skb->cb[DP_IPA_SKB_CB_PEER_ID_HI]
-		    & DP_IPA_SKB_CB_PEER_ID_HI_MASK) << 8;
-
-	return peer_id;
+	return peer_id & 0x3FFF;
 }
 
 /**

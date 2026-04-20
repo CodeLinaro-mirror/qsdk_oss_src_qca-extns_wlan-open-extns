@@ -521,7 +521,20 @@ struct ath12k_cfg_values {
 #define __ATH12K_CFG_INI(args...) (args)
 
 /* Section Parsing - section names to be parsed */
+/* Memory-specific sections */
+#define ATH12K_CFG_256M_SECTION "256M"
 #define ATH12K_CFG_512M_SECTION "512M"
+
+/* Memory + Band combined sections for 256M only */
+#define ATH12K_CFG_256M_2G_SECTION "256M_2G"
+#define ATH12K_CFG_256M_5G_SECTION "256M_5G"
+#define ATH12K_CFG_256M_5G_LOW_SECTION "256M_5GL"
+#define ATH12K_CFG_256M_5G_HIGH_SECTION "256M_5GH"
+#define ATH12K_CFG_256M_6G_SECTION "256M_6G"
+#define ATH12K_CFG_256M_6G_LOW_SECTION "256M_6GL"
+#define ATH12K_CFG_256M_6G_HIGH_SECTION "256M_6GH"
+
+
 #define ATH12K_CFG_2GHZ_SECTION "2G"
 #define ATH12K_CFG_5GHZ_SECTION "5G"
 #define ATH12K_CFG_5GHZ_LOW_SECTION "5GL"
@@ -529,6 +542,20 @@ struct ath12k_cfg_values {
 #define ATH12K_CFG_6GHZ_HIGH_SECTION "6GH"
 #define ATH12K_CFG_6GHZ_LOW_SECTION "6GL"
 #define ATH12K_CFG_6GHZ_SECTION "6G"
+
+/**
+ * enum ath12k_pdev_band_type - PDEV band type classification
+ */
+enum ath12k_pdev_band_type {
+       WLAN_2GHZ_PDEV,
+       WLAN_5GHZ_PDEV,
+       WLAN_5GHZ_LOW_BAND_PDEV,
+       WLAN_5GHZ_HIGH_BAND_PDEV,
+       WLAN_6GHZ_PDEV,
+       WLAN_6GHZ_LOW_BAND_PDEV,
+       WLAN_6GHZ_HIGH_BAND_PDEV,
+       WLAN_BAND_UNKNOWN,
+};
 
 #define MAC_ADDR_FMT "%pM"
 #define MAC_ADDR_REF(a) (a)

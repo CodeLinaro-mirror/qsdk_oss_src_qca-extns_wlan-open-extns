@@ -812,6 +812,144 @@ put_store:
 }
 
 /**
+ * ath12k_cfg_get_pdev_band_type - Determine pdev band type from frequency range
+ * @ab: reference to ath12k_base
+ * @pdev_idx: pdev index
+ * Return: band type enum
+ */
+static enum ath12k_pdev_band_type
+ath12k_cfg_get_pdev_band_type(struct ath12k_base *ab, u32 pdev_idx)
+{
+	struct ath12k_pdev *pdev;
+
+	if (pdev_idx >= ab->num_radios)
+		return WLAN_BAND_UNKNOWN;
+
+	pdev = &ab->pdevs[pdev_idx];
+	/* Use phy_name to determine band type */
+	if (!strcmp(pdev->phy_name, ATH12K_PHY_2GHZ)) {
+		return WLAN_2GHZ_PDEV;
+	} else if (!strcmp(pdev->phy_name, ATH12K_PHY_5GHZ)) {
+		return WLAN_5GHZ_PDEV;
+	} else if (!strcmp(pdev->phy_name, ATH12K_PHY_5GHZ_LOW)) {
+		return WLAN_5GHZ_LOW_BAND_PDEV;
+	} else if (!strcmp(pdev->phy_name, ATH12K_PHY_5GHZ_HIGH)) {
+		return WLAN_5GHZ_HIGH_BAND_PDEV;
+	} else if (!strcmp(pdev->phy_name, ATH12K_PHY_6GHZ)) {
+		return WLAN_6GHZ_PDEV;
+	} else if (!strcmp(pdev->phy_name, ATH12K_PHY_6GHZ_LOW)) {
+		return WLAN_6GHZ_LOW_BAND_PDEV;
+	} else if (!strcmp(pdev->phy_name, ATH12K_PHY_6GHZ_HIGH)) {
+		return WLAN_6GHZ_HIGH_BAND_PDEV;
+	}
+
+	return WLAN_BAND_UNKNOWN;
+}
+
+/**
+ * ath12k_cfg_parse_256m_band_section - Parse 256M memory+band specific section
+ * @ab: reference to ath12k_base
+ * @ini_buf: ini buffer reference
+ * @pdev_idx: pdev index
+ * Return: void
+ */
+#if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
+static void
+ath12k_cfg_parse_256m_band_section(struct ath12k_base *ab,
+				    char *ini_buf,
+				    u32 pdev_idx)
+{
+	enum ath12k_pdev_band_type pdev_band;
+	const char *section_name = NULL;
+
+	pdev_band = ath12k_cfg_get_pdev_band_type(ab, pdev_idx);
+
+	switch (pdev_band) {
+	case WLAN_2GHZ_PDEV:
+		section_name = ATH12K_CFG_256M_2G_SECTION;
+		break;
+	case WLAN_5GHZ_PDEV:
+		section_name = ATH12K_CFG_256M_5G_SECTION;
+		break;
+	case WLAN_5GHZ_LOW_BAND_PDEV:
+		section_name = ATH12K_CFG_256M_5G_LOW_SECTION;
+		break;
+	case WLAN_5GHZ_HIGH_BAND_PDEV:
+		section_name = ATH12K_CFG_256M_5G_HIGH_SECTION;
+		break;
+	case WLAN_6GHZ_PDEV:
+		section_name = ATH12K_CFG_256M_6G_SECTION;
+		break;
+	case WLAN_6GHZ_LOW_BAND_PDEV:
+		section_name = ATH12K_CFG_256M_6G_LOW_SECTION;
+		break;
+	case WLAN_6GHZ_HIGH_BAND_PDEV:
+		section_name = ATH12K_CFG_256M_6G_HIGH_SECTION;
+		break;
+	default:
+		break;
+	}
+
+	if (section_name) {
+		ath12k_dbg(ab, ATH12K_DBG_INI,
+			   "Parsing 256M+band section for pdev %d: %s\n",
+			   pdev_idx, section_name);
+		ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
+	}
+}
+
+/**
+ * ath12k_cfg_parse_generic_band_section - Parse generic band section
+ * @ab: reference to ath12k_base
+ * @ini_buf: ini buffer reference
+ * @pdev_idx: pdev index
+ * Return: void
+ */
+#else
+static void
+ath12k_cfg_parse_generic_band_section(struct ath12k_base *ab,
+				       char *ini_buf,
+				       u32 pdev_idx)
+{
+	enum ath12k_pdev_band_type pdev_band;
+	const char *section_name = NULL;
+
+	pdev_band = ath12k_cfg_get_pdev_band_type(ab, pdev_idx);
+	switch (pdev_band) {
+	case WLAN_2GHZ_PDEV:
+		section_name = ATH12K_CFG_2GHZ_SECTION;
+		break;
+	case WLAN_5GHZ_PDEV:
+		section_name = ATH12K_CFG_5GHZ_SECTION;
+		break;
+	case WLAN_5GHZ_LOW_BAND_PDEV:
+		section_name = ATH12K_CFG_5GHZ_LOW_SECTION;
+		break;
+	case WLAN_5GHZ_HIGH_BAND_PDEV:
+		section_name = ATH12K_CFG_5GHZ_HIGH_SECTION;
+		break;
+	case WLAN_6GHZ_PDEV:
+		section_name = ATH12K_CFG_6GHZ_SECTION;
+		break;
+	case WLAN_6GHZ_LOW_BAND_PDEV:
+		section_name = ATH12K_CFG_6GHZ_LOW_SECTION;
+		break;
+	case WLAN_6GHZ_HIGH_BAND_PDEV:
+		section_name = ATH12K_CFG_6GHZ_HIGH_SECTION;
+		break;
+	default:
+		break;
+	}
+
+	if (section_name) {
+		ath12k_dbg(ab,ATH12K_DBG_INI,
+			   "Parsing generic band section for pdev %d: %s\n",
+			   pdev_idx, section_name);
+		ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
+	}
+}
+#endif
+/**
  * ath12k_cfg_parse_section_store - Parse the section to populate cfg store
  * @ab: reference to ath12_base
  * @ini_buf: ini buffer reference
@@ -820,7 +958,11 @@ put_store:
 static void ath12k_cfg_parse_section_store(struct ath12k_base *ab,
 					   char *ini_buf)
 {
-	ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_512M_SECTION);
+#if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
+	ath12k_dbg(ab, ATH12K_DBG_INI,
+			"Parsing memory section: %s\n", ATH12K_CFG_256M_SECTION);
+	ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_256M_SECTION);
+#endif
 }
 
 int
@@ -1227,9 +1369,8 @@ EXPORT_SYMBOL(ath12k_extn_ini_debugfs_unregister);
 
 void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 {
-	struct ath12k_pdev *pdev;
 	struct ath12k_ini_file ini;
-	char ini_buf[100] = {0};
+	char ini_buf[ATH12K_CFG_FILE_NAME_MAX] = {0};
 	int ret;
 	u32 i;
 
@@ -1243,15 +1384,12 @@ void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 
 	strlcat(ini_buf, ini.internal, sizeof(ini_buf));
 
+	/* Parse sections for each pdev */
 	for (i = 0; i < ab->num_radios; i++) {
-		pdev = &ab->pdevs[i];
-		if (!strcmp(pdev->phy_name, ATH12K_PHY_6GHZ)) {
-			ath12k_cfg_section_parse_to_store(ab, ini_buf,
-							  ATH12K_CFG_6GHZ_SECTION);
-		}
-		if (!strcmp(pdev->phy_name, ATH12K_PHY_5GHZ_LOW)) {
-			ath12k_cfg_section_parse_to_store(ab, ini_buf,
-							  ATH12K_CFG_5GHZ_LOW_SECTION);
-		}
+#if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
+		ath12k_cfg_parse_256m_band_section(ab, ini_buf, i);
+#else
+		ath12k_cfg_parse_generic_band_section(ab, ini_buf, i);
+#endif
 	}
 }

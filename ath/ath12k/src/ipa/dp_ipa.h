@@ -37,6 +37,10 @@ struct ipa_header {
 	};
 };
 
+#define ath12k_ipa_info(__ab, __log, ...) ath12k_info(__ab, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
+#define ath12k_ipa_err(__ab, __log, ...) ath12k_err(__ab, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
+#define ath12k_ipa_dbg(__ab, __log, ...) ath12k_dbg(__ab, ATH12K_DBG_IPA, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
+
 #define DEBRUIJIN_MAGIC_IDX 0x077CB531U
 #define DEBRUIJIN_MAGIC_SHIFT 27
 #define IPA_CTX(ab) ab->ath12k_base_extn.ipa_ctx

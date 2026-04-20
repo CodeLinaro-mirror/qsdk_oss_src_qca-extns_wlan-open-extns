@@ -42,11 +42,25 @@
 
 /* Forward declaration */
 struct ath12k_link_vif;
+struct ath12k_link_sta;
 
 enum sa_state {
 	SA_DEFAULT_STATE,
 	SA_INIT_DONE_STATE,
 	SA_DEINIT_DONE_STATE,
+};
+
+enum sa_sta_opmode {
+	SA_OPMODE_CCK_OFDM,
+	SA_OPMODE_HT,
+	SA_OPMODE_VHT,
+	SA_OPMODE_HE,
+	SA_OPMODE_EHT,
+	SA_OPMODE_UHR,
+};
+
+struct sa_sta_extn {
+	void *ctx;
 };
 
 struct sa_ar_extn {
@@ -132,4 +146,14 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags);
  */
 void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 					 struct sk_buff *skb);
+
+/**
+ * sa_core_peer_disconnect_notify - Notify peer disconnection to SA core
+ * @arsta: link sta representing the disconnected peer
+ *
+ * Notifies the Smart Antenna core and algorithm that a peer has disconnected
+ * so that per-peer context can be released.
+ */
+void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta);
+
 #endif /* ATH12K_SA_CORE_H */

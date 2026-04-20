@@ -230,6 +230,79 @@ void sa_get_cfg_flags(struct ath12k_base *ab, u8 *sa_en, u8 *sa_sw_test)
 	}
 }
 
+static void sa_core_peer_connect_notify(struct ath12k_link_sta *arsta,
+					struct ath12k_sa_rate_cap *rate_cap)
+{
+	struct ieee80211_channel *chan;
+	struct ieee80211_link_sta *link_sta;
+	struct ath12k *ar;
+	struct ath12k_link_vif *arvif;
+	struct sa_sta_extn *sa_sta;
+	struct ath12k_sa_node_info node_info = {0};
+
+	if (!arsta || !arsta->arvif || !arsta->arvif->ar || !rate_cap ||
+	    !g_sa_ops || !g_sa_ops->sa_peer_connect)
+		return;
+
+	arvif = arsta->arvif;
+	ar = arvif->ar;
+	if (!ar->ab || !ath12k_smart_ant_is_enable(ar->ab))
+		return;
+
+	link_sta = ath12k_mac_get_link_sta(arsta);
+	if (!link_sta) {
+		ath12k_err(ar->ab, "sa_core: unable to access link_sta\n");
+		return;
+	}
+	sa_sta = &arsta->arsta_extn.sa_sta;
+	ether_addr_copy(node_info.mac_addr, arsta->addr);
+	node_info.radio_id = ar->radio_idx;
+	node_info.max_ch_bw = arsta->bw;
+	node_info.nss_tx = arsta->peer_nss;
+	node_info.nss_rx = link_sta->rx_nss;
+	memcpy(&node_info.rate_cap, rate_cap, sizeof(*rate_cap));
+
+	chan = arvif->chanctx.def.chan;
+	if (chan) {
+		node_info.band = chan->band;
+		node_info.chan_num = chan->hw_value;
+	}
+
+	node_info.opmode = SA_OPMODE_CCK_OFDM;
+	if (link_sta->uhr_cap.has_uhr)
+		node_info.opmode = SA_OPMODE_UHR;
+	else if (link_sta->eht_cap.has_eht)
+		node_info.opmode = SA_OPMODE_EHT;
+	else if (link_sta->he_cap.has_he)
+		node_info.opmode = SA_OPMODE_HE;
+	else if (link_sta->vht_cap.vht_supported)
+		node_info.opmode = SA_OPMODE_VHT;
+	else if (link_sta->ht_cap.ht_supported)
+		node_info.opmode = SA_OPMODE_HT;
+
+	if (g_sa_ops->sa_peer_connect(&sa_sta->ctx, &node_info))
+		ath12k_err(ar->ab, "sa_core: unable to update STA info\n");
+}
+
+void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta)
+{
+	struct sa_sta_extn *sa_sta;
+	struct ath12k *ar;
+
+	if (!arsta || !arsta->arvif || !arsta->arvif->ar ||
+	    !g_sa_ops || !g_sa_ops->sa_peer_disconnect)
+		return;
+
+	ar = arsta->arvif->ar;
+	if (!ar->ab || !ath12k_smart_ant_is_enable(ar->ab))
+		return;
+
+	sa_sta = &arsta->arsta_extn.sa_sta;
+	if (sa_sta->ctx)
+		g_sa_ops->sa_peer_disconnect(sa_sta->ctx);
+	sa_sta->ctx = NULL;
+}
+
 static int
 sa_core_wmi_send_parallel_mode_gpio_drive(struct ath12k *ar, u32 value)
 {
@@ -691,6 +764,7 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 		return;
 	}
 	rcu_read_unlock();
+	sa_core_peer_connect_notify(arsta, &param.rate_cap);
 }
 
 int sa_core_init(struct ath12k *ar,

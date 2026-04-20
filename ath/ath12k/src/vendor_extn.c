@@ -1944,6 +1944,10 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 		     }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_ANI_OFDM_LEVEL:
+		 if (value < -128 && value>127) {
+		     ath12k_err(NULL, "value should between -128 to 127");
+		     return -EINVAL;
+		 }
                  ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANI_OFDM_LEVEL,
                          value, ar->pdev->pdev_id);
 		 if (!ret) {

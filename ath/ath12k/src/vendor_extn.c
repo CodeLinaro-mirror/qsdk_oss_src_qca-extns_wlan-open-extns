@@ -4734,7 +4734,20 @@ int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 		}
 
 		chandef = &arg.chanctx_conf->def;
+		if (!chandef->chan ||
+		    chandef->chan->band != NL80211_BAND_6GHZ) {
+			ath12k_err(ar->ab,
+				   "DCS SIM AWGN is supported only on 6 GHz (freq=%d band=%d)\n",
+				   chandef->chan ? chandef->chan->center_freq : 0,
+				   chandef->chan ? (int) chandef->chan->band : -1);
+			goto exit;
+		}
+
+		spin_lock_bh(&ar->data_lock);
+		ar->awgn_chandef = *chandef;
 		ar->awgn_intf_handling_in_prog = true;
+		ar->chan_bw_interference_bitmap = intf_bitmap;
+		spin_unlock_bh(&ar->data_lock);
 		ath12k_info(ar->ab,
 			    "DCS SIM AWGN: pdev=%d freq=%d width=%d cf1=%d cf2=%d bitmap=0x%x\n",
 			    ar->pdev->pdev_id,

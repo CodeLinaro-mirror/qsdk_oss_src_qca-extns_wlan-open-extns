@@ -1058,6 +1058,35 @@ void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 	ath12k_reconfig_esp_params_extn(ar);
 }
 
+void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
+					    struct ieee80211_chanctx_conf *ctx)
+{
+	struct ath12k *ar = arvif->ar;
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	struct cfg80211_chan_def *chandef;
+	int dfs_required;
+
+	if (!ctx)
+		return;
+
+	chandef = &ctx->def;
+	if (!chandef->chan)
+		return;
+
+	dfs_required = cfg80211_chandef_dfs_required(hw->wiphy, chandef,
+						     arvif->ahvif->vif->type);
+	if (dfs_required <= 0)
+		return;
+
+	arvif->pending_csa_up = false;
+
+	ath12k_warn(ar->ab,
+		    "dfs violation on vdev %d for freq %u, marking target unavailable\n",
+		    arvif->vdev_id, chandef->chan->center_freq);
+
+	cfg80211_radar_event(hw->wiphy, chandef, GFP_KERNEL);
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ath12k_link_sta *arsta,

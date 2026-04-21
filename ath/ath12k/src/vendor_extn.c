@@ -1198,6 +1198,15 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			}
 		}
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_PROTECTION_MODE:
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_PROTECTION_MODE, value);
+		if (!ret) {
+			arvif->vap_cfg.protection_mode = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_PROTECTION_MODE to firmware");
+		}
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RATE:
 		ret = ath12k_set_vdev_mcast_rate(arvif, value);
 		if (ret)
@@ -3275,7 +3284,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		*value = arvif->vap_cfg.rx_decap_type;
 		ret = 0;
 		break;
-
+	case QCA_WLAN_VENDOR_VDEV_PARAM_PROTECTION_MODE:
+		*value = arvif->vap_cfg.protection_mode;
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RATE:
 		ret = ath12k_get_vdev_mcast_rate(arvif, value);
 		break;

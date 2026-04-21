@@ -380,6 +380,9 @@ const struct ath12k_hw_hal_params ath12k_wifi6_hw_hal_params_qcn9074 = {
 	.num_tx_msdus_per_link_desc = HAL_NUM_TX_MSDUS_PER_LINK_DESC,
 	.num_rx_msdus_per_link_desc = HAL_NUM_RX_MSDUS_PER_LINK_DESC,
 	.num_mpdu_links_per_queue_desc = HAL_NUM_MPDU_LINKS_PER_QUEUE_DESC,
+	.rx_mon_err_dst_ring_size = HAL_RXDMA_ERR_DST_RING_SIZE,
+	.rx_mon_refill_ring_size = HAL_RX_MON_REFILL_RING_SIZE,
+	.rx_refill_ring_size = HAL_RX_REFILL_RING_SIZE,
 };
 
 static int ath12k_wifi6_hal_srng_create_config_qcn9074(struct ath12k_hal *hal)

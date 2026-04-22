@@ -166,6 +166,22 @@ static int sa_core_ppdu_notifier_unregister(u8 en_mask)
 	return ret;
 }
 
+static inline int sa_core_get_txantenna(void *ccp, u32 *antenna_array)
+{
+	int ret;
+
+	if (!g_sa_ops || !g_sa_ops->sa_get_txantenna || !antenna_array) {
+		ath12k_err(NULL, "sa_core: get_txantenna invalid ops/args\n");
+		return -1;
+	}
+
+	ret = g_sa_ops->sa_get_txantenna(ccp, antenna_array);
+	if (ret)
+		ath12k_err(NULL, "sa_core: get_txantenna op failed (%d)\n", ret);
+
+	return ret;
+}
+
 static inline int sa_core_get_txdefaultantenna(u8 radio_id, u32 *antenna)
 {
 	int ret;
@@ -194,6 +210,91 @@ static inline int sa_core_get_rxantenna(u8 radio_id, u32 *rx_antenna)
 	ret = g_sa_ops->sa_get_rxantenna(radio_id, rx_antenna);
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_rxantenna op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline int sa_core_get_traininginfo(void *ccp, u32 *rate_array,
+					   u32 *antenna_array, u32 *numpkts)
+{
+	int ret;
+
+	if (!g_sa_ops || !g_sa_ops->sa_get_traininginfo ||
+	    !rate_array || !antenna_array || !numpkts) {
+		ath12k_err(NULL, "sa_core: get_traininginfo invalid ops/args\n");
+		return -1;
+	}
+
+	ret = g_sa_ops->sa_get_traininginfo(ccp, rate_array,
+					    antenna_array, numpkts);
+	if (ret)
+		ath12k_err(NULL, "sa_core: get_traininginfo op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline int sa_core_get_bcn_txantenna(u8 radio_id, u32 *bcn_txantenna)
+{
+	int ret;
+
+	if (!g_sa_ops || !g_sa_ops->sa_get_bcn_txantenna || !bcn_txantenna) {
+		ath12k_err(NULL, "sa_core: get_bcn_txantenna invalid ops/args\n");
+		return -1;
+	}
+
+	ret = g_sa_ops->sa_get_bcn_txantenna(radio_id, bcn_txantenna);
+	if (ret)
+		ath12k_err(NULL, "sa_core: get_bcn_txantenna op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline int sa_core_get_param(struct ath12k_sa_config_params *params)
+{
+	int ret;
+
+	if (!g_sa_ops || !g_sa_ops->sa_get_param || !params) {
+		ath12k_err(NULL, "sa_core: get_param invalid ops/args\n");
+		return -1;
+	}
+
+	ret = g_sa_ops->sa_get_param(params);
+	if (ret)
+		ath12k_err(NULL, "sa_core: get_param op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline int sa_core_get_node_config(void *ccp, u32 id, u32 *config)
+{
+	int ret;
+
+	if (!g_sa_ops || !g_sa_ops->sa_get_node_config || !config) {
+		ath12k_err(NULL, "sa_core: get_node_config invalid ops/args\n");
+		return -1;
+	}
+
+	ret = g_sa_ops->sa_get_node_config(ccp, id, config);
+	if (ret)
+		ath12k_err(NULL, "sa_core: get_node_config op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline
+int sa_core_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th)
+{
+	int ret;
+
+	if (!g_sa_ops || !g_sa_ops->sa_get_ext_traininginfo ||
+	    !minpkts || !per_th) {
+		ath12k_err(NULL, "sa_core: get_ext_traininginfo invalid ops/args\n");
+		return -1;
+	}
+
+	ret = g_sa_ops->sa_get_ext_traininginfo(ccp, minpkts, per_th);
+	if (ret)
+		ath12k_err(NULL, "sa_core: get_ext_traininginfo op failed (%d)\n", ret);
 
 	return ret;
 }
@@ -765,6 +866,165 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 	}
 	rcu_read_unlock();
 	sa_core_peer_connect_notify(arsta, &param.rate_cap);
+}
+
+static int sa_core_trigger_training(struct ath12k_link_sta *arsta, u8 *macaddr)
+{
+	struct sa_sta_extn *sa_sta = &arsta->arsta_extn.sa_sta;
+	struct smart_ant_train_info param = {0};
+	int ret = 0;
+
+	param.vdev_id = arsta->arvif->vdev_id;
+	if (g_sa_ops->sa_get_traininginfo)
+		ret = g_sa_ops->sa_get_traininginfo(sa_sta->ctx,
+						    &param.rate_array[0],
+						    &param.antenna_array[0],
+						    &param.numpkts);
+	param.minpkts = SA_INVALID_PARAM_VALUE;
+	param.per_th = SA_INVALID_PARAM_VALUE;
+	if (g_sa_ops->sa_get_ext_traininginfo)
+		g_sa_ops->sa_get_ext_traininginfo(sa_sta->ctx,
+						  &param.minpkts,
+						  &param.per_th);
+
+	if (!ret)
+		ret = sa_core_wmi_set_train_info(arsta->arvif->ar,
+						 macaddr, &param);
+	else
+		ath12k_err(arsta->arvif->ar->ab,
+			   "Failed to get training params for STA %pM\n",
+			   macaddr);
+
+	return ret;
+}
+
+static inline void sa_core_extract_mac_from_params(u32 *params, u8 *mac)
+{
+	mac[0] = (u8)((params[0] & 0x0000FF00) >> 8);
+	mac[1] = (u8)(params[0] & 0x000000FF);
+	mac[2] = (u8)((params[1] & 0xFF000000) >> 24);
+	mac[3] = (u8)((params[1] & 0x00FF0000) >> 16);
+	mac[4] = (u8)((params[1] & 0x0000FF00) >> 8);
+	mac[5] = (u8)(params[1] & 0x000000FF);
+}
+
+int sa_core_get_configs(struct ath12k *ar, u32 *params)
+{
+	struct ath12k_sa_config_params sa_params = {0};
+	struct sa_sta_extn *sa_sta = NULL;
+	struct ath12k_link_sta *arsta = NULL;
+	u8 mac[ETH_ALEN] = {0};
+	int ret = 0;
+
+	if (!ar || !ar->ab || !params || !g_sa_ops || !g_sa_ops->sa_get_param)
+		return -EINVAL;
+
+	if (!ath12k_smart_ant_is_enable(ar->ab))
+		return -EPERM;
+
+	sa_params.radio_id = ar->radio_idx;
+	sa_params.param_type = (params[0] & SA_PARM_TYPE_MASK) >>
+				SA_PARM_TYPE_SHIFT;
+	sa_params.param_id = params[2];
+
+	if (sa_params.param_type) {
+		sa_core_extract_mac_from_params(params, mac);
+
+		rcu_read_lock();
+		arsta = ath12k_link_sta_find_by_addr(ar->ab, mac);
+		if (!arsta) {
+			ath12k_err(ar->ab, "STA not found %pM\n", mac);
+			rcu_read_unlock();
+			return -EPERM;
+		}
+		rcu_read_unlock();
+		sa_sta = &arsta->arsta_extn.sa_sta;
+		if (!sa_sta->ctx) {
+			ath12k_err(ar->ab, "Invalid context for STA %pM\n", mac);
+			return -EPERM;
+		}
+		sa_params.ccp = sa_sta->ctx;
+	}
+	ret = g_sa_ops->sa_get_param(&sa_params);
+	params[3] = sa_params.param_value;
+
+	return ret;
+}
+
+int sa_core_set_configs(struct ath12k *ar, u32 *params)
+{
+	struct ath12k_sa_config_params sa_params = {0};
+	struct sa_sta_extn *sa_sta = NULL;
+	struct ath12k_link_sta *arsta = NULL;
+	u32 value = 0;
+	u32 ant_array[SA_MAX_SA_CHAINS] = {0};
+	u8 mac[ETH_ALEN] = {0};
+	int ret = 0;
+
+	if (!ar || !ar->ab || !params || !g_sa_ops || !g_sa_ops->sa_set_param)
+		return -EINVAL;
+
+	if (!ath12k_smart_ant_is_enable(ar->ab))
+		return -EPERM;
+
+	sa_params.radio_id = ar->radio_idx;
+	sa_params.param_type = (params[0] & SA_PARM_TYPE_MASK) >>
+				SA_PARM_TYPE_SHIFT;
+	sa_params.param_id = params[2];
+	sa_params.param_value = params[3];
+
+	if (sa_params.param_type) {
+		sa_core_extract_mac_from_params(params, mac);
+
+		rcu_read_lock();
+		arsta = ath12k_link_sta_find_by_addr(ar->ab, mac);
+		if (!arsta) {
+			ath12k_err(ar->ab, "STA not found %pM\n", mac);
+			rcu_read_unlock();
+			return -EPERM;
+		}
+		rcu_read_unlock();
+		sa_sta = &arsta->arsta_extn.sa_sta;
+		if (!sa_sta->ctx) {
+			ath12k_err(ar->ab, "Invalid context for STA %pM\n", mac);
+			return -EPERM;
+		}
+		sa_params.ccp = sa_sta->ctx;
+	}
+	ret = g_sa_ops->sa_set_param(&sa_params);
+	if (ret > 0) {
+		if (ret & SA_RX_CONFIG_REQUIRED) {
+			sa_core_get_rxantenna(ar->radio_idx, &value);
+			sa_core_wmi_set_rx_antenna(ar, value);
+		} else if (ret & SA_DEFAULT_TX_CONFIG_REQUIRED) {
+			sa_core_get_txdefaultantenna(ar->radio_idx, &value);
+			ath12k_wmi_pdev_set_param(ar,
+				WMI_PDEV_PARAM_SMART_ANTENNA_DEFAULT_ANTENNA,
+				value, ar->pdev->pdev_id);
+		} else if (ret & SA_BEACON_ANT_CONFIG_REQUIRED) {
+			sa_core_get_bcn_txantenna(ar->radio_idx, &value);
+			ath12k_wmi_pdev_set_param(ar,
+				WMI_PDEV_PARAM_SMART_ANTENNA_BEACON_ANTENNA,
+				value, ar->pdev->pdev_id);
+		} else if (ret & SA_PARALLEL_GPIO_CFG_REQUIRED) {
+			sa_core_wmi_send_parallel_mode_gpio_drive(ar,
+							sa_params.param_value);
+		} else if ((ret & SA_TX_CONFIG_REQUIRED) && sa_sta) {
+			sa_core_get_txantenna(sa_sta->ctx, &ant_array[0]);
+			sa_core_wmi_set_tx_antenna(ar, arsta->arvif->vdev_id,
+						   mac, ant_array);
+		} else if ((ret & SA_TRAINING_REQUIRED) && sa_sta) {
+			sa_core_trigger_training(arsta, mac);
+		} else if ((ret & SA_TX_FEEDBACK_CONFIG_REQUIRED) && sa_sta) {
+			sa_core_get_node_config(sa_sta->ctx,
+						SA_TX_FEEDBACK_CONFIG, &value);
+			sa_core_wmi_send_node_config_ops(arsta, mac,
+							 SA_TX_FEEDBACK_CONFIG,
+							 1, &value);
+		}
+	}
+
+	return 0;
 }
 
 int sa_core_init(struct ath12k *ar,

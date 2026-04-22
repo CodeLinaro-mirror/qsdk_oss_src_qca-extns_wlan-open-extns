@@ -20,6 +20,71 @@ bool ath12k_smart_ant_is_enable(struct ath12k_base *ab)
 	return sa_base->sa_enable;
 }
 
+int ath12k_vendor_get_wiphy_sa_configs(struct wiphy *wiphy,
+				       struct ath12k_wifi_generic_params *params,
+				       u32 *value)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar = NULL;
+	u32 configs[4] = {0};
+	int ret;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params || !value || !params->data) {
+		ath12k_err(NULL, "Invalid Parameters\n");
+		return -EINVAL;
+	}
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index\n");
+		return -EINVAL;
+	}
+	ar = &ah->radio[params->radio_idx];
+
+	configs[0] = params->value;
+	configs[1] = *((u32 *)params->data);
+	configs[2] = params->length;
+
+	ret = sa_core_get_configs(ar, configs);
+	if (ret) {
+		ath12k_err(ar->ab, "Operation failed; %d\n", ret);
+		return -EOPNOTSUPP;
+	}
+
+	*value = configs[3];
+
+	return 0;
+}
+
+int ath12k_vendor_set_wiphy_sa_configs(struct wiphy *wiphy,
+				       struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar = NULL;
+	u32 configs[4] = {0};
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params || !params->data) {
+		ath12k_err(NULL, "Invalid Parameters\n");
+		return -EINVAL;
+	}
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index\n");
+		return -EINVAL;
+	}
+	ar = &ah->radio[params->radio_idx];
+
+	configs[0] = params->value;
+	configs[1] = *((u32 *)params->data);
+	configs[2] = params->length;
+	configs[3] = params->flags;
+
+	return sa_core_set_configs(ar, configs);
+}
+
 bool ath12k_smart_ant_enable(struct ath12k_base *ab)
 {
 	u8 wmi_sa_sw, wmi_sa_hw;

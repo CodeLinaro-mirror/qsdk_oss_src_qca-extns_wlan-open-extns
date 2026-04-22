@@ -27,6 +27,26 @@
 #include "mesh_util.h"
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
+const struct nla_policy
+ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_TYPE] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_ID] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BSSID] = NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN),
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_LOW] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_HIGH] = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_NUM_BUSY_SLOTS] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_DUR] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_INTVL] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_EDCA_PARAMS_VALID] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_AIFSN] = { .type = NLA_BINARY,
+						      .len = sizeof(u16) * WLAN_MAX_AC },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMIN] = { .type = NLA_BINARY,
+						      .len = sizeof(u16) * WLAN_MAX_AC },
+	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMAX] = { .type = NLA_BINARY,
+						      .len = sizeof(u16) * WLAN_MAX_AC },
+};
+
 #define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
 #define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
@@ -4976,6 +4996,126 @@ clean:
 	ath12k_free_opclasses_and_channels(num_op, op_lst,
 					   chansize, chan_lst);
 	return ret_val;
+}
+
+/**
+ * ath12k_vendor_tdma_schedule_config() - Configure TDMA schedule parameters
+ * @wiphy: wiphy device pointer
+ * @wdev: wireless device pointer
+ * @data: vendor command data
+ * @data_len: vendor command data length
+ *
+ * This vendor command configures TDMA (Time Division Multiple Access)
+ * scheduling parameters for a given radio. It parses the schedule type,
+ * slot timing, BSSID, TSF start time, and optional EDCA parameters.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
+					      struct wireless_dev *wdev,
+					      const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1];
+	struct ath12k_tdma_sched_info sched = {0};
+	u32 radio_index = 0;
+	int ret;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX, data, data_len,
+			ath12k_vendor_tdma_schedule_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "Failed to parse TDMA schedule attributes: %d\n", ret);
+		return ret;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX])
+		radio_index = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX]);
+
+	if (radio_index >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index %u for TDMA schedule config\n",
+			   radio_index);
+		return -EINVAL;
+	}
+
+	ar = &ah->radio[radio_index];
+	if (!ar) {
+		ath12k_err(NULL, "ar is NULL for radio index %u\n", radio_index);
+		return -EINVAL;
+	}
+
+	sched.pdev_id = ar->pdev->pdev_id;
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_TYPE])
+		sched.sched_type =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_TYPE]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_ID])
+		sched.sched_id =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_ID]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BSSID] &&
+	    nla_len(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BSSID]) == ETH_ALEN)
+		memcpy(sched.bssid,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BSSID]),
+		       ETH_ALEN);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_LOW])
+		sched.start_time_tsf_low =
+			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_LOW]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_HIGH])
+		sched.start_time_tsf_high =
+			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_HIGH]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_NUM_BUSY_SLOTS])
+		sched.num_busy_slots =
+			nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_NUM_BUSY_SLOTS]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_DUR])
+		sched.busy_slot_dur_ms =
+			nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_DUR]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_INTVL])
+		sched.busy_slot_intvl_ms =
+			nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_INTVL]);
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_EDCA_PARAMS_VALID])
+		sched.edca_params_valid =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_EDCA_PARAMS_VALID]);
+
+	if (sched.edca_params_valid) {
+		if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_AIFSN] &&
+		    nla_len(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_AIFSN]) ==
+		    sizeof(u16) * WLAN_MAX_AC)
+			memcpy(sched.aifsn,
+			       nla_data(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_AIFSN]),
+			       sizeof(u16) * WLAN_MAX_AC);
+
+		if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMIN] &&
+		    nla_len(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMIN]) ==
+		    sizeof(u16) * WLAN_MAX_AC)
+			memcpy(sched.cwmin,
+			       nla_data(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMIN]),
+			       sizeof(u16) * WLAN_MAX_AC);
+
+		if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMAX] &&
+		    nla_len(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMAX]) ==
+		    sizeof(u16) * WLAN_MAX_AC)
+			memcpy(sched.cwmax,
+			       nla_data(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_CWMAX]),
+			       sizeof(u16) * WLAN_MAX_AC);
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+		   "TDMA sched : pdev %u type %u id %u bssid %pM tsf %08x:%08x slots %u dur %u intvl %u edca %d\n",
+		   sched.pdev_id, sched.sched_type, sched.sched_id, sched.bssid,
+		   sched.start_time_tsf_high, sched.start_time_tsf_low,
+		   sched.num_busy_slots, sched.busy_slot_dur_ms,
+		   sched.busy_slot_intvl_ms, sched.edca_params_valid);
+
+	return ath12k_wmi_send_tdma_schedule_request(ar, &sched);;
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

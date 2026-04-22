@@ -25,19 +25,26 @@
 #include "me_snoop_extn.h"
 
 /**
- * ath12k_dp_me_tx_ucast_grp(): Check if peer is part of the
- * multicast group in the snoop database. If so, transmit.
+ * ath12k_dp_me_tx_ucast_grp_extn() - Transmit unicast copy for a snooped group member
+ * @dp: Datapath instance
+ * @dp_vif: Datapath vdev/vif context
+ * @dp_link_vif: Link-specific datapath vif context
+ * @peer: Datapath peer candidate to receive the unicast copy
+ * @app_data: ME context (struct ath12k_me_ctx) carrying skb/group and tx bitmap
+ * @msdu_info: MSDU info to be used for TX (filled/consumed by TX path)
  *
- * @dp: Data Path ptr
- * @dp_link_vif : Data path Link specific obj.
- * @dp_peer: DP Peer Object
- * @app_data: Desired App_data sent
+ * Looks up @peer in the multicast snoop group carried in @app_data. If the peer
+ * is present and has not yet been served (tracked via ctx->tx_bmap), this
+ * function marks it served, applies source-address filtering and transmits the
+ * unicast copy via ath12k_dp_me_tx_ucast_peer().
  *
- * Return: Status for MCUC Success/Failure.
+ * Return: 0 if no transmission is performed, otherwise the return value from
+ * ath12k_dp_me_tx_ucast_peer().
  */
 int ath12k_dp_me_tx_ucast_grp_extn(struct ath12k_dp *dp, struct ath12k_dp_vif *dp_vif,
 				   struct ath12k_dp_link_vif *dp_link_vif,
-				   struct ath12k_dp_peer *peer, void *app_data)
+				   struct ath12k_dp_peer *peer, void *app_data,
+				   struct ath12k_dp_tx_msdu_info *msdu_info)
 {
 	struct ath12k_me_ctx *ctx = app_data;
 	union nf_inet_addr src_addr = {0};
@@ -72,7 +79,8 @@ int ath12k_dp_me_tx_ucast_grp_extn(struct ath12k_dp *dp, struct ath12k_dp_vif *d
 	if (!ath12k_me_snoop_filter_src(me_peer, &src_addr))
 		return 0;
 
-	return ath12k_dp_me_tx_ucast_peer(dp, dp_vif, dp_link_vif, peer, ctx);
+	return ath12k_dp_me_tx_ucast_peer(dp, dp_vif, dp_link_vif, peer, ctx,
+					  msdu_info);
 }
 
 static u32 ath12k_me_snoop_get_hash4(struct ath12k_me_db *db, __be32 *addr)

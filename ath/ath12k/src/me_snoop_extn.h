@@ -40,7 +40,8 @@ bool ath12k_me_snoop_filter_src(struct ath12k_me_peer *peer, union nf_inet_addr 
 int ath12k_dp_me_tx_ucast_grp_extn(struct ath12k_dp *dp, struct ath12k_dp_vif *dp_vif,
 				   struct ath12k_dp_link_vif *dp_link_vif,
 				   struct ath12k_dp_peer *peer,
-				   void *app_data)
+				   void *app_data,
+				   struct ath12k_dp_tx_msdu_info *msdu_info)
 {
 	return 0;
 }
@@ -75,7 +76,8 @@ bool ath12k_me_snoop_filter_src(struct ath12k_me_peer *peer, union nf_inet_addr 
 int ath12k_dp_me_tx_ucast_grp_extn(struct ath12k_dp *dp, struct ath12k_dp_vif *dp_vif,
 				   struct ath12k_dp_link_vif *dp_link_vif,
 				   struct ath12k_dp_peer *peer,
-				   void *app_data);
+				   void *app_data,
+				   struct ath12k_dp_tx_msdu_info *msdu_info);
 int ath12k_me_snoop_event_notify(struct notifier_block *nb, unsigned long action, void *data);
 
 void  ath12k_core_me_notifier_register_extn(struct ath12k_base *ab);

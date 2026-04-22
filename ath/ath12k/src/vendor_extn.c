@@ -35,6 +35,8 @@
 #include "rropinfo.h"
 #include "dp_stats_extn.h"
 #include "reg_extn.h"
+#include "dp_mon_extn.h"
+#include "../dp_mon.h"
 #include "../net/mac80211/ieee80211_i.h"
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #include "mesh_util.h"
@@ -3572,6 +3574,47 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			ret = 0;
 		}
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TLV_LOGGER_MODE: {
+		u8 tlv_logger_mode = (u8)value;
+		struct ath12k_pdev_dp *dp_pdev;
+		struct ath12k_pdev_mon_dp_extn *mon_extn = NULL;
+
+		if (arvif->ahvif->vif->type != NL80211_IFTYPE_MONITOR) {
+			ath12k_err(NULL, "requested interface is not a monitor interface!\n");
+			return -EINVAL;
+		}
+		dp_pdev = &ar->dp;
+		if (dp_pdev->dp_mon_pdev)
+			mon_extn = &dp_pdev->dp_mon_pdev->pdev_mon_dp_extn;
+
+		if (tlv_logger_mode != ATH12K_TLV_LOGGER_TX_ENABLED &&
+		    (!mon_extn || !mon_extn->rx_tlv_log))
+			ath12k_info(NULL, "RX Tlv logger not initialized please check hw param");
+		if (tlv_logger_mode != ATH12K_TLV_LOGGER_RX_ENABLED
+		    && (!mon_extn || !mon_extn->tx_tlv_log))
+			ath12k_info(NULL, "TX Tlv logger not initialized please check hw param");
+
+		if (tlv_logger_mode == ATH12K_TLV_LOGGER_DISABLED) {
+			if (mon_extn && mon_extn->rx_tlv_log)
+				mon_extn->rx_tlv_log->tlv_logging_enable = 0;
+			if (mon_extn && mon_extn->tx_tlv_log)
+				mon_extn->tx_tlv_log->tlv_logging_enable = 0;
+		}
+		if (mon_extn && mon_extn->rx_tlv_log) {
+			if (tlv_logger_mode & ATH12K_TLV_LOGGER_RX_ENABLED)
+				mon_extn->rx_tlv_log->tlv_logging_enable = 1;
+			else
+				mon_extn->rx_tlv_log->tlv_logging_enable = 0;
+		}
+		if (mon_extn && mon_extn->tx_tlv_log) {
+			if (tlv_logger_mode & ATH12K_TLV_LOGGER_TX_ENABLED)
+				mon_extn->tx_tlv_log->tlv_logging_enable = 1;
+			else
+				mon_extn->tx_tlv_log->tlv_logging_enable = 0;
+		}
+		ret = 0;
+		break;
+	}
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 				"Un-supported param: %d\n", param);

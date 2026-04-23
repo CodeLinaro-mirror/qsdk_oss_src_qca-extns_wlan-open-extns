@@ -41,9 +41,9 @@ ath12k_wifi8_dp_ipa_rx_pipe_set_rdi(struct ath12k_ipa *ipa_ctx,
 
 static void ath12k_wifi8_dp_ipa_srng_get_rsrc(struct ath12k_base *ab)
 {
-	/* TODO: fill tx_rsc from here */
-
 	ath12k_wifi8_dp_fill_rx_src(ab);
+	ath12k_wifi8_dp_fill_tx_src(ab);
+
 	return;
 }
 
@@ -64,7 +64,6 @@ static void ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp(struct ath12k_ipa *ipa_ctx)
 
 static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 {
-	/* TODO: call TX ring setup from here */
 	int ret = 0;
 	u64 orig_dma_mask;
 
@@ -97,6 +96,12 @@ static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 	dma_set_mask_and_coherent(ab->dev, orig_dma_mask);
 	ath12k_ipa_info(ab, "ath12k IPA RX rings: DMA mask restored to 0x%llx",
 			orig_dma_mask);
+
+	ret = ath12k_wifi8_dp_tx_ring_setup_ipa(ab);
+	if (ret) {
+		ath12k_ipa_err(ab, "failed to set up tx ipa extn rings :%d", ret);
+		goto tx_err;
+	}
 	return ret;
 
 ipa2wbm_idle_buf_err:
@@ -104,11 +109,14 @@ ipa2wbm_idle_buf_err:
 restore_dma_mask:
 	dma_set_mask_and_coherent(ab->dev, orig_dma_mask);
 	return ret;
+tx_err:
+	ath12k_wifi8_dp_rx_ring_free_ipa(ab);
+	return ret;
 }
 
 static int ath12k_wifi8_dp_ipa_srng_cleanup(struct ath12k_base *ab)
 {
-	/* TODO: call TX ring cleanup from here */
+	ath12k_wifi8_dp_tx_ring_cleanup_ipa(ab);
 	ath12k_wifi8_dp_rx_ring_free_ipa(ab);
 	return 0;
 }

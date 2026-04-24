@@ -218,6 +218,62 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 	return -1;
 }
 
+int ath12k_vendor_enable_sounding_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_set_sounding_params_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_set_mu_sounding_params_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+{
+
+int ath12k_vendor_sched_mu_enable(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_sched_ofdma_enable(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_set_nav_override_config_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
+int ath12k_vendor_peer_ulofdma_rtd_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params)
+{
+    return -1;
+}
+
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy,
 					   struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
@@ -335,6 +391,38 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     const void *data,
 				     int data_len);
+
+int ath12k_vendor_enable_sounding_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_set_sounding_params_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_set_mu_sounding_params_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_sched_mu_enable(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_sched_ofdma_enable(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_set_nav_override_config_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_peer_ulofdma_rtd_extn(struct wiphy *wiphy,
+                  struct wireless_dev *wdev,
+                  struct ath12k_wifi_generic_params *params);
 
 extern const struct nla_policy
 ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1];

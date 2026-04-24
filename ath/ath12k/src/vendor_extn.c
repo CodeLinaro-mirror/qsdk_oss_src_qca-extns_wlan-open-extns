@@ -3000,6 +3000,628 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         return ret;
 }
 
+/*
+ *  Enable per-peer sounding interval via WMI
+ */
+int ath12k_vendor_enable_sounding_extn(struct wiphy *wiphy, struct wireless_dev *wdev, struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif = NULL;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar;
+        int ret = -1;
+        u8  mac_addr[ETH_ALEN];
+        u32 enable;
+        u32 vdev_id = 0;
+
+        lockdep_assert_wiphy(wiphy);
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif)
+                return -EINVAL;
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif)
+                return -EINVAL;
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else {
+                if (params->link_id < ATH12K_NUM_MAX_LINKS)
+                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                return -EINVAL;
+        }
+
+        ar = arvif->ar;
+        vdev_id = arvif->vdev_id;
+        rcu_read_unlock();
+
+       if (params->data_len != ETH_ALEN) {
+        ath12k_err(NULL, "Invalid radio MAC address len: %u\n", params->data_len);
+        return -EINVAL;
+       }
+       if (!is_valid_ether_addr(params->data)) {
+               ath12k_err(NULL, "Invalid radio MAC address\n");
+               return -EINVAL;
+       }
+       ether_addr_copy(mac_addr, (u8 *)params->data);
+
+       enable = !!params->value;
+       ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                "hwaddr: %p link: %d, vdev-id : %d, enable: %d\n",
+                 mac_addr, params->link_id, vdev_id, enable);
+
+       ret = ath12k_wmi_set_peer_param(ar, mac_addr, vdev_id, WMI_PEER_PARAM_SOUNDING_ENABLE, enable);
+       if (ret) {
+            ath12k_err(NULL, "WMI FAILED\n");
+       }
+       else {
+            ath12k_err(NULL,"WMI OK\n");
+       }
+       return ret;
+}
+
+/*
+ * Set per-peer SU sounding interval via WMI
+ */
+int ath12k_vendor_set_sounding_params_extn(struct wiphy *wiphy, struct wireless_dev *wdev, struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif = NULL;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar;
+        int ret = -1;
+        u8  mac_addr[ETH_ALEN];
+        u32 interval_ms;
+        u32 vdev_id = 0;
+
+        lockdep_assert_wiphy(wiphy);
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif)
+                return -EINVAL;
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif)
+                return -EINVAL;
+
+        ah = ahvif->ah;
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else {
+                if (params->link_id < ATH12K_NUM_MAX_LINKS)
+                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                return -EINVAL;
+        }
+        ar = arvif->ar;
+        vdev_id = arvif->vdev_id;
+        rcu_read_unlock();
+       if (params->data_len != ETH_ALEN) {
+        ath12k_err(NULL, "Invalid radio MAC address len: %u\n", params->data_len);
+        return -EINVAL;
+       }
+       if (!is_valid_ether_addr(params->data)) {
+               ath12k_err(NULL, "Invalid radio MAC address\n");
+               return -EINVAL;
+       }
+       ether_addr_copy(mac_addr, (u8 *)params->data);
+       interval_ms = params->value;
+       ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                  "hwaddr: %p, link: %d, vdev-id : %d, interval_ms: %d\n",
+                   mac_addr,  params->link_id, vdev_id, interval_ms);
+
+       ret = ath12k_wmi_set_peer_param(ar, mac_addr, vdev_id, WMI_PEER_PARAM_SU_SET_SOUNDING_INTERVAL, interval_ms);
+       if (ret) {
+          ath12k_err(NULL, "WMI FAILED\n");
+       }
+       else {
+       ath12k_err(NULL, "WMI OK\n");
+       }
+       return ret;
+}
+
+/*
+ * Set per-peer MU sounding interval via WMI
+ */
+int ath12k_vendor_set_mu_sounding_params_extn(struct wiphy *wiphy, struct wireless_dev *wdev, struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif = NULL;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar;
+        int ret = -1;
+        u8  mac_addr[ETH_ALEN];
+        u32 interval_ms;
+        u32 vdev_id = 0;
+
+        lockdep_assert_wiphy(wiphy);
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif)
+                return -EINVAL;
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif)
+                return -EINVAL;
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else {
+                if (params->link_id < ATH12K_NUM_MAX_LINKS)
+                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                return -EINVAL;
+        }
+
+        ar = arvif->ar;
+        vdev_id = arvif->vdev_id;
+        rcu_read_unlock();
+
+       if (params->data_len != ETH_ALEN) {
+        ath12k_err(NULL, "Invalid radio MAC address len: %u\n", params->data_len);
+        return -EINVAL;
+       }
+
+       if (!is_valid_ether_addr(params->data)) {
+               ath12k_err(NULL, "Invalid radio MAC address\n");
+               return -EINVAL;
+       }
+
+       ether_addr_copy(mac_addr, (u8 *)params->data);
+       interval_ms = params->value;
+
+       ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                  "hwaddr: %p, link: %d, vdev-id : %d, interval_ms: %d\n",
+                   mac_addr,  params->link_id, vdev_id, interval_ms);
+
+       ret = ath12k_wmi_set_peer_param(ar, mac_addr, vdev_id, WMI_PEER_PARAM_MU_SET_SOUNDING_INTERVAL, interval_ms);
+
+       if (ret) {
+            ath12k_err(NULL,"WMI FAILED\n");
+        }
+       else {
+           ath12k_err(NULL,"WMI OK\n");
+       }
+       return ret;
+}
+
+/*
+ * Enable per-peer Sched mu via WMI
+ */
+int ath12k_vendor_sched_mu_enable(struct wiphy *wiphy,
+                                  struct wireless_dev *wdev,
+                                  struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah;
+        struct ath12k *ar;
+        u8  mac_addr[ETH_ALEN];
+        u32 enable;
+        u32 vdev_id;
+        int ret;
+
+        lockdep_assert_wiphy(wiphy);
+
+        if (!wdev || !params) {
+                ath12k_err(NULL, "Invalid args wdev=%p params=%p\n", wdev, params);
+                return -EINVAL;
+        }
+
+        if (!params->data || params->data_len != ETH_ALEN) {
+                ath12k_err(NULL, "Invalid MAC len=%u\n", params->data_len);
+                return -EINVAL;
+        }
+        if (!is_valid_ether_addr(params->data)) {
+            ath12k_err(NULL, "Invalid MAC %pM\n", (u8 *)params->data);
+            return -EINVAL;
+        }
+        ether_addr_copy(mac_addr, (const u8 *)params->data);
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif) {
+                ath12k_err(NULL, "vif is NULL\n");
+                return -EINVAL;
+        }
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif) {
+                ath12k_err(NULL, "ahvif is NULL\n");
+                return -EINVAL;
+        }
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else if (params->link_id < ATH12K_NUM_MAX_LINKS) {
+                arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                ath12k_err(NULL, "arvif/ar NULL (link=%d)\n", params->link_id);
+                return -EINVAL;
+        }
+
+        ar = arvif->ar;
+        vdev_id = arvif->vdev_id;
+        rcu_read_unlock();
+
+        enable = !!params->value;
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                 "hwaddr: %p link: %d, vdev-id : %d, enable: %d\n",
+                 mac_addr, params->link_id, vdev_id, enable);
+
+        ret = ath12k_wmi_set_peer_param(ar, mac_addr, vdev_id,
+                                        WMI_PEER_PARAM_MU_SCHED_ENABLE,
+                                        enable);
+        if (ret) {
+               ath12k_err(NULL,"WMI FAILED\n");
+        }
+        else {
+            ath12k_err(NULL,"WMI OK\n");
+        }
+        return ret;
+}
+
+/*
+ * Enable Sched ofdma enable via WMI
+ */
+int ath12k_vendor_sched_ofdma_enable(struct wiphy *wiphy,
+                                  struct wireless_dev *wdev,
+                                  struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah;
+        struct ath12k *ar;
+        u8  mac_addr[ETH_ALEN];
+        u32 enable;
+        u32 vdev_id;
+        int ret;
+
+        lockdep_assert_wiphy(wiphy);
+
+        if (!wdev || !params) {
+                ath12k_err(NULL, "Invalid args wdev=%p params=%p\n", wdev, params);
+                return -EINVAL;
+        }
+
+        if (!params->data || params->data_len != ETH_ALEN) {
+                ath12k_err(NULL, "Invalid MAC len=%u\n", params->data_len);
+                return -EINVAL;
+        }
+        if (!is_valid_ether_addr(params->data)) {
+            ath12k_err(NULL, "Invalid MAC %pM\n", (u8 *)params->data);
+            return -EINVAL;
+        }
+        ether_addr_copy(mac_addr, (const u8 *)params->data);
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif) {
+                ath12k_err(NULL, "vif is NULL\n");
+                return -EINVAL;
+        }
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif) {
+                ath12k_err(NULL, "ahvif is NULL\n");
+                return -EINVAL;
+        }
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else if (params->link_id < ATH12K_NUM_MAX_LINKS) {
+                arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                ath12k_err(NULL, "arvif/ar NULL (link=%d)\n", params->link_id);
+                return -EINVAL;
+        }
+
+        ar = arvif->ar;
+        vdev_id = arvif->vdev_id;
+        rcu_read_unlock();
+
+        enable = !!params->value;
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "MU-SCHED RESOLVED: ar=%p vdev_id=%u peer=%pM enable=%u ifidx=%d link=%d\n",
+                   ar, vdev_id, mac_addr, enable, params->ifindex, params->link_id);
+
+        /* Apply via WMI: MU scheduler enable/disable */
+        ret = ath12k_wmi_set_peer_param(ar, mac_addr, vdev_id,
+                                        WMI_PEER_PARAM_OFDMA_SCHED_ENABLE,
+                                        enable);
+        if (ret)
+                ath12k_err(NULL,"WMI FAILED\n");
+        else
+                ath12k_err(NULL,"WMI OK\n");
+        return ret;
+}
+
+
+/*
+ *  Set per-peer Nav_Override_Config via WMI
+ */
+int ath12k_vendor_set_nav_override_config_extn(struct wiphy *wiphy,
+                                               struct wireless_dev *wdev,
+                                               struct ath12k_wifi_generic_params *params)
+{
+    struct ieee80211_vif *vif;
+    struct ath12k_vif *ahvif;
+    struct ath12k_link_vif *arvif = NULL;
+    struct ath12k *ar;
+    u32 status = 0, threshold = 0, cfg;
+    int ret;
+
+
+    if (!wdev || !params) {
+        ath12k_err(NULL, "NAV-SET ERROR: wdev or params NULL\n");
+        return -EINVAL;
+    }
+
+    /*
+     * Correct decode for cfg80211tool mapping:
+     *  - status is encoded in packed data (lower 2 bits)
+     *  - threshold comes from params->value (CLI second argument)
+     */
+    if (params->data && params->data_len >= sizeof(u32)) {
+        u32 v = *(const u32 *)params->data;
+        status = v & 0x3;
+        threshold = v >> 2;
+
+        if (params->value)
+            threshold = params->value;
+
+    }
+    else {
+        ath12k_err(NULL, "NAV-SET ERROR: missing packed data\n");
+        return -EINVAL;
+    }
+
+    if (status > 3) {
+        ath12k_err(NULL, "NAV-SET ERROR: invalid status=%u\n", status);
+        return -EINVAL;
+    }
+
+    cfg = (threshold << 2) | (status & 0x3);
+
+    /* Resolve vif */
+    vif = wdev_to_ieee80211_vif(wdev);
+    if (!vif) {
+        ath12k_err(NULL, "NAV-SET ERROR: vif NULL\n");
+        return -EINVAL;
+    }
+
+    ahvif = (struct ath12k_vif *)vif->drv_priv;
+    if (!ahvif) {
+        ath12k_err(NULL, "NAV-SET ERROR: ahvif NULL\n");
+        return -EINVAL;
+    }
+
+    /* Resolve MLO link */
+    rcu_read_lock();
+    if (params->link_id == INVALID_LINK_ID) {
+        arvif = &ahvif->deflink;
+    } else if (params->link_id < IEEE80211_MLD_MAX_NUM_LINKS) {
+        arvif = rcu_dereference(ahvif->link[params->link_id]);
+    }
+
+    if (!arvif || !arvif->ar) {
+        ath12k_err(NULL,
+            "NAV-SET ERROR: arvif/ar NULL for link=%u\n",
+            params->link_id);
+        rcu_read_unlock();
+        return -EINVAL;
+    }
+
+    ar = arvif->ar;
+    rcu_read_unlock();
+
+    /* Send WMI */
+    ret = ath12k_wmi_pdev_set_param(ar,
+                                    WMI_PDEV_PARAM_NAV_OVERRIDE_CONFIG,
+                                    cfg,
+                                    ar->pdev->pdev_id);
+    if (ret) {
+        ath12k_err(NULL,"WMI FAILED\n");
+        return ret;
+    }
+    else {
+        ath12k_err(NULL, "WMI OK\n");
+    }
+
+    /* Cache for GET */
+    arvif->nav_status = status;
+    arvif->nav_threshold = threshold;
+    return ret;
+}
+
+int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
+                                               struct wireless_dev *wdev,
+                                               struct ath12k_wifi_generic_params *params)
+{
+    struct ieee80211_vif *vif;
+    struct ath12k_vif *ahvif;
+    struct ath12k_link_vif *arvif = NULL;
+    struct sk_buff *skb;
+    u32 combined;
+
+    if (!wdev) {
+        ath12k_err(NULL, "NAV-GET ERROR: wdev NULL\n");
+        return -EINVAL;
+    }
+
+    /* Resolve vif */
+    vif = wdev_to_ieee80211_vif(wdev);
+    if (!vif) {
+        ath12k_err(NULL, "vif NULL\n");
+        return -EINVAL;
+    }
+
+    ahvif = (struct ath12k_vif *)vif->drv_priv;
+    if (!ahvif) {
+        ath12k_err(NULL, "ahvif NULL\n");
+        return -EINVAL;
+    }
+
+    /* Resolve link */
+    if (!params || params->link_id == INVALID_LINK_ID) {
+        arvif = &ahvif->deflink;
+        ath12k_err(NULL, "Using deflink\n");
+    } else if (params->link_id < IEEE80211_MLD_MAX_NUM_LINKS) {
+        rcu_read_lock();
+        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        rcu_read_unlock();
+        ath12k_err(NULL, "Using link=%u\n", params->link_id);
+    }
+
+    if (!arvif) {
+        ath12k_err(NULL, "arvif NULL\n");
+        return -EINVAL;
+    }
+
+    combined = (arvif->nav_status & 0x3) |
+               (arvif->nav_threshold << 2);
+
+    skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
+    if (!skb) {
+        ath12k_err(NULL, "Skb alloc failed\n");
+        return -ENOMEM;
+    }
+
+    /* Generic reply (kernel‑correct) */
+    if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_PARAM_DATA, combined) ||
+        nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_PARAM_LENGTH, sizeof(u32)) ||
+        nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_PARAM_FLAGS, 0)) {
+        kfree_skb(skb);
+        ath12k_err(NULL, "Generic nla_put failed\n");
+        return -EINVAL;
+    }
+
+    /* Tool‑specific attributes (cfg80211tool expects these for ID 74) */
+    if (nla_put_u32(skb, 3 , combined) ||             /* dparam0 */
+        nla_put_u32(skb, 1 , arvif->nav_status) ||    /* value0 */
+        nla_put_u32(skb, 2 , arvif->nav_threshold)) { /* value1 */
+        kfree_skb(skb);
+        ath12k_err(NULL, "tool attr nla_put failed\n");
+        return -EINVAL;
+    }
+
+    return cfg80211_vendor_cmd_reply(skb);
+}
+
+/*
+ * Set Ulofdma_rtd via WMI
+ */
+int ath12k_vendor_peer_ulofdma_rtd_extn(struct wiphy *wiphy,
+                                        struct wireless_dev *wdev,
+                                        struct ath12k_wifi_generic_params *params)
+{
+        struct ieee80211_vif *vif = NULL;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif = NULL;
+        struct ath12k_hw *ah = NULL;
+        struct ath12k *ar;
+        u8  mac_addr[ETH_ALEN];
+        u32 rtd_ms;
+        u32 vdev_id = 0;
+        int ret = -1;
+
+        lockdep_assert_wiphy(wiphy);
+
+        if (!wdev || !params || !params->data) {
+                ath12k_err(NULL, "Invalid input args\n");
+                return -EINVAL;
+        }
+
+        /* Validate MAC */
+        if (params->data_len != ETH_ALEN) {
+                ath12k_err(NULL, "Invalid MAC address len: %u\n", params->data_len);
+                return -EINVAL;
+        }
+        if (!is_valid_ether_addr(params->data)) {
+                ath12k_err(NULL, "Invalid MAC address\n");
+                return -EINVAL;
+        }
+        ether_addr_copy(mac_addr, (u8 *)params->data);
+
+        /* Validate value (0 - 600) */
+        rtd_ms = params->value;
+        if (rtd_ms > 600) {
+                ath12k_err(NULL, "Invalid value %u (range 0..600)\n", rtd_ms);
+                return -EINVAL;
+        }
+
+        vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif)
+                return -EINVAL;
+
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif)
+                return -EINVAL;
+
+        ah = ahvif->ah;
+
+        rcu_read_lock();
+        if (ah && params->link_id == INVALID_LINK_ID) {
+                arvif = &ahvif->deflink;
+        } else {
+                if (params->link_id < ATH12K_NUM_MAX_LINKS)
+                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        }
+        if (!arvif || !arvif->ar) {
+                rcu_read_unlock();
+                ath12k_err(NULL, "arvif/ar NULL (link=%d)\n", params->link_id);
+                return -EINVAL;
+        }
+
+        ar = arvif->ar;
+        vdev_id = arvif->vdev_id;
+        rcu_read_unlock();
+
+        ath12k_dbg(NULL, ATH12K_DBG_CFG,
+                   "UL-RTD extn RESOLVED: ar=%p vdev_id=%u peer=%p rtd=%u ifidx=%d link=%d\n",
+                   ar, vdev_id, mac_addr, rtd_ms, params->ifindex, params->link_id);
+
+        /* Send via WMI */
+        ret = ath12k_wmi_set_peer_param(ar, mac_addr, vdev_id,
+                                        WMI_PDEV_PARAM_UL_OFDMA_RTD,
+                                        rtd_ms);
+        if (ret)
+                ath12k_err(NULL,"WMI FAILED\n");
+        else
+                ath12k_err(NULL,"WMI OK\n");
+
+        return ret;
+}
+
+
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
 {
@@ -3010,14 +3632,13 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 		return -EINVAL;
 	}
 
-	if (!wifi_params->data) {
-		ath12k_err(NULL, "Empty mesh params received\n");
-		return -EINVAL;
-	}
-
 	switch (wifi_params->command) {
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	case QCA_NL80211_VENDOR_WIFI_GENERIC_SUBCMD_MESH_PARAMS:
+		if (!wifi_params->data) {
+			ath12k_err(NULL, "Invalid param command received\n");
+			return -EINVAL;
+		}
 		if (wdev->vap_submode != QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
 			ath12k_err(NULL, "Received command for vap_submode: %d\n"
 				   "Command valid only for mesh vap\n",
@@ -3029,6 +3650,92 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 
 		if (ret) {
 			ath12k_err(NULL,"Failed to set mesh params \n");
+			return ret;
+		}
+		break;
+        case QCA_WLAN_VENDOR_WIFI_PARAM_ENABLE_SOUNDING:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_enable_sounding_extn(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+        case QCA_WLAN_VENDOR_WIFI_PARAM_SU_SND_INTERVAL:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_set_sounding_params_extn(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_MU_SND_INTERVAL:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_set_mu_sounding_params_extn(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_SCHED_MU_ENABLE:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_sched_mu_enable(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_SCHED_OFDMA_ENABLE:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_sched_ofdma_enable(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_SET_NAV_OVERRIDE_CONFIG:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_set_nav_override_config_extn(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+         case QCA_WLAN_VENDOR_WIFI_PARAM_GET_NAV_OVERRIDE_CONFIG:
+		struct ath12k_wifi_generic_params dummy = {0};
+		dummy.link_id = INVALID_LINK_ID;
+		ret = ath12k_vendor_get_nav_override_config_extn(wiphy, wdev, &dummy);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set wifi params \n");
+			return -EINVAL;
+		}
+		break;
+         case QCA_WLAN_VENDOR_WIFI_PARAM_UL_OFDMA_RTD:
+		if (!wifi_params->data) {
+			ath12k_err(NULL,"Invalid param command received\n");
+			return -EINVAL;
+		}
+		ret = ath12k_vendor_peer_ulofdma_rtd_extn(wiphy, wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to ufodma rtd params \n");
 			return ret;
 		}
 		break;

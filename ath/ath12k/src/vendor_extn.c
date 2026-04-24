@@ -6595,6 +6595,67 @@ static int ath12k_vendor_get_rssi_rate_threshold(u8 type, u64 *value)
 	return 0;
 }
 
+static u32 ath12k_vendor_get_supported_band_bitmap(struct ath12k *ar)
+{
+	u32 bands = 0;
+
+	if (!ar)
+		return bands;
+
+	if (ar->mac.sbands[NL80211_BAND_2GHZ].channels &&
+	    ar->mac.sbands[NL80211_BAND_2GHZ].n_channels)
+		bands |= QCA_WLAN_VENDOR_SUPPORTED_BAND_2GHZ;
+
+	if (ar->mac.sbands[NL80211_BAND_5GHZ].channels &&
+	    ar->mac.sbands[NL80211_BAND_5GHZ].n_channels)
+		bands |= QCA_WLAN_VENDOR_SUPPORTED_BAND_5GHZ;
+
+	if (ar->mac.sbands[NL80211_BAND_6GHZ].channels &&
+	    ar->mac.sbands[NL80211_BAND_6GHZ].n_channels)
+		bands |= QCA_WLAN_VENDOR_SUPPORTED_BAND_6GHZ;
+
+	return bands;
+}
+
+static void ath12k_vendor_str_append_token(char *buf, size_t buf_sz,
+				   const char *token)
+{
+	size_t len;
+
+	if (!buf || !buf_sz || !token)
+		return;
+
+	len = strlen(buf);
+	if (len >= buf_sz)
+		return;
+
+	if (len)
+		len += scnprintf(buf + len, buf_sz - len, ", ");
+
+	scnprintf(buf + len, buf_sz - len, "%s", token);
+}
+
+static void ath12k_vendor_log_supported_bands(u32 bands)
+{
+	static const struct ath12k_band_desc band_map[] = {
+		{ QCA_WLAN_VENDOR_SUPPORTED_BAND_2GHZ, "2GHz:1" },
+		{ QCA_WLAN_VENDOR_SUPPORTED_BAND_5GHZ, "5GHz:2" },
+		{ QCA_WLAN_VENDOR_SUPPORTED_BAND_6GHZ, "6GHz:3" },
+	};
+	char band_str[64];
+	int i;
+
+	band_str[0] = '\0';
+	for (i = 0; i < ARRAY_SIZE(band_map); i++) {
+		if (bands & band_map[i].mask)
+			ath12k_vendor_str_append_token(band_str, sizeof(band_str),
+					       band_map[i].token);
+	}
+
+	ath12k_info(NULL, "Supported Frequency Bands: %s\n",
+		    band_str[0] ? band_str : "none");
+}
+
 /* Get link-vif level parameters */
 static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                                           u32 param, u64 *value)
@@ -6795,6 +6856,11 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_PROTECTION_MODE:
 		*value = arvif->vap_cfg.protection_mode;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_SUPPORTED_BANDS:
+		*value = ath12k_vendor_get_supported_band_bitmap(ar);
+		ath12k_vendor_log_supported_bands(*value);
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_MCAST_RATE:

@@ -72,10 +72,9 @@ int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9074(struct ath12k_base *ab)
 
 	tlv_filter.rx_filter = HTT_RX_TLV_FLAGS_RXDMA_RING;
 	tlv_filter.rxmon_disable = true;
-	tlv_filter.enable_fp = 1;
-	tlv_filter.fp_ctrl_filter = FILTER_CTRL_BA_REQ;
-	tlv_filter.fp_data_filter = FILTER_DATA_UCAST | FILTER_DATA_MCAST |
-				    FILTER_DATA_NULL;
+	tlv_filter.enable_fp = 0;
+	tlv_filter.fp_ctrl_filter = 0;
+	tlv_filter.fp_data_filter = 0;
 	tlv_filter.offset_valid = true;
 	tlv_filter.rx_packet_offset = hal_rx_desc_sz;
 

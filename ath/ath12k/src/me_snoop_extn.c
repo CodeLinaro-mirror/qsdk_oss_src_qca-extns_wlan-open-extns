@@ -515,9 +515,9 @@ void ath12k_me_snoop_list_init_extn(struct ath12k_me_snoop_list *list)
  */
 void ath12k_core_me_notifier_register_extn(struct ath12k_base *ab)
 {
-	ab->me_nb.notifier_call = ath12k_me_snoop_event_notify;
-	ab->me_nb.priority = 0;
-	br_mcast_offload_event_notifier_register(&ab->me_nb);
+	ab->me.nb.notifier_call = ath12k_me_snoop_event_notify;
+	ab->me.nb.priority = 0;
+	br_mcast_offload_event_notifier_register(&ab->me.nb);
 }
 
 /**
@@ -526,5 +526,5 @@ void ath12k_core_me_notifier_register_extn(struct ath12k_base *ab)
  */
 void ath12k_core_me_notifier_unregister_extn(struct ath12k_base *ab)
 {
-	br_mcast_offload_event_notifier_unregister(&ab->me_nb);
+	br_mcast_offload_event_notifier_unregister(&ab->me.nb);
 }

@@ -4,12 +4,14 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/fs.h>
 #include <linux/skbuff.h>
 #include <net/cfg80211.h>
 #include <net/mac80211.h>
 #include <net/netlink.h>
 #include "../core.h"
 #include "../debug.h"
+#include "../debugfs.h"
 #include "../reg.h"
 #include "../vendor.h"
 #include "../wmi.h"
@@ -974,4 +976,480 @@ int ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
 
 	kfree(hw_blocklist.chans);
 	return 0;
+}
+
+static u16 ath12k_reg_hw_blocklist_bw_to_mhz_extn(u8 max_bw)
+{
+	switch (max_bw) {
+	case WMI_HOST_CHAN_WIDTH_5:
+		return 5;
+	case WMI_HOST_CHAN_WIDTH_10:
+		return 10;
+	case WMI_HOST_CHAN_WIDTH_20:
+		return 20;
+	case WMI_HOST_CHAN_WIDTH_40:
+		return 40;
+	case WMI_HOST_CHAN_WIDTH_80:
+		return 80;
+	case WMI_HOST_CHAN_WIDTH_160:
+		return 160;
+	case WMI_HOST_CHAN_WIDTH_165:
+		return 165;
+	case WMI_HOST_CHAN_WIDTH_320:
+		return 320;
+	default:
+		return 0;
+	}
+}
+
+static const u16 ath12k_reg_wmi_punc_map_80_extn[] = {
+	0x01, 0x02, 0x04, 0x08
+};
+
+static const u16 ath12k_reg_wmi_punc_map_160_extn[] = {
+	0x01, 0x02, 0x04, 0x08,
+	0x10, 0x20, 0x40, 0x80,
+	0x0C, 0x03, 0xC0, 0x30
+};
+
+static const u16 ath12k_reg_wmi_punc_map_320_extn[] = {
+	0x000C, 0x0003, 0x00C0, 0x0030,
+	0x0C00, 0x0300, 0xC000, 0x3000,
+	0x000F, 0x00F0, 0x0F00, 0xF000,
+	0xF003, 0xF00C, 0xF030, 0xF0C0,
+	0xF300, 0xFC00, 0x003F, 0x00CF,
+	0x030F, 0x0C0F, 0x300F, 0xC00F
+};
+
+static const char *ath12k_reg_hw_blocklist_pwr_mode_name_extn(u8 pwr_mode)
+{
+	switch (pwr_mode) {
+	case WMI_REG_INDOOR_AP:
+		return "LPI";
+	case WMI_REG_STD_POWER_AP:
+		return "SP";
+	case WMI_REG_VLP_AP:
+		return "VLP";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static void
+ath12k_reg_hw_blocklist_get_punc_patterns_extn(u16 bw, const u16 **patterns,
+					       u8 *num_patterns)
+{
+	*patterns = NULL;
+	*num_patterns = 0;
+
+	switch (bw) {
+	case 80:
+		*patterns = ath12k_reg_wmi_punc_map_80_extn;
+		*num_patterns = ARRAY_SIZE(ath12k_reg_wmi_punc_map_80_extn);
+		break;
+	case 160:
+		*patterns = ath12k_reg_wmi_punc_map_160_extn;
+		*num_patterns = ARRAY_SIZE(ath12k_reg_wmi_punc_map_160_extn);
+		break;
+	case 320:
+		*patterns = ath12k_reg_wmi_punc_map_320_extn;
+		*num_patterns = ARRAY_SIZE(ath12k_reg_wmi_punc_map_320_extn);
+		break;
+	default:
+		break;
+	}
+}
+
+static void
+ath12k_reg_hw_blocklist_get_pri_freqs_extn(const struct ath12k_hw_blocklist_fb_chan *fb_chan,
+					   u16 *pri_freqs, u8 max_freqs, u8 *num_freqs)
+{
+	u16 bw;
+	u16 start_freq;
+	u8 max_subch;
+	u8 i;
+
+	*num_freqs = 0;
+	if (!max_freqs)
+		return;
+
+	bw = ath12k_reg_hw_blocklist_bw_to_mhz_extn(fb_chan->max_bw);
+	if (bw < 20)
+		return;
+
+	if (bw == 20) {
+		start_freq = fb_chan->center_freq;
+		max_subch = 1;
+	} else {
+		start_freq = fb_chan->center_freq - (bw / 2) + 10;
+		max_subch = min_t(u8, bw / 20, 16);
+	}
+
+	for (i = 0; i < max_subch; i++) {
+		if (!(fb_chan->pri20_bitmap & BIT(i)))
+			continue;
+		if (*num_freqs >= max_freqs)
+			return;
+		pri_freqs[(*num_freqs)++] = start_freq + (i * 20);
+	}
+}
+
+static void
+ath12k_reg_hw_blocklist_get_punc_patterns_list_extn(u16 bw, u32 punc_bitmap,
+						    u16 *punc_patterns,
+						    u8 max_patterns,
+						    u8 *num_patterns)
+{
+	const u16 *patterns;
+	u8 total_patterns;
+	u8 i;
+
+	*num_patterns = 0;
+	ath12k_reg_hw_blocklist_get_punc_patterns_extn(bw, &patterns,
+						       &total_patterns);
+	if (!patterns || !total_patterns)
+		return;
+
+	for (i = 0; i < total_patterns; i++) {
+		if (!(punc_bitmap & BIT(i)))
+			continue;
+		if (*num_patterns >= max_patterns)
+			return;
+		punc_patterns[(*num_patterns)++] = patterns[i];
+	}
+}
+
+#define ATH12K_HWBL_LINE_BUF_LEN 96
+
+static void
+ath12k_reg_hw_blocklist_print_wrapped_tokens_extn(struct ath12k_base *ab,
+						  const char *row_prefix,
+						  char tokens[][32],
+						  u8 num_tokens)
+{
+	char line[ATH12K_HWBL_LINE_BUF_LEN];
+	int prefix_len = strlen(row_prefix);
+	bool first_line = true;
+	u8 i;
+	int pos = 0;
+
+	if (!num_tokens) {
+		ath12k_info(ab, "%s-\n", row_prefix);
+		return;
+	}
+
+	line[0] = '\0';
+	for (i = 0; i < num_tokens; i++) {
+		int token_len = strlen(tokens[i]) + (pos ? 2 : 0);
+
+		if (pos && pos + token_len >= sizeof(line)) {
+			if (first_line)
+				ath12k_info(ab, "%s%s\n", row_prefix, line);
+			else
+				ath12k_info(ab, "%*s%s\n",
+					    prefix_len, "", line);
+			first_line = false;
+			pos = 0;
+			line[0] = '\0';
+		}
+
+		if (pos)
+			pos += scnprintf(line + pos, sizeof(line) - pos, ", ");
+
+		pos += scnprintf(line + pos, sizeof(line) - pos, "%s", tokens[i]);
+	}
+
+	if (first_line)
+		ath12k_info(ab, "%s%s\n", row_prefix, line);
+	else
+		ath12k_info(ab, "%*s%s\n", prefix_len, "", line);
+}
+
+/* Maximum string length for a single display token (frequency or pattern) */
+#define ATH12K_HWBL_TOKEN_STR_LEN 32
+
+/* Minimum column width for index display in the blocklist table */
+#define ATH12K_HWBL_IDX_MIN_WIDTH 3
+
+static int ath12k_reg_hw_blocklist_idx_width_extn(u32 num_entries)
+{
+	u32 max_idx;
+	int digits = 1;
+
+	if (!num_entries)
+		return ATH12K_HWBL_IDX_MIN_WIDTH;
+
+	max_idx = num_entries - 1;
+	while (max_idx >= 10) {
+		max_idx /= 10;
+		digits++;
+	}
+
+	return max(digits, ATH12K_HWBL_IDX_MIN_WIDTH);
+}
+
+static void
+ath12k_reg_hw_blocklist_free_snapshot_extn(struct ath12k_hw_blocklist_state *snapshot)
+{
+	int i;
+
+	for (i = 0; i < WMI_REG_CURRENT_MAX_AP_TYPE; i++)
+		ath12k_reg_hw_blocklist_free_chans_extn(&snapshot->pwr[i]);
+}
+
+static int
+ath12k_reg_hw_blocklist_snapshot_extn(struct ath12k_base *ab, u8 phy_id,
+				      struct ath12k_hw_blocklist_state *snapshot)
+{
+	struct ath12k_hw_blocklist_state *st;
+	int i;
+	int ret = 0;
+
+	memset(snapshot, 0, sizeof(*snapshot));
+	spin_lock_bh(&ab->base_lock);
+	if (phy_id >= ab->num_radios) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	st = ath12k_reg_hw_blocklist_get_state_extn(ab, phy_id);
+	if (!st) {
+		ret = -ENODATA;
+		goto unlock;
+	}
+
+	snapshot->valid = st->valid;
+	snapshot->complete = st->complete;
+	snapshot->last_cmd = st->last_cmd;
+	snapshot->last_seq = st->last_seq;
+	snapshot->expected_seq = st->expected_seq;
+
+	for (i = 0; i < WMI_REG_CURRENT_MAX_AP_TYPE; i++) {
+		const struct ath12k_hw_blocklist_chans *src = &st->pwr[i];
+		struct ath12k_hw_blocklist_chans *dst = &snapshot->pwr[i];
+
+		dst->nfbchans = src->nfbchans;
+		dst->npcchans = src->npcchans;
+
+		if (src->nfbchans) {
+			u32 fb_len = src->nfbchans * sizeof(*src->fb_chan);
+			dst->fb_chan = kmemdup(src->fb_chan, fb_len, GFP_ATOMIC);
+			if (!dst->fb_chan) {
+				ret = -ENOMEM;
+				goto unlock;
+			}
+		}
+
+		if (src->npcchans) {
+			u32 pc_len = src->npcchans * sizeof(*src->pc_chan);
+			dst->pc_chan = kmemdup(src->pc_chan, pc_len, GFP_ATOMIC);
+			if (!dst->pc_chan) {
+				ret = -ENOMEM;
+				goto unlock;
+			}
+		}
+	}
+
+unlock:
+	spin_unlock_bh(&ab->base_lock);
+
+	if (ret)
+		ath12k_reg_hw_blocklist_free_snapshot_extn(snapshot);
+
+	return ret;
+}
+
+#define ATH12K_HWBL_DISPLAY_MAX_TOKENS 33
+
+/* Buffer sizes for display row formatting */
+#define ATH12K_HWBL_ROW_PREFIX_LEN    128
+#define ATH12K_HWBL_BITMAP_STR_LEN     24
+#define ATH12K_HWBL_MAX_PRI20_SUBCHANS 16
+#define ATH12K_HWBL_MAX_PUNC_VALS      24
+
+static void
+ath12k_reg_display_hwbl_fb_chan_row_extn(struct ath12k_base *ab,
+					 const struct ath12k_hw_blocklist_fb_chan *fb_chan,
+					 u32 idx, int label_width, int idx_width,
+					 char (*tokens)[ATH12K_HWBL_TOKEN_STR_LEN])
+{
+	char row_prefix[ATH12K_HWBL_ROW_PREFIX_LEN];
+	char bitmap_str[ATH12K_HWBL_BITMAP_STR_LEN];
+	u16 pri_freqs[ATH12K_HWBL_MAX_PRI20_SUBCHANS];
+	u8 npri, ntokens, t;
+	u16 bw;
+
+	bw = ath12k_reg_hw_blocklist_bw_to_mhz_extn(fb_chan->max_bw);
+	ath12k_reg_hw_blocklist_get_pri_freqs_extn(fb_chan, pri_freqs,
+						   ARRAY_SIZE(pri_freqs), &npri);
+	scnprintf(bitmap_str, sizeof(bitmap_str), "0x%04x", fb_chan->pri20_bitmap);
+	scnprintf(row_prefix, sizeof(row_prefix),
+		  "%*s%*u | %7u | %11u | %-12s | ",
+		  label_width, "", idx_width, idx, bw,
+		  fb_chan->center_freq, bitmap_str);
+
+	ntokens = 0;
+	for (t = 0; t < npri; t++) {
+		scnprintf(tokens[ntokens], sizeof(tokens[ntokens]), "%u", pri_freqs[t]);
+		ntokens++;
+	}
+
+	ath12k_reg_hw_blocklist_print_wrapped_tokens_extn(ab, row_prefix, tokens, ntokens);
+}
+
+static void
+ath12k_reg_display_hwbl_pc_chan_row_extn(struct ath12k_base *ab,
+					 const struct ath12k_hw_blocklist_pc_chan *pc_chan,
+					 u32 idx, int label_width, int idx_width,
+					 char (*tokens)[ATH12K_HWBL_TOKEN_STR_LEN])
+{
+	char row_prefix[ATH12K_HWBL_ROW_PREFIX_LEN];
+	char bitmap_str[ATH12K_HWBL_BITMAP_STR_LEN];
+	u16 punc_vals[ATH12K_HWBL_MAX_PUNC_VALS];
+	u8 npunc, ntokens, t;
+	u16 bw;
+
+	bw = ath12k_reg_hw_blocklist_bw_to_mhz_extn(pc_chan->max_bw);
+	ath12k_reg_hw_blocklist_get_punc_patterns_list_extn(bw, pc_chan->punc_pat_bmap,
+							    punc_vals,
+							    ARRAY_SIZE(punc_vals), &npunc);
+	scnprintf(bitmap_str, sizeof(bitmap_str), "0x%08x", pc_chan->punc_pat_bmap);
+	scnprintf(row_prefix, sizeof(row_prefix),
+		  "%*s%*u | %7u | %11u | %-18s | ",
+		  label_width, "", idx_width, idx, bw,
+		  pc_chan->center_freq, bitmap_str);
+
+	ntokens = 0;
+	for (t = 0; t < npunc; t++) {
+		scnprintf(tokens[ntokens], sizeof(tokens[ntokens]), "0x%04x", punc_vals[t]);
+		ntokens++;
+	}
+
+	ath12k_reg_hw_blocklist_print_wrapped_tokens_extn(ab, row_prefix, tokens, ntokens);
+}
+
+static void ath12k_reg_display_hw_blocklist_extn(struct ath12k_base *ab, u8 phy_id)
+{
+	struct ath12k_hw_blocklist_state bl_state;
+	const struct ath12k_hw_blocklist_chans *chans;
+	char (*tokens)[ATH12K_HWBL_TOKEN_STR_LEN];
+	static const char fb_label[] = "FULL-BW   : ";
+	int fb_label_width;
+	int pc_label_width;
+	int fb_idx_width;
+	int pc_idx_width;
+	int i;
+	u32 j;
+	int ret;
+
+	if (!ab)
+		return;
+
+	if (phy_id >= ab->num_radios) {
+		ath12k_warn(ab, "hw blocklist display: invalid phy_id %u\n", phy_id);
+		return;
+	}
+
+	tokens = kmalloc_array(ATH12K_HWBL_DISPLAY_MAX_TOKENS, sizeof(*tokens), GFP_KERNEL);
+	if (!tokens) {
+		ath12k_warn(ab, "hw blocklist display: token alloc failed for phy %u\n",
+			    phy_id);
+		return;
+	}
+
+	ret = ath12k_reg_hw_blocklist_snapshot_extn(ab, phy_id, &bl_state);
+	if (ret) {
+		ath12k_warn(ab, "hw blocklist display: snapshot failed for phy %u ret %d\n",
+			    phy_id, ret);
+		goto free_tokens;
+	}
+
+	ath12k_info(ab,
+		    "HW Blocklist Dump | phy=%u valid=%u complete=%u last_cmd=%u last_seq=%u expected_seq=%u\n",
+		    phy_id, bl_state.valid, bl_state.complete, bl_state.last_cmd,
+		    bl_state.last_seq, bl_state.expected_seq);
+
+	fb_label_width = strlen(fb_label);
+	pc_label_width = strlen("PUNCTURED : ");
+
+	for (i = 0; i < WMI_REG_CURRENT_MAX_AP_TYPE; i++) {
+		chans = &bl_state.pwr[i];
+		ath12k_info(ab,
+			    "--------------------------------------------------------------------------------\n");
+		ath12k_info(ab,
+			    "Power Mode: %s (%u) | Full-BW Entries: %u | Punctured Entries: %u\n",
+			    ath12k_reg_hw_blocklist_pwr_mode_name_extn(i),
+			    i, chans->nfbchans, chans->npcchans);
+
+		if (!chans->nfbchans) {
+			ath12k_info(ab, "FULL-BW   : none\n");
+		} else {
+			fb_idx_width = ath12k_reg_hw_blocklist_idx_width_extn(chans->nfbchans);
+			ath12k_info(ab,
+				    "%s%*s | %7s | %11s | %-12s | %s\n",
+				    fb_label, fb_idx_width, "idx", "bw(MHz)",
+				    "center(MHz)", "pri20_bitmap",
+				    "blocked_primary_freqs(MHz)");
+			for (j = 0; j < chans->nfbchans; j++)
+				ath12k_reg_display_hwbl_fb_chan_row_extn(ab,
+									 &chans->fb_chan[j],
+									 j, fb_label_width,
+									 fb_idx_width, tokens);
+		}
+
+		if (!chans->npcchans) {
+			ath12k_info(ab, "PUNCTURED : none\n");
+			continue;
+		}
+
+		pc_idx_width = ath12k_reg_hw_blocklist_idx_width_extn(chans->npcchans);
+		ath12k_info(ab,
+			    "%s%*s | %7s | %11s | %-18s | %s\n",
+			    "PUNCTURED : ", pc_idx_width, "idx", "bw(MHz)",
+			    "center(MHz)", "pattern_idx_bitmap",
+			    "blocked_patterns");
+		for (j = 0; j < chans->npcchans; j++)
+			ath12k_reg_display_hwbl_pc_chan_row_extn(ab,
+								 &chans->pc_chan[j],
+								 j, pc_label_width,
+								 pc_idx_width, tokens);
+	}
+
+	ath12k_info(ab,
+		    "--------------------------------------------------------------------------------\n");
+
+	ath12k_reg_hw_blocklist_free_snapshot_extn(&bl_state);
+
+free_tokens:
+	kfree(tokens);
+}
+
+static ssize_t
+ath12k_read_display_hw_blocklist_extn(struct file *file,
+				      char __user *user_buf,
+				      size_t count, loff_t *ppos)
+{
+	struct ath12k *ar = file->private_data;
+
+	guard(wiphy)(ath12k_ar_to_hw(ar)->wiphy);
+
+	if (*ppos)
+		return 0;
+
+	ath12k_reg_display_hw_blocklist_extn(ar->ab, ar->pdev_idx);
+	*ppos = 1;
+
+	return 0;
+}
+
+static const struct file_operations fops_display_hw_blocklist_extn = {
+	.read = ath12k_read_display_hw_blocklist_extn,
+	.open = simple_open,
+};
+
+void ath12k_debugfs_register_hw_blocklist_extn(struct ath12k *ar)
+{
+	debugfs_create_file("display_hw_blocklist", 0400,
+			    ar->debug.debugfs_pdev, ar,
+			    &fops_display_hw_blocklist_extn);
 }

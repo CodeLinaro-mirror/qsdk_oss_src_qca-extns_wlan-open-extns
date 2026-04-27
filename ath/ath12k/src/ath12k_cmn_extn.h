@@ -731,6 +731,10 @@ ath12k_reg_hw_blocklist_free_extn(struct ath12k_base *ab)
 {
 }
 
+static inline void ath12k_debugfs_register_hw_blocklist_extn(struct ath12k *ar)
+{
+}
+
 static inline bool
 ath12k_wmi_handle_afc_power_info_hwbl_extn(
 		struct ath12k_base *ab, struct sk_buff *skb,
@@ -1074,6 +1078,12 @@ void ath12k_reg_hw_blocklist_free_extn(struct ath12k_base *ab);
 bool ath12k_wmi_handle_afc_power_info_hwbl_extn(struct ath12k_base *ab,
 						struct sk_buff *skb,
 						struct ath12k_afc_info *afc_info);
+
+/**
+ * ath12k_debugfs_register_hw_blocklist_extn - Register HW blocklist debugfs entries
+ * @ar: Pointer to the ath12k radio structure
+ */
+void ath12k_debugfs_register_hw_blocklist_extn(struct ath12k *ar);
 
 /**
  * ath12k_wmi_handle_reg_chan_list_hwbl_extn - Handle HW blocklist in reg chan list event

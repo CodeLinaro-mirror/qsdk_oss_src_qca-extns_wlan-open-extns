@@ -60,8 +60,12 @@ void ath12k_wifi8_mgmt_highpri_service_srng_extn(struct ath12k_base *ab,
 void ath12k_wifi8_mgmt_highpri_workqueue_extn(struct work_struct *w)
 {
 	struct ath12k_mgmt_irq_grp *irq_grp = from_work(irq_grp, work, intr_wq);
+	struct ath12k_base *ab = irq_grp->ab;
 
-	ath12k_wifi8_mgmt_highpri_service_srng_extn(irq_grp->ab, irq_grp);
+	if (test_bit(ATH12K_FLAG_UMAC_RECOVERY_IN_PROGRESS, &ab->dev_flags))
+		return;
+
+	ath12k_wifi8_mgmt_highpri_service_srng_extn(ab, irq_grp);
 
 	ath12k_mgmt_irq_grp_enable(irq_grp);
 }
@@ -69,8 +73,12 @@ void ath12k_wifi8_mgmt_highpri_workqueue_extn(struct work_struct *w)
 void ath12k_wifi8_mgmt_highpri_tasklet_extn(struct tasklet_struct *t)
 {
 	struct ath12k_mgmt_irq_grp *irq_grp = from_tasklet(irq_grp, t, intr_tq);
+	struct ath12k_base *ab = irq_grp->ab;
 
-	ath12k_wifi8_mgmt_highpri_service_srng_extn(irq_grp->ab, irq_grp);
+	if (test_bit(ATH12K_FLAG_UMAC_RECOVERY_IN_PROGRESS, &ab->dev_flags))
+		return;
+
+	ath12k_wifi8_mgmt_highpri_service_srng_extn(ab, irq_grp);
 
 	ath12k_mgmt_irq_grp_enable(irq_grp);
 }
@@ -93,6 +101,16 @@ int ath12k_wifi8_mgmt_rx_ring_setup_extn(struct ath12k_base *ab)
 	}
 
 	return 0;
+}
+
+void ath12k_mgmt_srng_hw_disable_extn(struct ath12k_base *ab)
+{
+	struct ath12k_mgmt *mgmt = ab->mgmt;
+	struct ath12k_mgmt_wifi8 *mgmt_wifi8 = ath12k_get_mgmt_wifi8(mgmt);
+	struct mgmt_srng_extn *rx_highpri_ring =
+		&mgmt_wifi8->mgmt_wifi8_extn.reo_dst_highpri_rx_ring;
+
+	ath12k_mgmt_srng_hw_disable(ab, (struct mgmt_srng *)rx_highpri_ring);
 }
 
 void ath12k_wifi8_mgmt_rx_ring_free_extn(struct ath12k_base *ab)

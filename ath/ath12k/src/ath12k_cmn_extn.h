@@ -635,6 +635,11 @@ int ath12k_wifi8_mgmt_rx_ring_setup_extn(struct ath12k_base *ab)
 	return -1;
 }
 
+void ath12k_mgmt_srng_hw_disable_extn(struct ath12k_base *ab)
+{
+
+}
+
 void ath12k_wifi8_mgmt_rx_ring_free_extn(struct ath12k_base *ab)
 {
 }
@@ -1057,6 +1062,8 @@ int ath12k_mgmt_srng_setup_extn(struct ath12k_base *ab, enum hal_ring_type type,
  * Return: 0 on success, error otherwise
  */
 int ath12k_wifi8_mgmt_rx_ring_setup_extn(struct ath12k_base *ab);
+
+void ath12k_mgmt_srng_hw_disable_extn(struct ath12k_base *ab);
 
 /**
  * ath12k_wifi8_mgmt_rx_ring_free_extn - Free driver private mgmt rings

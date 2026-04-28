@@ -9,6 +9,7 @@
 #include "../../../core.h"
 #include "../../dp.h"
 #include "../../hal.h"
+#include "../../../qcn_extns/ipa/dp_ipa.h"
 
 /**
  * enum ath12k_dp_wifi8_ipa2wbm_ring_e - IPA to WBM ring types

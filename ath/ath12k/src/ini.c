@@ -949,6 +949,7 @@ ath12k_cfg_parse_512m_band_section(struct ath12k_base *ab,
 		ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
 	}
 }
+#endif
 
 /**
  * ath12k_cfg_parse_generic_band_section - Parse generic band section
@@ -957,7 +958,6 @@ ath12k_cfg_parse_512m_band_section(struct ath12k_base *ab,
  * @pdev_idx: pdev index
  * Return: void
  */
-#else
 static void
 ath12k_cfg_parse_generic_band_section(struct ath12k_base *ab,
 				       char *ini_buf,
@@ -1000,7 +1000,7 @@ ath12k_cfg_parse_generic_band_section(struct ath12k_base *ab,
 		ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
 	}
 }
-#endif
+
 /**
  * ath12k_cfg_parse_section_store - Parse the section to populate cfg store
  * @ab: reference to ath12_base
@@ -1442,12 +1442,11 @@ void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 
 	/* Parse sections for each pdev */
 	for (i = 0; i < ab->num_radios; i++) {
+		ath12k_cfg_parse_generic_band_section(ab, ini_buf, i);
 #if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
 		ath12k_cfg_parse_256m_band_section(ab, ini_buf, i);
 #elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
 		ath12k_cfg_parse_512m_band_section(ab, ini_buf, i);
-#else
-		ath12k_cfg_parse_generic_band_section(ab, ini_buf, i);
 #endif
 	}
 }

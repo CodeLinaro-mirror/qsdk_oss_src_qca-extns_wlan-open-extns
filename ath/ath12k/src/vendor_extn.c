@@ -29,6 +29,7 @@
 #include "../telemetry_agent_if.h"
 #include "../reg.h"
 #include "dcs_extn.h"
+#include "cbs_extn.h"
 #include "rropinfo.h"
 #include "dp_stats_extn.h"
 #include "reg_extn.h"
@@ -8787,6 +8788,10 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 	struct ath12k *ar;
 	struct ath12k_cbs_scan_params cbs = {0};
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+	struct ath12k_link_vif *arvif = NULL;
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+	struct ath12k_hw *ah;
 	struct genl_info *info;
 	struct nlattr *freq_attr;
 	u32 *freq_list = NULL;
@@ -8806,6 +8811,40 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 	info = rdev->cur_cmd_info;
 	if (info && info->attrs[NL80211_ATTR_MLO_LINK_ID])
 		cbs.link_id = nla_get_u8(info->attrs[NL80211_ATTR_MLO_LINK_ID]);
+
+	/* Get vif and arvif from wdev */
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif) {
+		ath12k_err(NULL, "CBS: failed to get vif from wdev\n");
+		return -EINVAL;
+	}
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+	if (!ahvif) {
+		ath12k_err(NULL, "CBS: failed to get ahvif from vif\n");
+		return -EINVAL;
+	}
+
+	ah = ahvif->ah;
+
+	rcu_read_lock();
+	if (ah && cbs.link_id == INVALID_LINK_ID) {
+		arvif = &ahvif->deflink;
+	} else {
+		if (cbs.link_id < ATH12K_NUM_MAX_LINKS)
+			arvif = rcu_dereference(ahvif->link[cbs.link_id]);
+	}
+	if (!arvif || !arvif->ar) {
+		rcu_read_unlock();
+		ath12k_err(NULL, "CBS: failed to get arvif (link=%d)\n", cbs.link_id);
+		return -EINVAL;
+	}
+	cbs.arvif = arvif;
+	rcu_read_unlock();
+
+	ar = ath12k_get_ar_from_wdev(wdev, cbs.link_id);
+	if (!ar)
+		return -EINVAL;
 
 	if (tb[QCA_WLAN_VENDOR_ATTR_SCAN_RESTTIME])
 		cbs.resttime = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_SCAN_RESTTIME]);
@@ -8881,7 +8920,9 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 
 	kfree(ar->ar_extn.cbs_params.freq_list);
 	memcpy(&ar->ar_extn.cbs_params, &cbs, sizeof(ar->ar_extn.cbs_params));
-	return 0;
+
+	ret = ath12k_cbs_start(ar, &cbs);
+	return ret;
 }
 
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,

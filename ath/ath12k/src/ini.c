@@ -1161,6 +1161,7 @@ int ath12k_cfg_get_ini_file_name(u32 target_type, struct ath12k_ini_file *ini)
 		ini->internal = "QCN6432_i.ini";
 		break;
 	case ATH12K_HW_QCN9625_HW10:
+	case ATH12K_HW_QCN9625_HW20:
 		ini->external = "QCN9625.ini";
 		ini->internal = "QCN9625_i.ini";
 		break;

@@ -11,6 +11,8 @@
 #include "../../hal.h"
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 
+#define ATH12K_DP_WIFI8_REO2SW5_RDI	7
+
 /**
  * enum ath12k_dp_wifi8_ipa2wbm_ring_e - IPA to WBM ring types
  * @ATH12K_DP_WIFI8_IPA2WBM_IPA: ring given to IPA for refill

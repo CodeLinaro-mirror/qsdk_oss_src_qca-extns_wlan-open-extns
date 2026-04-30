@@ -93,22 +93,28 @@ void ath12k_dp_ipa_rx_error_stats(struct ath12k_pdev_dp *dp_pdev,
 		return;
 
 	ar = dp_pdev->ar;
-	if (!ar && !ar->fw_stats.en_vdev_stats_ol)
+	if (!ar || !ar->fw_stats.en_vdev_stats_ol)
 		return;
 
 	rcu_read_lock();
 	link_peer = ath12k_dp_link_peer_find_by_peerid_index(dp_pdev->dp, dp_pdev,
 							     rxcb->peer_id);
-	if (!link_peer)
+	if (!link_peer) {
+		rcu_read_unlock();
 		return;
+	}
 	ahvif = ath12k_vif_to_ahvif(link_peer->vif);
 
-	if (!ahvif)
+	if (!ahvif) {
+		rcu_read_unlock();
 		return;
+	}
 	struct ath12k_link_vif *arvif = rcu_dereference(ahvif->link[link_id]);
 
-	if (!arvif)
+	if (!arvif) {
+		rcu_read_unlock();
 		return;
+	}
 	err = &arvif->extn.stats->rx.err;
 	switch (rxcb->err_rel_src) {
 	case HAL_WBM_REL_SRC_MODULE_REO:

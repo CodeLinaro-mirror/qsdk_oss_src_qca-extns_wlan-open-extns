@@ -4001,13 +4001,15 @@ int ath12k_ipa_send_intrabss_enable_disable(struct ath12k_base *ab,
 		return -EINVAL;
 	}
 
-	rcu_read_lock();
-	struct ath12k *ar = ath12k_mac_get_ar_by_vdev_id(ab, params->vdev_id);
+	struct ath12k *ar;
 	int ret;
+
+	rcu_read_lock();
+	ar = ath12k_mac_get_ar_by_vdev_id(ab, params->vdev_id);
+	rcu_read_unlock();
 
 	if (!ar) {
 		ath12k_warn(ab, "Invalid vdev id %d\n", params->vdev_id);
-		rcu_read_unlock();
 		return -EINVAL;
 	}
 	ret = ath12k_wmi_vdev_set_param_cmd(ar, params->vdev_id,
@@ -4016,10 +4018,8 @@ int ath12k_ipa_send_intrabss_enable_disable(struct ath12k_base *ab,
 	if (ret) {
 		ath12k_warn(ab, "Failed to set param for vdev %d: %d\n",
 			    params->vdev_id, ret);
-		rcu_read_unlock();
 		return ret;
 	}
-	rcu_read_unlock();
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_ipa_send_intrabss_enable_disable);
@@ -4033,13 +4033,15 @@ ath12k_ipa_send_uc_offload_enable_disable(struct ath12k_base *ab,
 		return -EINVAL;
 	}
 
-	rcu_read_lock();
-	struct ath12k *ar = ath12k_mac_get_ar_by_vdev_id(ab, params->vdev_id);
+	struct ath12k *ar;
 	int ret;
+
+	rcu_read_lock();
+	ar = ath12k_mac_get_ar_by_vdev_id(ab, params->vdev_id);
+	rcu_read_unlock();
 
 	if (!ar) {
 		ath12k_warn(ab, "Invalid vdev id %d\n", params->vdev_id);
-		rcu_read_unlock();
 		return -EINVAL;
 	}
 	ret = ath12k_wmi_ipa_offload_enable_disable_param_cmd(ar, params->vdev_id,
@@ -4049,10 +4051,8 @@ ath12k_ipa_send_uc_offload_enable_disable(struct ath12k_base *ab,
 		ath12k_warn(ab,
 			    "Failed to set IPA offload status for vdev %d: %d\n",
 			    params->vdev_id, ret);
-		rcu_read_unlock();
 		return ret;
 	}
-	rcu_read_unlock();
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_ipa_send_uc_offload_enable_disable);
@@ -4218,13 +4218,15 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 	struct ath12k_link_vif *arvif;
 	struct ieee80211_vif *vif;
 	struct wireless_dev *wdev;
-	struct net_device *dev;
+	struct net_device *dev = NULL;
 	struct ath12k_dp *dp;
 	struct ath12k_pdev_dp *dp_pdev;
 	struct ath12k_wlan_ipa_priv *ipa_ctx;
 	struct wlan_ipa_iface_context *if_ctx;
+	u8 peer_addr[ETH_ALEN];
 	bool mlo;
-	int link_id;
+	int link_id = -1;
+	bool do_report = false;
 
 	rcu_read_lock();
 
@@ -4264,17 +4266,24 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 	if (!dp_link_peer->mlo || dp_link_peer->primary_link) {
 		link_id = mlo ? dp_link_peer->link_id : -1;
 
-		ath12k_info(ab, "send rx_unexpected_4addr NL to hostapd mac=%pM link_id=%d",
-			    dp_link_peer->dp_peer->addr, link_id);
-		if (!cfg80211_rx_unexpected_4addr_frame(dev, dp_link_peer->dp_peer->addr,
-							GFP_ATOMIC, link_id))
-			ath12k_err(ab, "failed to send rx_unexpected_4addr NL");
+		ether_addr_copy(peer_addr, dp_link_peer->dp_peer->addr);
+		dev_hold(dev);
+		do_report = true;
 
 		ath12k_ipa_enqueue_evt(WLAN_CLIENT_CONNECT_EX, arvif, mac_addr,
 				       mlo);
 	}
 exit:
 	rcu_read_unlock();
+
+	if (do_report) {
+		ath12k_info(ab, "send rx_unexpected_4addr NL to hostapd mac=%pM link_id=%d",
+			    peer_addr, link_id);
+		if (!cfg80211_rx_unexpected_4addr_frame(dev, peer_addr,
+							GFP_ATOMIC, link_id))
+			ath12k_err(ab, "failed to send rx_unexpected_4addr NL");
+		dev_put(dev);
+	}
 }
 
 /**
@@ -4445,7 +4454,6 @@ static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
 
 	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
 	ipa_ctx->stats.sent_to_mac++;
-
 	rcu_read_unlock();
 	return;
 drop:

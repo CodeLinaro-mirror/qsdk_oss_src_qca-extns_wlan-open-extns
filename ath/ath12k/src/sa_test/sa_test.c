@@ -82,6 +82,23 @@ static int sa_init_radio_params(struct smartantenna_params *sa_params,
 	return SA_PARALLEL_MODE;
 }
 
+/* GPIO pins for Smart Antenna is specific to board design.
+ * User can create own mechanism of feeding these GPIOs.
+ * During Radio Init, driver requests to get GPIOs. That can be
+ * packed and sent back in response.
+ */
+static void sa_set_gpio_config(struct ath12k_sa_gpio_config *cfg)
+{
+	cfg->gpio_pin[0] = 0;
+	cfg->gpio_pin[1] = 0;
+	cfg->gpio_pin[2] = 0;
+	cfg->gpio_pin[3] = 0;
+	cfg->gpio_func[0] = 0;
+	cfg->gpio_func[1] = 0;
+	cfg->gpio_func[2] = 0;
+	cfg->gpio_func[3] = 0;
+}
+
 static void sa_reset_global_training_param(void)
 {
 	u8 i;
@@ -100,11 +117,11 @@ static int sa_test_init(struct ath12k_sa_config *cfg, int new_init)
 	struct radio_config *radio;
 
 	if (!cfg) {
-		SA_DEBUG_PRINT(SA_DEBUG_LVL1, 0, "Invalid cfg pointer!");
+		SA_DEBUG_PRINT(0, 0, "Invalid cfg pointer!");
 		return -1;
 	}
 	if (cfg->radio_id >= SA_MAX_RADIOS) {
-		SA_DEBUG_PRINT(SA_DEBUG_LVL1, 0, "Invalid Radio ID %u",
+		SA_DEBUG_PRINT(0, 0, "Invalid Radio ID %u",
 			       cfg->radio_id);
 		return -1;
 	}
@@ -116,6 +133,7 @@ static int sa_test_init(struct ath12k_sa_config *cfg, int new_init)
 		radio->init_done = 1;
 		radio->sa_dbg_level = SA_DEBUG_LVL1;
 		radio->default_antenna = SA_DEFAULT_ANTENNA;
+		sa_set_gpio_config(&radio->gpio_cfg);
 		sa_reset_global_training_param();
 	}
 
@@ -239,19 +257,15 @@ static int sa_test_peer_connect(void **ccp, struct ath12k_sa_node_info *node_inf
 		return -1;
 
 	if (!*ccp) {
-		node = kzalloc(sizeof(*node), GFP_KERNEL);
+		/* Called from IRQ context, hence Atomic */
+		node = kzalloc(sizeof(*node), GFP_ATOMIC);
 		*ccp = node;
 		if (!node)
 			return -1;
 	} else {
 		node = *ccp;
 		SA_DEBUG_PRINT(SA_DEBUG_LVL1, node->node_info.radio_id,
-			" Called with non NULL ccp, Mac: %pM RadioId: %d max bw:"
-			" %d NSS(TX,RX): (%d,%d) opmode: %d channel: %d band : %d\n",
-			node_info->mac_addr, node_info->radio_id,
-			node_info->max_ch_bw, node_info->nss_tx,
-			node_info->nss_rx, node_info->opmode,
-			node_info->chan_num, node_info->band);
+			       "Called with non NULL ccp\n");
 	}
 	memcpy(&node->node_info, node_info, sizeof(*node_info));
 	radio = &g_sa.radio[node->node_info.radio_id];
@@ -261,12 +275,12 @@ static int sa_test_peer_connect(void **ccp, struct ath12k_sa_node_info *node_inf
 	radio->nodes_connected++;
 	radio->node_count_per_ant[node->train_info.previous_selected_antenna]++;
 	SA_DEBUG_PRINT(SA_DEBUG_LVL2, node->node_info.radio_id,
-		" Mac: %pM RadioId: %d max bw: %d NSS(TX,RX): (%d,%d) opmode: %d "
+		"Mac: %pM RadioId: %d max bw: %d NSS(TX,RX): (%d,%d) opmode: %d "
 		"channel: %d band: %d\n", node_info->mac_addr, node_info->radio_id,
 		node_info->max_ch_bw, node_info->nss_tx, node_info->nss_rx,
 		node_info->opmode, node_info->chan_num, node_info->band);
 	sa_print_ratecode(node, 0, true);
-	for (i = 0; i < SA_NUM_BW; i++)
+	for (i = 0; i <= node_info->max_ch_bw; i++)
 		sa_print_ratecode(node, i, false);
 
 	return 0;
@@ -284,31 +298,74 @@ static int sa_test_peer_disconnect(void *ccp)
 	radio->nodes_connected--;
 	radio->node_count_per_ant[node->train_info.previous_selected_antenna]--;
 	SA_DEBUG_PRINT(SA_DEBUG_LVL2, node->node_info.radio_id,
-		" Mac: %pM RadioId: %d max bw: %d NSS(TX,RX): (%d,%d) opmode: %d "
-		"channel: %d band: %d\n", node->node_info.mac_addr,
-		node->node_info.radio_id, node->node_info.max_ch_bw,
-		node->node_info.nss_tx, node->node_info.nss_rx,
-		node->node_info.opmode, node->node_info.chan_num,
-		node->node_info.band);
+		       "Mac: %pM RadioId: %d channel: %d band: %d\n",
+		       node->node_info.mac_addr, node->node_info.radio_id,
+		       node->node_info.chan_num, node->node_info.band);
 
 	kfree(node);
 
 	return 0;
 }
 
-static int sa_test_update_txfeedback(void *ccp, struct ath12k_sa_tx_feedback *fb, u8 *status)
+static int sa_test_update_txfeedback(void *ccp,
+				     struct ath12k_sa_tx_feedback *fb,
+				     u8 *status)
 {
-	if (status)
-		*status = 0;
-	SA_DEBUG_PRINT(SA_DEBUG_LVL1, 0, "SA Test: update_txfeedback");
+	struct sa_node_ccp *node = ccp;
+
+	if (!node || !fb || !status)
+		return -1;
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL4, node->node_info.radio_id,
+		       "SA Test: Mac: %pM nFrame:%d nBad:%d Rate:[0x%x] "
+		       "RateIdx:%d TxAntenna:0x%06x RSSI:[%d %d %d %d] "
+		       "Ratemaxphy:[0x%03x|0x%03x|0x%03x|0x%03x|0x%03x] "
+		       "SR:[%d %d %d %d %d %d] LR:[%d %d %d %d %d %d] "
+		       "Trainpkt:%d Goodput:%d\n", node->node_info.mac_addr,
+		       fb->num_packets, fb->num_bad, fb->rate_mcs[0],
+		       fb->rate_index, fb->tx_antenna[0], fb->rssi[0],
+		       fb->rssi[1], fb->rssi[2], fb->rssi[3], fb->ratemaxphy[0],
+		       fb->ratemaxphy[1], fb->ratemaxphy[2], fb->ratemaxphy[3],
+		       fb->ratemaxphy[4], fb->nshort_retries[0],
+		       fb->nshort_retries[1], fb->nshort_retries[2],
+		       fb->nshort_retries[3], fb->nshort_retries[4],
+		       fb->nshort_retries[5], fb->nlong_retries[0],
+		       fb->nlong_retries[1], fb->nlong_retries[2],
+		       fb->nlong_retries[3], fb->nlong_retries[4],
+		       fb->nlong_retries[5], fb->is_trainpkt, fb->goodput);
+
 	return 0;
 }
 
-static int sa_test_update_rxfeedback(void *ccp, struct ath12k_sa_rx_feedback *fb, u8 *status)
+static int sa_test_update_rxfeedback(void *ccp,
+				     struct ath12k_sa_rx_feedback *fb,
+				     u8 *status)
 {
-	if (status)
-		*status = 0;
-	SA_DEBUG_PRINT(SA_DEBUG_LVL1, 0, "SA Test: update_rxfeedback");
+	struct sa_node_ccp *node = ccp;
+	u8 chain, bw;
+
+	if (!node || !fb || !status)
+		return -1;
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL5, node->node_info.radio_id,
+		       "SA Test: Mac: %pM Rate:0x%x RateIdx:%d Antenna:0x%06x npakcets:%d",
+		       node->node_info.mac_addr, fb->rx_rate_mcs,
+		       fb->rx_rate_index, fb->rx_antenna, fb->npackets);
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL6, node->node_info.radio_id,
+		       "Rssi   bw0 bw1 bw2 bw3");
+	for (chain = 0; chain < SA_MAX_RSSI_CHAINS; chain++) {
+		for (bw = 0; bw < SA_MAX_BW; bw++) {
+			SA_DEBUG_PRINT(SA_DEBUG_LVL6, node->node_info.radio_id,
+				       "\tChain%d [%d][%d][%d][%d]", chain,
+				       fb->rx_rssi[chain][bw],
+				       fb->rx_rssi[chain][bw + 1],
+				       fb->rx_rssi[chain][bw + 2],
+				       fb->rx_rssi[chain][bw + 3]);
+			bw += 3;
+		}
+	}
+
 	return 0;
 }
 
@@ -504,13 +561,13 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 	if (params->radio_id >= SA_MAX_RADIOS)
 		return -1;
 
-	SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
-		       "SA Test: set_param type=%u id=%u val=%u",
-		       params->param_type, params->param_id, params->param_value);
-
 	radio = &g_sa.radio[params->radio_id];
 	if (!radio->init_done)
 		return -1;
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+		       "SA Test: set_param type=%u id=%u val=0x%x",
+		       params->param_type, params->param_id, params->param_value);
 
 	sa_params = &radio->sa_params;
 
@@ -1012,6 +1069,31 @@ static int sa_test_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th)
 	return 0;
 }
 
+static int
+sa_test_get_gpio_config(u8 radio_id, struct ath12k_sa_gpio_config *gpio_cfg)
+{
+	struct radio_config *radio;
+	u8 i;
+
+	if (!gpio_cfg)
+		return -1;
+
+	if (radio_id >= SA_MAX_RADIOS)
+		return -1;
+
+	radio = &g_sa.radio[radio_id];
+
+	for (i = 0; i < SA_MAX_GPIO_PINS; i++)
+		gpio_cfg->gpio_pin[i] = radio->gpio_cfg.gpio_pin[i];
+	for (i = 0; i < SA_MAX_GPIO_FUNCS; i++)
+		gpio_cfg->gpio_func[i] = radio->gpio_cfg.gpio_func[i];
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL1, radio_id,
+		       "SA Test: GIPOs To be fed by Customer Algo module;\n");
+
+	return 0;
+}
+
 static int __init sa_test_module_init(void)
 {
 	int ret;
@@ -1034,6 +1116,7 @@ static int __init sa_test_module_init(void)
 	sa_ops.sa_get_param = sa_test_get_param;
 	sa_ops.sa_get_node_config = sa_test_get_node_config;
 	sa_ops.sa_get_ext_traininginfo = sa_test_get_ext_traininginfo;
+	sa_ops.sa_get_gpio_config = sa_test_get_gpio_config;
 
 	ret = ath12k_register_smart_ant_ops(&sa_ops);
 	if (ret)

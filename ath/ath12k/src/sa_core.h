@@ -39,10 +39,14 @@
  * 1 for Peer and 0 for Radio
  */
 #define SA_PARM_TYPE_SHIFT		24
+#define SA_MASK_LOWER_NIBBLE		0x0f
+#define SA_NIBBLE_BITS			4
+#define SA_MAX_COMB_FB			2
 
 /* Forward declaration */
 struct ath12k_link_vif;
 struct ath12k_link_sta;
+struct ath12k_wmi_mac_addr_params;
 
 enum sa_state {
 	SA_DEFAULT_STATE,

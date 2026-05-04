@@ -270,6 +270,12 @@ struct ath12k_link_sta_extn {
  * @wlan_intf: WLAN interference structure.
  * @intf_detect_cnt: Interefernce detection counter.
  * @samp_cnt: Sample counter.
+ * @he_mcs_12_13_peer_rx_cap: Intersected peer HE MCS 12/13 RX capability.
+ *   bits[7:0]  = L80 NSS bitmap (BW <= 80 MHz) → mcs_set bits[23:16]
+ *   bits[15:8] = G80 NSS bitmap (BW >  80 MHz) → mcs_set bits[31:24]
+ * @he_mcs_12_13_peer_tx_cap: Intersected peer HE MCS 12/13 TX capability.
+ *   Interpretation is same as @he_mcs_12_13_peer_rx_cap.
+ * @he_mcs_12_13_radio_cap: Radio capability for HE MCS 12/13 support.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -284,6 +290,9 @@ struct ath12k_extn {
 	struct wlan_intf_extn wlan_intf;
 	u8 intf_detect_cnt;
 	u8 samp_cnt;
+	u16 he_mcs_12_13_peer_rx_cap;
+	u16 he_mcs_12_13_peer_tx_cap;
+	u16 he_mcs_12_13_radio_cap;
 };
 
 /**

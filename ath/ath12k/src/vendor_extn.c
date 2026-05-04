@@ -3992,6 +3992,132 @@ int ath12k_vendor_peer_ulofdma_rtd_extn(struct wiphy *wiphy,
         return ret;
 }
 
+/**
+ * ath12k_vendor_get_he_mcs_12_13_cap - Read pdev HE MCS 12/13 capability.
+ * @ah:        ath12k_hw instance
+ * @tb:        parsed netlink attribute table
+ * @skb:       reply skb to fill
+ *
+ * Reads the pdev HE MCS 12/13 hardware capability from
+ * (U32 bits)band_cap->he_cap_info[1] bits[31:16] (the extended HE MAC cap
+ * word populated by firmware.
+ *
+ * Format returned (2 bytes via GENERIC_DATA):
+ *   byte[0] = bits[23:16] = L80 NSS bitmap (<=80 MHz)
+ *   byte[1] = bits[31:24] = G80 NSS bitmap (>80 MHz)
+ *
+ * Returns 0 on success, negative error code on failure.
+ */
+static int ath12k_vendor_get_he_mcs_12_13_cap(struct ath12k_hw *ah, struct nlattr **tb,
+					      u64 *value)
+{
+	struct ath12k *ar;
+	struct ath12k_band_cap *cap_band;
+	enum nl80211_band band;
+	u8 radio_idx;
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]) {
+		ath12k_err(NULL, "HE MCS 12/13: radio index not specified\n");
+		return -EINVAL;
+	}
+
+	radio_idx = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+	if (radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "HE MCS 12/13: invalid radio index %u\n", radio_idx);
+		return -EINVAL;
+	}
+
+	ar = &ah->radio[radio_idx];
+	if (ar->pdev->cap.supported_bands & BIT(NL80211_BAND_5GHZ))
+		band = NL80211_BAND_5GHZ;
+	else if (ar->pdev->cap.supported_bands & BIT(NL80211_BAND_6GHZ))
+		band = NL80211_BAND_6GHZ;
+	else
+		band = NL80211_BAND_2GHZ;
+
+	cap_band = &ar->pdev->cap.band[band];
+	ar->ar_extn.he_mcs_12_13_radio_cap = (u16)(cap_band->he_cap_info[1] >> 16);
+	*value = ar->ar_extn.he_mcs_12_13_radio_cap;
+	ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+		   "HE MCS 12/13 capability = 0x%04x radio_idx = %u band = %d\n",
+		   ar->ar_extn.he_mcs_12_13_radio_cap, radio_idx, band);
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_set_he_mcs_12_13_peer_cap - Store intersected peer HE MCS 12/13
+ * NSS capability, split into TX and RX fields.
+ *
+ * @wiphy:       wiphy pointer
+ * @wifi_params: parsed generic command parameters
+ *
+ * Stores the intersected peer capability with the radio's own hardware capab
+ * for use during the WMI peer-assoc command.
+ *
+ * Results are stored as:
+ *   he_mcs_12_13_peer_rx_cap = radio_cap & peer_cap (all platforms)
+ *   he_mcs_12_13_peer_tx_cap = radio_cap & peer_cap (platforms that can RX MCS 12/13)
+ *                            = 0 (platforms that cannot RX MCS 12/13, eg: IPQ5332)
+ *
+ * Returns 0 on success, negative error code on failure.
+ */
+static int ath12k_vendor_set_he_mcs_12_13_peer_cap(struct wiphy *wiphy,
+						   struct ath12k_wifi_generic_params *wifi_params)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar;
+	u8 radio_idx = wifi_params->radio_idx;
+	__le16 peer_cap_le;
+	u16 peer_cap_supp;
+
+	if (radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "HE MCS 12/13 SET: invalid radio index %u\n", radio_idx);
+		return -EINVAL;
+	}
+
+	ar = &ah->radio[radio_idx];
+	if (!wifi_params->data || wifi_params->data_len < sizeof(peer_cap_le)) {
+		ath12k_err(ar->ab, "HE MCS 12/13 SET: missing or short data\n");
+		return -EINVAL;
+	}
+	memcpy(&peer_cap_le, wifi_params->data, sizeof(peer_cap_le));
+	peer_cap_supp = ar->ar_extn.he_mcs_12_13_radio_cap & le16_to_cpu(peer_cap_le);
+	ar->ar_extn.he_mcs_12_13_peer_rx_cap = peer_cap_supp;
+	if (ar->ab->hw_rev == ATH12K_HW_IPQ5332_HW10) {
+		ar->ar_extn.he_mcs_12_13_peer_tx_cap = 0;
+	} else {
+		ar->ar_extn.he_mcs_12_13_peer_tx_cap = peer_cap_supp;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+		   "HE MCS 12/13: peer tx capability = 0x%04x peer rx capability = 0x%04x radio_idx=%u\n",
+		   ar->ar_extn.he_mcs_12_13_peer_tx_cap,
+		   ar->ar_extn.he_mcs_12_13_peer_rx_cap,
+		   radio_idx);
+
+	return 0;
+}
+
+void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
+					   struct ath12k_wmi_peer_assoc_arg *arg)
+{
+	u16 rx_cap = ar->ar_extn.he_mcs_12_13_peer_rx_cap;
+	u16 tx_cap = ar->ar_extn.he_mcs_12_13_peer_tx_cap;
+	u32 rx_packed = WMI_HE_EXTRA_MCS_PACK(rx_cap);
+	u32 tx_packed = WMI_HE_EXTRA_MCS_PACK(tx_cap);
+	int i;
+
+	for (i = 0; i < arg->peer_he_mcs_count; i++) {
+		arg->peer_he_rx_mcs_set[i] &=
+			~(WMI_HE_EXTRA_MCS_L80_MASK | WMI_HE_EXTRA_MCS_G80_MASK);
+		arg->peer_he_rx_mcs_set[i] |= rx_packed;
+		arg->peer_he_tx_mcs_set[i] &=
+			~(WMI_HE_EXTRA_MCS_L80_MASK | WMI_HE_EXTRA_MCS_G80_MASK);
+		arg->peer_he_tx_mcs_set[i] |= tx_packed;
+	}
+}
 
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
@@ -4111,6 +4237,8 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 		}
 		break;
 #endif
+	case QCA_NL80211_VENDOR_SUBCMD_HE_MCS_12_13_SUPP:
+		return ath12k_vendor_set_he_mcs_12_13_peer_cap(wiphy, wifi_params);
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
 		return -EOPNOTSUPP;
@@ -5066,8 +5194,6 @@ int ath12k_vendor_get_wiphy_sr_params_extn(struct wiphy *wiphy,
 	return ret;
 }
 
-
-
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)
 {
@@ -5080,6 +5206,29 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	}
 
 	return 0;
+}
+
+int ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy,
+					       struct nlattr **tb,
+					       u64 *value)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	u32 generic_cmd;
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_CONFIG_GENERIC_COMMAND])
+		return -EOPNOTSUPP;
+
+	generic_cmd = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_GENERIC_COMMAND]);
+	switch (generic_cmd) {
+	case QCA_NL80211_VENDOR_SUBCMD_HE_MCS_12_13_SUPP:
+		return ath12k_vendor_get_he_mcs_12_13_cap(ah, tb, value);
+	default:
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "GET_WIFI_CONFIG: unsupported generic_cmd %u\n",
+			   generic_cmd);
+		return -EOPNOTSUPP;
+	}
 }
 
 void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,

@@ -786,6 +786,40 @@ static int ath12k_vendor_set_ctlpwrscale(struct ath12k *ar, u32 value)
 	return 0;
 }
 
+/**
+ * ath12k_vendor_get_txpower_resolution - Get effective per-link TX power cap
+ * @arvif: pointer to ath12k_link_vif structure
+ * @value: pointer to store the retrieved tx power in 0.5 dBm units
+ *
+ * Uses ieee80211_bss_conf.txpower which is the operating TX power
+ * computed by mac80211 (minimum of regulatory, HW capability, and user-set
+ * limits).
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
+static int ath12k_vendor_get_txpower_resolution(struct ath12k_link_vif *arvif, u64 *value)
+{
+	struct ieee80211_bss_conf *bss_conf;
+	s32 svalue;
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!bss_conf)
+		return -EINVAL;
+
+	if (bss_conf->txpower == INT_MIN)
+		return -ENOTCONN;
+
+	svalue = (s32)bss_conf->txpower * 2;
+	if(svalue < S8_MIN || svalue > S8_MAX)
+		return -ERANGE;
+
+	*value = (s8)bss_conf->txpower * 2;
+
+	ath12k_info(NULL, "txpower in 1 dBm scale %d.%02d dBm",
+		    svalue / 2, abs(svalue % 2) * 50);
+	return 0;
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 {
@@ -4637,6 +4671,9 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BCAST_RATE:
 		ret = ath12k_get_vdev_bcast_rate(arvif, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_TXPOWER_RESOLUTION:
+		ret = ath12k_vendor_get_txpower_resolution(arvif, value);
 		break;
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	case QCA_WLAN_VENDOR_VDEV_MESH_MODE_HDR:

@@ -746,6 +746,46 @@ static int ath12k_vendor_get_regtxpower(struct ath12k_link_vif *arvif, u64 *valu
 	return 0;
 }
 
+/**
+ * ath12k_vendor_get_ctlpwrscale - Get current ctl power scale value
+ * @ar: pointer to ath12k structure
+ * @value: pointer to store the retrieved ctl power scale value
+ *
+ * Returns: 0 on success
+ */
+static int ath12k_vendor_get_ctlpwrscale(struct ath12k *ar, u32 *value)
+{
+	*value = ar->radio_cfg.ctlpwrscale;
+	return 0;
+}
+
+/**
+ * ath12k_vendor_set_ctlpwrscale - Set ctl power scale value
+ * @ar: pointer to ath12k structure
+ * @value: pointer to store the user input ctl power scale value
+ * Returns: 0 on success, negative error code on failure.
+ */
+static int ath12k_vendor_set_ctlpwrscale(struct ath12k *ar, u32 value)
+{
+	int ret;
+
+	if (value >= WMI_HOST_TP_SCALE_SIZE)
+		return -EINVAL;
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_CUST_TXPOWER_SCALE,
+						value, ar->pdev->pdev_id);
+	if (ret) {
+		ath12k_err(ar->ab,
+			"Failed to send WMI_PDEV_PARAM_CUST_TXPOWER_SCALE to firmware: %d\n", ret);
+		return ret;
+	}
+
+	ar->radio_cfg.ctlpwrscale = value;
+	ath12k_info(ar->ab, "CTL Power scale set to %u\n", value);
+
+	return 0;
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 {
@@ -3367,6 +3407,9 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 
 		break;
 	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_CTLPWRSCALE:
+		ret = ath12k_vendor_set_ctlpwrscale(ar, value);
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -5148,6 +5191,9 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RADAR_DETECT_COUNT:
 		*value = ar->radar_detect_count;
 		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_CTLPWRSCALE:
+		ret = ath12k_vendor_get_ctlpwrscale(ar, value);
 		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

@@ -208,6 +208,9 @@
 	ATH12K_CFG(ATH12K_CFG_COHOSTED_BSS_IND_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_STA_BSS_COLOR_COLLISION_DETECTION) \
 	ATH12K_CFG(ATH12K_CFG_AP_MAX_MGMT_FRM_SZ) \
+	ATH12K_CFG(ATH12K_CFG_SA_ENABLE) \
+	ATH12K_CFG(ATH12K_CFG_SA_SW_TEST) \
+	ATH12K_CFG(ATH12K_CFG_SA_MODE) \
 	ATH12K_CFG(ATH12K_CFG_REO_MGMT_PATH_DISABLE) \
 
 #define ATH12K_CFG_DP \
@@ -525,6 +528,18 @@
 	ATH12K_CFG_INI_UINT("ap_max_mgmt_frm_sz", \
 	1500, 2000, 1500, \
 	ATH12K_CFG_VALUE_OR_DEFAULT, "AP max mgmt frame size for beacon and probe resp")
+
+#define ATH12K_CFG_SA_ENABLE \
+	ATH12K_CFG_INI_BOOL("enable_smart_antenna", false, \
+	"Enable Smart Antenna")
+
+#define ATH12K_CFG_SA_SW_TEST \
+	ATH12K_CFG_INI_UINT("sa_sw_test", 0, 2, 0, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, "Validate Smart Antenna Software")
+
+#define ATH12K_CFG_SA_MODE \
+	ATH12K_CFG_INI_INT("sa_mode_overwrite", -1, 1, -1, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, "Overwrite Smart Antenna Mode")
 
 /* Note: This is a dev-only INI exposed for dealing with unanticipated scenarios */
 #define ATH12K_CFG_REO_MGMT_PATH_DISABLE \

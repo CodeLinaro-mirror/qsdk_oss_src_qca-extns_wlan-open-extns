@@ -10,6 +10,7 @@
 #include <linux/uuid.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
 #include "rropinfo.h"
+#include "sa_api.h"
 
 struct ath12k_base;
 struct ieee80211_240mhz_vendor_oper_extn;

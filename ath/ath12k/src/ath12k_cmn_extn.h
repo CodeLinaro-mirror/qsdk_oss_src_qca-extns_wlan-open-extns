@@ -367,6 +367,11 @@ struct hal_rx_frm_type_info {
 	u8 rx_data_cnt;
 };
 
+struct ath12k_wsi_remap_work {
+    struct work_struct work;
+    struct ath12k_base *ab;
+};
+
 /**
  * struct hal_mon_ppdu_info_extn - Monitor-mode PPDU extension metadata
  * @rx_state: RX pipeline state at the time this PPDU was reported

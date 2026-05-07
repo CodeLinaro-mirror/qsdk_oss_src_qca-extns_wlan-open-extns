@@ -675,6 +675,12 @@ int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, 
 
 #else
 
+struct ath12k_dp_hw_group_extn {
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	struct ath12k_dp_hw_group_ipa *ipa;
+#endif
+};
+
 struct ath12k_pci_extn {
 	/* SMMU DS */
 #ifdef CPTCFG_EXT_IPA_OFFLOAD

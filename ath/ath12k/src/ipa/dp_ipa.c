@@ -23,6 +23,13 @@ static struct ath12k_ipa_config *g_ipa_config;
 static DEFINE_MUTEX(g_ipa_config_lock);
 static int ath12k_dp_ipa_setup_rx_refill_buf_ring(struct ath12k_base *ab);
 
+struct wmi_ipa_offload_enable_disable_cmd {
+	__le32 tlv_header;
+	__le32 offload_type;
+	__le32 vdev_id;
+	__le32 enable;
+} __packed;
+
 /* DE Bruijn Sequence to fetch the instance id */
 static const int deBruijnIdx[32] = {
 	0, 1, 28, 2, 29, 14, 24, 3,
@@ -2554,9 +2561,10 @@ end:
 	return status;
 }
 
-int ath12k_ipa_global_ctx_alloc(struct ath12k_dp_hw_group *dp_hw_grp)
+static
+int ath12k_dp_hw_group_ipa_alloc(struct ath12k_dp_hw_group *dp_hw_grp)
 {
-	struct ath12k_ipa_global_ctx *ctx;
+	struct ath12k_dp_hw_group_ipa *ctx;
 	int ret;
 	struct rhashtable *table;
 
@@ -2593,12 +2601,12 @@ int ath12k_ipa_global_ctx_alloc(struct ath12k_dp_hw_group *dp_hw_grp)
 	}
 
 	ctx->mac_table = table;
-	dp_hw_grp->ipa_global_ctx = ctx;
+	dp_hw_grp->extn.ipa = ctx;
 	return 0;
 }
-EXPORT_SYMBOL(ath12k_ipa_global_ctx_alloc);
 
-void ath12k_ipa_global_ctx_free(struct ath12k_ipa_global_ctx *ctx)
+static
+void ath12k_dp_hw_group_ipa_free(struct ath12k_dp_hw_group_ipa *ctx)
 {
 	struct wlan_ipa_evt_wq_args *arg, *tmp;
 
@@ -2625,7 +2633,6 @@ void ath12k_ipa_global_ctx_free(struct ath12k_ipa_global_ctx *ctx)
 
 	kfree(ctx);
 }
-EXPORT_SYMBOL(ath12k_ipa_global_ctx_free);
 
 int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			enum ipa_wlan_event event,
@@ -3074,8 +3081,8 @@ EXPORT_SYMBOL(ath12k_wlan_ipa_msg_free_fn);
 void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 {
 	struct ath12k_dp_hw_group *dp_hw_grp;
-	struct ath12k_ipa_global_ctx *ctx =
-		container_of(work, struct ath12k_ipa_global_ctx, work);
+	struct ath12k_dp_hw_group_ipa *ctx =
+		container_of(work, struct ath12k_dp_hw_group_ipa, work);
 	struct wlan_ipa_evt_wq_args *curr_evt, *next_evt;
 	struct list_head ipa_evt_list;
 	int ret = 0;
@@ -3210,7 +3217,7 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	struct ieee80211_vif *vif = arvif->ahvif->vif;
 	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
 	struct ath12k_dp_hw_group *dp_hw_grp = ab->dp->dp_hw_grp;
-	struct ath12k_ipa_global_ctx *ipa_global_ctx = dp_hw_grp->ipa_global_ctx;
+	struct ath12k_dp_hw_group_ipa *ipa_global_ctx = dp_hw_grp->extn.ipa;
 	struct wlan_ipa_evt_wq_args *ev;
 	struct net_device *dev;
 	struct ieee80211_chanctx_conf *chanctx = &arvif->chanctx;
@@ -3253,6 +3260,41 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	queue_work(system_unbound_wq, &ipa_global_ctx->work);
 }
 EXPORT_SYMBOL(ath12k_ipa_enqueue_evt);
+
+static
+int ath12k_wmi_ipa_offload_enable_disable_param_cmd(struct ath12k *ar, u32 vdev_id,
+						    u32 offload_type, u32 enable)
+{
+	struct ath12k_wmi_pdev *wmi = ar->wmi;
+	struct wmi_ipa_offload_enable_disable_cmd *cmd;
+	struct sk_buff *skb;
+	int ret;
+
+	skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, sizeof(*cmd));
+	if (!skb)
+		return -ENOMEM;
+
+	cmd = (struct wmi_ipa_offload_enable_disable_cmd *)skb->data;
+	cmd->tlv_header =
+		ath12k_wmi_tlv_cmd_hdr(WMI_TAG_IPA_OFFLOAD_ENABLE_DISABLE_CMD,
+				       sizeof(*cmd));
+
+	cmd->vdev_id = cpu_to_le32(vdev_id);
+	cmd->offload_type = cpu_to_le32(offload_type);
+	cmd->enable = cpu_to_le32(enable);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "WMI vdev id 0x%x IPA offload type %d enable %d\n",
+		   vdev_id, offload_type, enable);
+
+	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_IPA_OFFLOAD_ENABLE_DISABLE_CMDID);
+	if (ret) {
+		ath12k_warn(ar->ab, "failed to send WMI_IPA_OFFLOAD_ENABLE_DISABLE_CMDID\n");
+		dev_kfree_skb(skb);
+	}
+
+	return ret;
+}
 
 void ath12k_wlan_ipa_intrabss_enable_disable(struct ath12k_ipa *ipa_ctx,
 					     u32 vdev_id, bool enable)
@@ -3803,4 +3845,114 @@ drop:
 	ipa_ctx->stats.rx_drop_excep++;
 	dev_kfree_skb_any(skb);
 	return;
+}
+
+void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
+			       struct ath12k_dp_link_peer *peer,
+			       struct ath12k_link_vif *arvif,
+			       u32 vdev_id, bool connect)
+{
+	struct ath12k_base *ab;
+	const u8 *peer_addr;
+	enum ipa_wlan_event evt;
+	bool is_mlo;
+	bool rcu_locked = false;
+
+	if (!ar || !peer)
+		return;
+
+	ab = ar->ab;
+
+	if (!ath12k_ipa_config_is_enabled())
+		return;
+
+	if (!peer->primary_link)
+		return;
+
+	evt = connect ? WLAN_CLIENT_CONNECT_EX : WLAN_CLIENT_DISCONNECT;
+
+	if (!arvif) {
+		rcu_read_lock();
+		rcu_locked = true;
+
+		arvif = ath12k_mac_get_arvif(ar, vdev_id);
+		if (!arvif) {
+			ath12k_warn(ab,
+				    "failed to get arvif id %d, skip IPA event\n",
+				    vdev_id);
+			goto out;
+		}
+	}
+
+	is_mlo = ath12k_mac_is_ml_arvif(arvif);
+	peer_addr = (is_mlo && !is_zero_ether_addr(peer->ml_addr)) ?
+		peer->ml_addr : peer->addr;
+
+	ath12k_ipa_enqueue_evt(evt, arvif, peer_addr, is_mlo);
+
+out:
+	if (rcu_locked)
+		rcu_read_unlock();
+}
+
+void ath12k_dp_ipa_vif_notify(struct ath12k_link_vif *arvif,
+			      bool restart, bool connect)
+{
+	struct ath12k_vif *ahvif;
+	enum ipa_wlan_event evt;
+	bool is_mlo;
+
+	if (!arvif || !arvif->ahvif)
+		return;
+
+	if (!ath12k_ipa_config_is_enabled())
+		return;
+
+	if (connect && restart)
+		return;
+
+	ahvif = arvif->ahvif;
+	is_mlo = ath12k_mac_is_ml_arvif(arvif);
+
+	switch (ahvif->vdev_type) {
+	case WMI_VDEV_TYPE_STA:
+		evt = connect ? WLAN_STA_CONNECT : WLAN_STA_DISCONNECT;
+		break;
+	case WMI_VDEV_TYPE_AP:
+		evt = connect ? WLAN_AP_CONNECT : WLAN_AP_DISCONNECT;
+		break;
+	default:
+		return;
+	}
+
+	ath12k_ipa_enqueue_evt(evt, arvif, arvif->bssid, is_mlo);
+}
+
+int ath12k_dp_ipa_hw_group_init(struct ath12k_base *ab,
+				struct ath12k_dp_hw_group *dp_hw_grp)
+{
+	int ret;
+
+	if (!dp_hw_grp)
+		return -EINVAL;
+
+	if (dp_hw_grp->extn.ipa)
+		return 0;
+
+	ret = ath12k_dp_hw_group_ipa_alloc(dp_hw_grp);
+	if (ret) {
+		ath12k_err(ab, "Failed to allocate IPA global context\n");
+		return ret;
+	}
+
+	return 0;
+}
+
+void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp)
+{
+	if (!dp_hw_grp || !dp_hw_grp->extn.ipa)
+		return;
+
+	ath12k_dp_hw_group_ipa_free(dp_hw_grp->extn.ipa);
+	dp_hw_grp->extn.ipa = NULL;
 }

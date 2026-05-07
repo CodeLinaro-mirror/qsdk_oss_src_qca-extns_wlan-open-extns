@@ -807,7 +807,7 @@ struct ath12k_ipa_event_entry {
 	struct rhash_head node;
 };
 
-struct ath12k_ipa_global_ctx {
+struct ath12k_dp_hw_group_ipa {
 	struct work_struct work;
 	struct ath12k_dp_hw_group *dp_hw_grp;
 
@@ -822,10 +822,6 @@ enum {
 	WMI_AP_RX_DATA_OFFLOAD             = 0x00,
 	WMI_STA_RX_DATA_OFFLOAD            = 0x01,
 };
-
-int ath12k_ipa_global_ctx_alloc(struct ath12k_dp_hw_group *dp_hw_grp);
-
-void ath12k_ipa_global_ctx_free(struct ath12k_ipa_global_ctx *ctx);
 
 void ath12k_wlan_ipa_evt_handler (struct work_struct *work);
 

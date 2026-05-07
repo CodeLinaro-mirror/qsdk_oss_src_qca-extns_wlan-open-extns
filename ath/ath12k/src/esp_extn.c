@@ -129,14 +129,12 @@ int ath12k_vendor_set_esp_params_extn(struct wiphy *wiphy,
 
 	if (!arvif) {
 		ath12k_err(NULL, "ESP: Invalid arvif for link_id %d\n", link_id);
-		rcu_read_unlock();
 		return -EINVAL;
 	}
 
 	ar = arvif->ar;
 	if (!ar) {
 		ath12k_err(NULL, "ESP: No radio present\n");
-		rcu_read_unlock();
 		return -EINVAL;
 	}
 

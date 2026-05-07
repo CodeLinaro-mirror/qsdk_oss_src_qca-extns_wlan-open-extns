@@ -4606,6 +4606,14 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
         int ret = -1;
 
 	switch (param) {
+       case PARAM_RADIO_TXCHAINSOFT:
+                *value = ar->cfg_tx_chainmask;
+                ret = 0;
+                break;
+        case ACFG_PARAM_RADIO_RXCHAINMASK:
+                *value = ar->cfg_rx_chainmask;
+                ret = 0;
+                break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
 		*value = 0;
 		ret = 0;

@@ -16,11 +16,11 @@
  * recycler SKBs where the caller ensures ordering requirements, to avoid the
  * overhead of a full barrier.
  *
- * On some platforms (e.g. PLATFORM_SDX85) this is a no-op.
+ * On some platforms (e.g. PLATFORM_SDX) this is a no-op.
  */
 static inline void ath12k_core_dma_clean_range_no_dsb(const void *start, const void *end)
 {
-#ifndef PLATFORM_SDX85
+#ifndef PLATFORM_SDX
 	dmac_clean_range_no_dsb(start, end);
 #endif
 }

@@ -1846,7 +1846,7 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, uint8_t session_id, bo
 }
 
 
-int dp_ipa_setup_iface(char *ifname,
+int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 		       u8 *mac_addr,
 		       enum ipa_client_type prod_client,
 		       enum ipa_client_type cons_client,
@@ -1859,7 +1859,19 @@ int dp_ipa_setup_iface(char *ifname,
 	struct ipa_wdi_hdr_info hdr_info = { 0 };
 	struct ath12k_ipa_uc_tx_hdr uc_tx_hdr;
 	struct ath12k_ipa_uc_tx_hdr uc_tx_hdr_v6;
+	char *ifname;
+	struct ath12k_ipa *ipa_ctx;
+	struct ath12k_base *ab;
+	int intf_idx;
 	int ret = -EINVAL;
+
+	if (!iface_context)
+		return -EINVAL;
+
+	ifname = wlan_ipa_get_iface_ifname(iface_context);
+	ipa_ctx = iface_context->ipa_ctx;
+	intf_idx = iface_context->net_dev.ifindex;
+	ab = ipa_ctx->ab;
 
 	ether_addr_copy(uc_tx_hdr.eth.h_source, mac_addr);
 
@@ -1876,11 +1888,16 @@ int dp_ipa_setup_iface(char *ifname,
 	memcpy(&(in.hdr_info[IPA_IP_v4]),
 	&hdr_info, sizeof(struct ipa_wdi_hdr_info));
 	in.alt_dst_pipe = cons_client;
-	in.is_meta_data_valid = 1;
+
+	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(ipa_ctx, &in);
+
 	dp_ipa_setup_meta_data_mask(&in);
 	in.hdl = hdl;
 
 	dp_ipa_setup_iface_session_id(&in, session_id, is_tx1_used);
+
+	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(ipa_ctx, &in);
+	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(ipa_ctx, &in, intf_idx);
 
 	/* IPV6 header */
 	if (is_ipv6_enabled) {
@@ -1964,7 +1981,6 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 	int status = 0;
 	u8 sessid;
 	bool ipv6_en;
-	char *ifname;
 	int i;
 
 	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
@@ -2025,28 +2041,27 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 	if (ipa_ctx->uc_loaded) {
 		sessid = wlan_ipa_set_session_id(session_id, is_2g_iface);
 		ipv6_en = wlan_ipa_is_ipv6_enabled(ipa_ctx->config);
-		ifname = wlan_ipa_get_iface_ifname(iface_context);
 
 		if(device_mode == ATH12K_IPA_SAP) {
-			status = dp_ipa_setup_iface(ifname,
-					(u8 *)mac_addr,
-					iface_context->prod_client,
-					iface_context->cons_client,
-					sessid,
-					ipv6_en,
-					ipa_ctx->hdl,
-					is_tx1_used,
-					is_mlo_vdev);
+			status = dp_ipa_setup_iface(iface_context,
+						    (u8 *)mac_addr,
+						    iface_context->prod_client,
+						    iface_context->cons_client,
+						    sessid,
+						    ipv6_en,
+						    ipa_ctx->hdl,
+						    is_tx1_used,
+						    is_mlo_vdev);
 		} else {
-			status = dp_ipa_setup_iface(ifname,
-					(u8 *)net_dev_priv->dev_addr,
-					iface_context->prod_client,
-					iface_context->cons_client,
-					sessid,
-					ipv6_en,
-					ipa_ctx->hdl,
-					is_tx1_used,
-					is_mlo_vdev);
+			status = dp_ipa_setup_iface(iface_context,
+						    (u8 *)net_dev_priv->dev_addr,
+						    iface_context->prod_client,
+						    iface_context->cons_client,
+						    sessid,
+						    ipv6_en,
+						    ipa_ctx->hdl,
+						    is_tx1_used,
+						    is_mlo_vdev);
 		}
 
 		if (status)
@@ -2369,88 +2384,13 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		break;
 
 	case WLAN_CLIENT_CONNECT_EX:
-		if (!ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
-			ath12k_info(ab,
-				    "%s: Evt: %d, IPA UC Offload not enabled\n",
-				    dev->name, event);
-			return 0;
-		}
-		mutex_lock(&ipa_ctx->event_lock);
-		if (((is_mlo && (ipa_ctx->sap_num_mlo_connected_sta == 0)) ||
-		     (!is_mlo && (ipa_ctx->sap_num_connected_sta == 0))) &&
-		    ipa_ctx->uc_loaded)	{
-			if (ath12k_wlan_ipa_uc_sta_is_enabled(ipa_ctx->config) &&
-			    ipa_ctx->sta_connected) {
-				mutex_unlock(&ipa_ctx->event_lock);
-				ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-								  WMI_STA_RX_DATA_OFFLOAD,
-								  vdev_id,
-								  true);
-				mutex_lock(&ipa_ctx->event_lock);
-			}
-			ath12k_info(ab, "First SAP client connected\n");
-		}
-		mutex_unlock(&ipa_ctx->event_lock);
-		if (is_mlo)
-			ipa_ctx->sap_num_mlo_connected_sta++;
-		else
-			ipa_ctx->sap_num_connected_sta++;
-		if (ath12k_wlan_ipa_send_msg_ex(ipa_ctx, event, mac, dev,
-						is_mlo, session_id) != 0) {
-			ath12k_err(ab, "Failed to send CLIENT CONNECT ex message to IPA\n");
-			return -EIO;
-		}
-		if (is_mlo)
-			ath12k_info(ab,
-				    "SAP MLO client connected, sap_num_mlo_connected_sta = %d\n",
-				    ipa_ctx->sap_num_mlo_connected_sta);
-		else
-			ath12k_info(ab,
-				    "SAP client connected, sap_num_connected_sta = %d\n",
-				    ipa_ctx->sap_num_connected_sta);
-		return 0;
+		return ath12k_dp_ipa_arch_op_ipa_client_connect_ex(ipa_ctx, event,
+								   vdev_id, mac, dev,
+								   is_mlo);
 	case WLAN_CLIENT_DISCONNECT:
-		if (!ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
-			ath12k_info(ab,
-				    "%s: Evt: %d, IPA UC Offload not enabled\n",
-				    dev->name, event);
-			return 0;
-		}
-		mutex_lock(&ipa_ctx->event_lock);
-		if (!ipa_ctx->sap_num_connected_sta &&
-		    !ipa_ctx->sap_num_mlo_connected_sta) {
-			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_info(ab, "Client already disconnected\n");
-			return 0;
-		}
-		if (is_mlo)
-			ipa_ctx->sap_num_mlo_connected_sta--;
-		else
-			ipa_ctx->sap_num_connected_sta--;
-		if (!ipa_ctx->sap_num_connected_sta &&
-		    !ipa_ctx->sap_num_mlo_connected_sta && ipa_ctx->uc_loaded)	{
-			if (ath12k_wlan_ipa_uc_sta_is_enabled(ipa_ctx->config) &&
-			    ipa_ctx->sta_connected) {
-				mutex_unlock(&ipa_ctx->event_lock);
-				ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-								  WMI_STA_RX_DATA_OFFLOAD,
-								  vdev_id,
-								  false);
-			} else {
-				mutex_unlock(&ipa_ctx->event_lock);
-			}
-		} else {
-			mutex_unlock(&ipa_ctx->event_lock);
-		}
-		if (is_mlo)
-			ath12k_info(ab,
-				    "SAP MLO client disconnected, sap_num_mlo_connected_sta = %d\n",
-				    ipa_ctx->sap_num_mlo_connected_sta);
-		else
-			ath12k_info(ab,
-				    "SAP client disconnected, sap_num_connected_sta = %d\n",
-				    ipa_ctx->sap_num_connected_sta);
-		break;
+		return ath12k_dp_ipa_arch_op_ipa_client_disconnect(ipa_ctx, event,
+								   vdev_id, mac, dev,
+								   is_mlo);
 	default:
 		ath12k_info(ab, "Invalid event %d\n", event);
 		return 0;

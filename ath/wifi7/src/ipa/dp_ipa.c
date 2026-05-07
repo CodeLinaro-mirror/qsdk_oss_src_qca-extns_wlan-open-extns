@@ -14,6 +14,129 @@
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 #include "../../dp.h"
 
+void ath12k_wifi7_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
+{
+	in->is_meta_data_valid = 1;
+}
+
+int ath12k_wifi7_dp_ipa_client_connect_ex(struct ath12k_ipa *ipa_ctx,
+					  enum ipa_wlan_event event,
+					  u32 vdev_id,
+					  const u8 mac[ETH_ALEN],
+					  struct dp_ipa_net_device_priv *dev,
+					  bool is_mlo)
+{
+	struct ath12k_base *ab;
+	u8 session_id = vdev_id;
+
+	ab = ipa_ctx->ab;
+	if (!ab) {
+		ath12k_ipa_info(NULL, "ab is NULL\n");
+		return -EINVAL;
+	}
+
+	if (!ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
+		ath12k_ipa_info(ab, "%s: Evt: %d, IPA UC Offload not enabled\n",
+				dev->name, event);
+		return 0;
+	}
+	mutex_lock(&ipa_ctx->event_lock);
+	if (((is_mlo && ipa_ctx->sap_num_mlo_connected_sta == 0) ||
+	     (!is_mlo && ipa_ctx->sap_num_connected_sta == 0)) &&
+	    ipa_ctx->uc_loaded) {
+		if (ath12k_wlan_ipa_uc_sta_is_enabled(ipa_ctx->config) &&
+		    ipa_ctx->sta_connected) {
+			mutex_unlock(&ipa_ctx->event_lock);
+			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
+							  WMI_STA_RX_DATA_OFFLOAD,
+							  vdev_id, true);
+			mutex_lock(&ipa_ctx->event_lock);
+		}
+		ath12k_ipa_info(ab, "First SAP client connected\n");
+	}
+	mutex_unlock(&ipa_ctx->event_lock);
+	if (is_mlo)
+		ipa_ctx->sap_num_mlo_connected_sta++;
+	else
+		ipa_ctx->sap_num_connected_sta++;
+	if (ath12k_wlan_ipa_send_msg_ex(ipa_ctx, event, mac,
+					dev, is_mlo, session_id) != 0) {
+		ath12k_ipa_err(ab, "Failed to send CLIENT CONNECT ex message to IPA\n");
+		return -EIO;
+	}
+	if (is_mlo)
+		ath12k_ipa_info(ab, "SAP MLO client connected, sap_num_mlo_connected_sta = %d\n",
+				ipa_ctx->sap_num_mlo_connected_sta);
+	else
+		ath12k_ipa_info(ab, "SAP client connected, sap_num_connected_sta = %d\n",
+				ipa_ctx->sap_num_connected_sta);
+	return 0;
+}
+
+int ath12k_wifi7_dp_ipa_client_disconnect(struct ath12k_ipa *ipa_ctx,
+					  enum ipa_wlan_event event,
+					  u32 vdev_id,
+					  const u8 mac[ETH_ALEN],
+					  struct dp_ipa_net_device_priv *dev,
+					  bool is_mlo)
+{
+	struct ath12k_base *ab;
+	u8 session_id = vdev_id;
+
+	ab = ipa_ctx->ab;
+	if (!ab) {
+		ath12k_ipa_info(NULL, "ab is NULL\n");
+		return -EINVAL;
+	}
+
+	if (!ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
+		ath12k_ipa_info(ab, "%s: Evt: %d, IPA UC Offload not enabled\n",
+				dev->name, event);
+		return 0;
+	}
+	mutex_lock(&ipa_ctx->event_lock);
+	if (!ipa_ctx->sap_num_connected_sta &&
+	    !ipa_ctx->sap_num_mlo_connected_sta) {
+		mutex_unlock(&ipa_ctx->event_lock);
+		ath12k_ipa_info(ab, "Client already disconnected\n");
+		return 0;
+	}
+	if (is_mlo)
+		ipa_ctx->sap_num_mlo_connected_sta--;
+	else
+		ipa_ctx->sap_num_connected_sta--;
+
+	if (!ipa_ctx->sap_num_connected_sta &&
+	    !ipa_ctx->sap_num_mlo_connected_sta && ipa_ctx->uc_loaded) {
+		if (ath12k_wlan_ipa_uc_sta_is_enabled(ipa_ctx->config) &&
+		    ipa_ctx->sta_connected) {
+			mutex_unlock(&ipa_ctx->event_lock);
+			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
+							  WMI_STA_RX_DATA_OFFLOAD,
+							  vdev_id, false);
+		} else {
+			mutex_unlock(&ipa_ctx->event_lock);
+		}
+	} else {
+		mutex_unlock(&ipa_ctx->event_lock);
+	}
+	if (is_mlo)
+		ath12k_ipa_info(ab, "SAP MLO client disconnected, sap_num_mlo_connected_sta = %d\n",
+				ipa_ctx->sap_num_mlo_connected_sta);
+	else
+		ath12k_ipa_info(ab, "SAP client disconnected, sap_num_connected_sta = %d\n",
+				ipa_ctx->sap_num_connected_sta);
+
+	if (!ipa_ctx->uc_loaded)
+		return 0;
+
+	if (ath12k_wlan_ipa_send_msg(ipa_ctx, event, mac, dev, is_mlo, session_id) != 0) {
+		ath12k_ipa_err(ab, "Failed to send message to IPA\n");
+		return -EIO;
+	}
+	return 0;
+}
+
 static u8 ath12k_wifi7_dp_ipa_get_wdi_version(void)
 {
 	return IPA_WDI_4;
@@ -519,6 +642,11 @@ static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.ipa_tx_buffer_attach = ath12k_wifi7_dp_ipa_tx_buffer_attach,
 	.dp_rx_pipe_set_rdi = NULL,
 	.ipa_get_wdi_version = ath12k_wifi7_dp_ipa_get_wdi_version,
+	.ipa_iface_setup_set_metadata = ath12k_wifi7_dp_ipa_set_metadata,
+	.ipa_iface_setup_set_vp_num = NULL,
+	.ipa_iface_setup_set_intf_idx = NULL,
+	.ipa_client_connect_ex = ath12k_wifi7_dp_ipa_client_connect_ex,
+	.ipa_client_disconnect = ath12k_wifi7_dp_ipa_client_disconnect,
 };
 
 int

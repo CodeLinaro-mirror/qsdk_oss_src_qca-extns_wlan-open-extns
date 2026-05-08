@@ -708,6 +708,7 @@ ath12k_wmi_free_reg_hw_blocklist_extn(struct ath12k_reg_info_extn *reg_info_extn
 
 static inline void
 ath12k_wmi_set_hw_blocklist_host_service_flag_extn(
+		struct ath12k_base *ab,
 		struct ath12k_wmi_resource_config_params *wmi_cfg,
 		struct ath12k_wmi_resource_config_arg *tg_cfg)
 {
@@ -1133,10 +1134,12 @@ void ath12k_wmi_free_reg_hw_blocklist_extn(
 /**
  * ath12k_wmi_set_hw_blocklist_host_service_flag_extn - Set host service flag in
  * WMI resource config
+ * @ab: Pointer to the ath12k base structure
  * @wmi_cfg: Pointer to the WMI resource config parameters
  * @tg_cfg: Pointer to the WMI resource config argument containing the target service info
  */
 void ath12k_wmi_set_hw_blocklist_host_service_flag_extn(
+		struct ath12k_base *ab,
 		struct ath12k_wmi_resource_config_params *wmi_cfg,
 		struct ath12k_wmi_resource_config_arg *tg_cfg);
 

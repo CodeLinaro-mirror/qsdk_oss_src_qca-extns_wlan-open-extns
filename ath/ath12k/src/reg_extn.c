@@ -78,9 +78,13 @@ void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
 }
 
 void ath12k_wmi_set_hw_blocklist_host_service_flag_extn(
+		struct ath12k_base *ab,
 		struct ath12k_wmi_resource_config_params *wmi_cfg,
 		struct ath12k_wmi_resource_config_arg *tg_cfg)
 {
+	if (!ath12k_cfg_get(ab, ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE))
+		return;
+
 	wmi_cfg->host_service_flags |=
 		cpu_to_le32(tg_cfg->hw_blocklist_chans_support <<
 			    WMI_RSRC_CFG_HOST_SVC_FLAG_SUPP_HW_BLACKLIST_CHANS);

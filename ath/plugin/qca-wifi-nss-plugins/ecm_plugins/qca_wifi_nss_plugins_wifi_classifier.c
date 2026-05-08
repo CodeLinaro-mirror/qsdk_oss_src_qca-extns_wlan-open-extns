@@ -34,33 +34,10 @@ static inline uint32_t qca_wifi_nss_plugins_get_wifi_metadata(struct ecm_classif
 }
 
 /*
- * qca_wifi_nss_plugins_wifi_flowq_setup()
- *	Setup wifi flow queue for peer mac address
- */
-static inline uint32_t qca_wifi_nss_plugins_wifi_flowq_setup(struct ecm_classifier_wifi_flow_info *queue_info)
-{
-	struct ath_wifi_queue_param params = {0};
-
-	params.dev = queue_info->dev;
-	params.peer_mac = queue_info->peer_mac;
-	params.dscp = queue_info->dscp;
-	params.qos_tag = queue_info->qos_tag;
-	params.protocol = queue_info->protocol;
-	params.sawf_mark = queue_info->sawf_mark;
-	params.sawf_service_class = queue_info->sawf_service_class;
-	params.sawf_rule_valid = queue_info->sawf_rule_valid;
-
-	ath_setup_peer_wifi_tid_queue(&params);
-
-	return 0;
-}
-
-/*
  * Register WiFi related callbacks with ECM WiFi classifier to get the Wi-Fi metadata info.
  */
 static struct ecm_classifier_wifi_callbacks qca_wifi_plugin_wifi = {
 	.get_wifi_metadata = qca_wifi_nss_plugins_get_wifi_metadata,
-	.wifi_flowq_setup = qca_wifi_nss_plugins_wifi_flowq_setup,
 };
 
 /*

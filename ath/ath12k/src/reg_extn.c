@@ -1457,3 +1457,410 @@ void ath12k_debugfs_register_hw_blocklist_extn(struct ath12k *ar)
 			    ar->debug.debugfs_pdev, ar,
 			    &fops_display_hw_blocklist_extn);
 }
+
+enum ath12k_6ghz_mode_validate_state {
+	ATH12K_6GHZ_MODE_VALIDATE_SKIP = 0,
+	ATH12K_6GHZ_MODE_VALIDATE_PASS = 1,
+	ATH12K_6GHZ_MODE_VALIDATE_BLOCK = -EINVAL,
+};
+
+static struct ieee80211_channel *
+ath12k_mac_get_6ghz_chan_for_power_mode(struct wiphy *wiphy,
+					const struct ieee80211_channel *chan,
+					enum ieee80211_ap_reg_power power_type)
+{
+	const struct ieee80211_supported_band *sband;
+	struct ieee80211_6ghz_channel *chan_6g;
+	enum nl80211_regulatory_power_modes pwr_mode;
+	int i;
+
+	if (!wiphy || !chan || chan->band != NL80211_BAND_6GHZ)
+		return NULL;
+
+	sband = wiphy->bands[NL80211_BAND_6GHZ];
+	if (!sband)
+		return NULL;
+
+	pwr_mode = ieee80211_mac_to_cfg_power_type(power_type);
+	if (pwr_mode >= NL80211_REG_NUM_POWER_MODES)
+		return NULL;
+
+	chan_6g = sband->chan_6g[pwr_mode];
+	if (!chan_6g || !chan_6g->channels || !chan_6g->n_channels)
+		return NULL;
+
+	for (i = 0; i < chan_6g->n_channels; i++) {
+		struct ieee80211_channel *tmp = &chan_6g->channels[i];
+
+		if (tmp->center_freq == chan->center_freq &&
+		    tmp->freq_offset == chan->freq_offset)
+			return tmp;
+	}
+
+	return NULL;
+}
+
+static int ath12k_reg_get_punc_pattern_index_extn(u16 bw, u16 puncture_pattern)
+{
+	const u16 *patterns = NULL;
+	u8 num_patterns = 0;
+	u8 i;
+
+	switch (bw) {
+	case 80:
+		patterns = ath12k_reg_wmi_punc_map_80_extn;
+		num_patterns = ARRAY_SIZE(ath12k_reg_wmi_punc_map_80_extn);
+		break;
+	case 160:
+		patterns = ath12k_reg_wmi_punc_map_160_extn;
+		num_patterns = ARRAY_SIZE(ath12k_reg_wmi_punc_map_160_extn);
+		break;
+	case 320:
+		patterns = ath12k_reg_wmi_punc_map_320_extn;
+		num_patterns = ARRAY_SIZE(ath12k_reg_wmi_punc_map_320_extn);
+		break;
+	default:
+		return -1;
+	}
+
+	for (i = 0; i < num_patterns; i++) {
+		if (patterns[i] == puncture_pattern)
+			return i;
+	}
+
+	return -1;
+}
+
+static bool ath12k_reg_is_chan_punc_extn(u16 puncture_pattern, u16 bw)
+{
+	if (!puncture_pattern)
+		return false;
+
+	return ath12k_reg_get_punc_pattern_index_extn(bw, puncture_pattern) >= 0;
+}
+
+static bool
+ath12k_reg_is_chan_in_full_blocklist_extn(
+	const struct ath12k_hw_blocklist_fb_chan *fb_chan,
+	u32 nfbchans, u16 freq, u16 center_freq, u16 bw)
+{
+	u32 i;
+
+	for (i = 0; i < nfbchans; i++) {
+		u16 bl_bw = ath12k_reg_hw_blocklist_bw_to_mhz_extn(fb_chan[i].max_bw);
+		int start_freq;
+		int offset;
+		u32 pri20_bit;
+
+		if (!bl_bw || bl_bw != bw || fb_chan[i].center_freq != center_freq)
+			continue;
+
+		if (bw == 20) {
+			start_freq = freq;
+		} else {
+			if (bw < 20)
+				continue;
+
+			start_freq = (int)center_freq - ((int)bw / 2) + 10;
+			if (start_freq <= 0)
+				continue;
+		}
+
+		offset = (int)freq - start_freq;
+		if (offset < 0 || offset % 20)
+			continue;
+
+		pri20_bit = offset / 20;
+		if (pri20_bit >= 16)
+			continue;
+
+		if (fb_chan[i].pri20_bitmap & BIT(pri20_bit))
+			return true;
+	}
+
+	return false;
+}
+
+static bool
+ath12k_reg_is_chan_in_punc_blocklist_extn(
+	const struct ath12k_hw_blocklist_pc_chan *pc_chan,
+	u32 npcchans, u16 puncture_pattern, u16 center_freq, u16 bw)
+{
+	int punc_idx;
+	u32 i;
+
+	punc_idx = ath12k_reg_get_punc_pattern_index_extn(bw, puncture_pattern);
+	if (punc_idx < 0)
+		return false;
+
+	for (i = 0; i < npcchans; i++) {
+		u16 bl_bw = ath12k_reg_hw_blocklist_bw_to_mhz_extn(pc_chan[i].max_bw);
+
+		if (!bl_bw || bl_bw != bw || pc_chan[i].center_freq != center_freq)
+			continue;
+
+		if (pc_chan[i].punc_pat_bmap & BIT(punc_idx))
+			return true;
+	}
+
+	return false;
+}
+
+bool ath12k_reg_is_hw_blocklisted_channel_extn(struct ath12k_base *ab, u8 phy_id,
+					       u16 freq, u16 center_freq, u16 bw,
+					       enum wmi_reg_6g_ap_type pwr_mode,
+					       u16 puncture_pattern)
+{
+	struct ath12k_hw_blocklist_state *st;
+	const struct ath12k_hw_blocklist_chans *bl;
+	bool blocked = false;
+
+	if (!ab || !freq || !center_freq || !bw)
+		return false;
+
+	if (phy_id >= ab->num_radios || pwr_mode >= WMI_REG_CURRENT_MAX_AP_TYPE)
+		return false;
+
+	spin_lock_bh(&ab->base_lock);
+	st = ath12k_reg_hw_blocklist_get_state_extn(ab, phy_id);
+	if (!st || !st->valid || !st->complete)
+		goto unlock;
+
+	bl = &st->pwr[pwr_mode];
+	if (!ath12k_reg_is_chan_punc_extn(puncture_pattern, bw)) {
+		if (!bl->fb_chan || !bl->nfbchans)
+			goto unlock;
+
+		blocked =
+		    ath12k_reg_is_chan_in_full_blocklist_extn(bl->fb_chan,
+							      bl->nfbchans,
+							      freq,
+							      center_freq,
+							      bw);
+		goto unlock;
+	}
+
+	if (!bl->pc_chan || !bl->npcchans)
+		goto unlock;
+
+	blocked =
+	    ath12k_reg_is_chan_in_punc_blocklist_extn(bl->pc_chan,
+						      bl->npcchans,
+						      puncture_pattern,
+						      center_freq,
+						      bw);
+unlock:
+	spin_unlock_bh(&ab->base_lock);
+	return blocked;
+}
+
+static int
+ath12k_mac_validate_6ghz_blocklist_for_pwr_mode(struct ath12k *ar,
+						struct ieee80211_hw *hw,
+						const struct cfg80211_chan_def *chandef,
+						u16 center_freq, u16 bw,
+						enum ieee80211_ap_reg_power power_type)
+{
+	struct ieee80211_channel *chan_6ghz;
+	struct cfg80211_chan_def tmp_chandef = *chandef;
+	enum wmi_reg_6g_ap_type wmi_pwr_type;
+
+	chan_6ghz = ath12k_mac_get_6ghz_chan_for_power_mode(hw->wiphy,
+							    chandef->chan,
+							    power_type);
+	if (!chan_6ghz)
+		return ATH12K_6GHZ_MODE_VALIDATE_SKIP;
+
+	tmp_chandef.chan = chan_6ghz;
+
+	if (!cfg80211_chandef_usable(hw->wiphy, &tmp_chandef,
+				     IEEE80211_CHAN_DISABLED |
+				     IEEE80211_CHAN_NO_IR))
+		return ATH12K_6GHZ_MODE_VALIDATE_SKIP;
+
+	wmi_pwr_type = ath12k_ieee80211_ap_pwr_type_convert(power_type);
+	if (wmi_pwr_type >= WMI_REG_CURRENT_MAX_AP_TYPE)
+		return ATH12K_6GHZ_MODE_VALIDATE_SKIP;
+
+	if (!ath12k_reg_is_hw_blocklisted_channel_extn(ar->ab, ar->pdev_idx,
+						       tmp_chandef.chan->center_freq,
+						       center_freq, bw,
+						       wmi_pwr_type,
+						       chandef->punctured))
+		return ATH12K_6GHZ_MODE_VALIDATE_PASS;
+
+	ath12k_warn(ar->ab,
+		    "Reject 6 GHz chandef due to HW blocklist: pdev %u freq %u center %u bw %u pwr %u punct 0x%04x\n",
+		    ar->pdev_idx, chandef->chan->center_freq,
+		    center_freq, bw, wmi_pwr_type, chandef->punctured);
+
+	return ATH12K_6GHZ_MODE_VALIDATE_BLOCK;
+}
+
+int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
+				      struct ieee80211_vif *vif,
+				      unsigned int link_id,
+				      const struct cfg80211_chan_def *chandef,
+				      enum ieee80211_ap_reg_power power_type)
+{
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
+	struct ath12k_link_vif *arvif;
+	struct ath12k *ar = NULL;
+	u16 bw, center_freq;
+	bool found = false;
+	int i;
+
+	lockdep_assert_wiphy(hw->wiphy);
+
+	if (!chandef || !chandef->chan ||
+	    chandef->chan->band != NL80211_BAND_6GHZ)
+		return 0;
+
+	arvif = NULL;
+	if (link_id < IEEE80211_MLD_MAX_NUM_LINKS)
+		arvif = wiphy_dereference(hw->wiphy, ahvif->link[link_id]);
+	if (arvif)
+		ar = arvif->ar;
+
+	/* Link may not be created yet (e.g. pre-assoc MLO links). */
+	if (!ar) {
+		for_each_ar(ah, ar, i) {
+			if (chandef->chan->center_freq >=
+				    KHZ_TO_MHZ(ar->freq_range.start_freq) &&
+			    chandef->chan->center_freq <=
+				    KHZ_TO_MHZ(ar->freq_range.end_freq)) {
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			ar = NULL;
+	}
+	if (!ar)
+		return 0;
+
+	bw = nl80211_chan_width_to_mhz(chandef->width);
+	if (!bw)
+		return -EINVAL;
+
+	center_freq = chandef->center_freq1 ? chandef->center_freq1 :
+					      chandef->chan->center_freq;
+
+	if (power_type == IEEE80211_REG_UNSET_AP) {
+		static const enum ieee80211_ap_reg_power pwr_modes[] = {
+			IEEE80211_REG_LPI_AP,
+			IEEE80211_REG_VLP_AP,
+			IEEE80211_REG_SP_AP,
+		};
+
+		for (i = 0; i < ARRAY_SIZE(pwr_modes); i++) {
+			int ret;
+
+			ret = ath12k_mac_validate_6ghz_blocklist_for_pwr_mode(
+				ar, hw, chandef, center_freq, bw,
+				pwr_modes[i]);
+			if (ret == ATH12K_6GHZ_MODE_VALIDATE_PASS)
+				return 0;
+		}
+
+		return -EINVAL;
+	}
+
+	/*
+	 * For a STA validating SP power mode before AFC completion, the
+	 * firmware has not yet provided blocklist data for SP. Pass the
+	 * channel to avoid blocking the connection prematurely.
+	 */
+	if (ahvif->vdev_type == WMI_VDEV_TYPE_STA &&
+	    !ar->afc.is_6ghz_afc_power_event_received &&
+	    power_type == IEEE80211_REG_SP_AP)
+		return 0;
+
+	/*
+	 * Use the power mode decision to handle repeater and AFC-aware cases.
+	 * For repeater AP acting as SP client without local AFC, blocklist
+	 * data is not yet meaningful — pass the channel.
+	 * For all other cases, validate against the effective power mode
+	 * derived by the decision (same as power_type for standalone).
+	 * power_type is retained for debug prints only.
+	 */
+	if (arvif) {
+		struct ieee80211_bss_conf *bss_conf;
+		struct ath12k_6ghz_pwr_mode_decision decision;
+
+		bss_conf = wiphy_dereference(hw->wiphy, vif->link_conf[link_id]);
+		if (bss_conf) {
+			ath12k_mac_get_6ghz_power_mode_decision(ar, arvif,
+								bss_conf,
+								&decision);
+			if (decision.ap_repeater_sp_client)
+				return 0;
+
+			if (ath12k_mac_validate_6ghz_blocklist_for_pwr_mode(
+				    ar, hw, chandef, center_freq, bw,
+				    (enum ieee80211_ap_reg_power)
+				    decision.reg_6g_power_mode) ==
+			    ATH12K_6GHZ_MODE_VALIDATE_BLOCK)
+				return -EINVAL;
+
+			return 0;
+		}
+	}
+
+	/* Fallback when arvif/bss_conf not available (e.g. pre-assoc MLO). */
+	if (ath12k_mac_validate_6ghz_blocklist_for_pwr_mode(
+		    ar, hw, chandef, center_freq, bw, power_type) ==
+	    ATH12K_6GHZ_MODE_VALIDATE_BLOCK)
+		return -EINVAL;
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_validate_6ghz_chandef_extn);
+
+/**
+ * ath12k_change_6g_txpow_sta_mode_validate_extn - Validate SP power mode
+ * against HW blocklist for standalone STA; disconnect if blocked.
+ * @ar: Radio instance
+ * @wdev: Wireless device of the STA vif
+ * @link_id: Link identifier
+ *
+ * Validates the current STA chandef against the HW blocklist for SP power
+ * mode. If blocked, warns and triggers STA disconnect.
+ *
+ * Return: true if HWBL-blocked (caller should abort power mode change),
+ *         false if the channel is valid and caller can proceed.
+ */
+bool ath12k_change_6g_txpow_sta_mode_validate_extn(struct ath12k *ar,
+						    struct wireless_dev *wdev,
+						    u8 link_id)
+{
+	struct ieee80211_vif *vif;
+	struct ieee80211_bss_conf *bss_conf;
+	int ret;
+
+	if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
+		return false;
+
+	lockdep_assert_wiphy(ar->ah->hw->wiphy);
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif)
+		return false;
+
+	bss_conf = wiphy_dereference(ar->ah->hw->wiphy, vif->link_conf[link_id]);
+	if (!bss_conf)
+		return false;
+
+	ret = ath12k_validate_6ghz_chandef_extn(ar->ah->hw, vif, link_id,
+						&bss_conf->chanreq.oper,
+						IEEE80211_REG_SP_AP);
+	if (!ret)
+		return false;
+
+	ath12k_warn(ar->ab,
+		    "HW blocklist rejected STA 6 GHz SP power mode (err %d), disconnecting\n",
+		    ret);
+	ieee80211_disconnect(vif, false);
+	return true;
+}

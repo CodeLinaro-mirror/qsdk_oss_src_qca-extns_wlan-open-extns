@@ -750,6 +750,15 @@ ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
 {
 	return false;
 }
+
+int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
+				      struct ieee80211_vif *vif,
+				      unsigned int link_id,
+				      const struct cfg80211_chan_def *chandef,
+				      enum ieee80211_ap_reg_power power_type)
+{
+	return 0;
+}
 #else
 
 struct ath12k_dp_hw_group_extn {
@@ -1073,6 +1082,20 @@ void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 void ath12k_reg_hw_blocklist_free_extn(struct ath12k_base *ab);
 
 /**
+ * ath12k_change_6g_txpow_sta_mode_validate_extn - Validate SP power mode
+ * against HW blocklist for standalone STA; disconnect if blocked.
+ * @ar: Radio instance
+ * @wdev: Wireless device of the STA vif
+ * @link_id: Link identifier
+ *
+ * Return: true if HWBL-blocked (caller should abort power mode change),
+ *         false if valid.
+ */
+bool ath12k_change_6g_txpow_sta_mode_validate_extn(struct ath12k *ar,
+						    struct wireless_dev *wdev,
+						    u8 link_id);
+
+/**
  * ath12k_wmi_handle_afc_power_info_hwbl_extn - Handle AFC power info for HW blocklist
  * @ab: Pointer to the ath12k base structure
  * @skb: Socket buffer containing the WMI event data
@@ -1168,6 +1191,20 @@ void ath12k_wmi_set_hw_blocklist_host_service_flag_extn(
 void ath12k_wmi_set_hw_blocklist_service_support_extn(
 		struct ath12k_base *ab,
 		struct ath12k_wmi_resource_config_arg *res_cfg);
+
+/**
+ * ath12k_validate_6ghz_chandef_extn - Validate 6GHz channel definition for AP mode
+ * @hw: Pointer to the ieee80211 hardware structure
+ * @vif: Pointer to the ieee80211 virtual interface structure
+ * @link_id: Link identifier for which the validation is being performed
+ * @chandef: Pointer to the channel definition to be validated
+ * @power_type: Regulatory power type for AP mode
+ */
+int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
+				      struct ieee80211_vif *vif,
+				      unsigned int link_id,
+				      const struct cfg80211_chan_def *chandef,
+				      enum ieee80211_ap_reg_power power_type);
 
 /**
  * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery

@@ -9,7 +9,7 @@
 #include <linux/notifier.h>
 #include "ath12k_notif.h"
 
-extern struct ath12k_smart_ant_ops *g_sa_ops;
+extern struct ath12k_smart_ant_ops __rcu *g_sa_ops;
 extern atomic_t ag_sa_init;
 
 /* PPDU notifier block for Smart Antenna */
@@ -73,14 +73,18 @@ static struct ath12k_link_sta *sa_core_get_sta_from_device(u8 device_id, u8 *sta
 
 static inline int sa_core_get_txantenna(void *ccp, u32 *antenna_array)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_txantenna || !antenna_array) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_txantenna || !antenna_array) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_txantenna invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_txantenna(ccp, antenna_array);
+	ret = ops->sa_get_txantenna(ccp, antenna_array);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_txantenna op failed (%d)\n", ret);
 
@@ -89,14 +93,18 @@ static inline int sa_core_get_txantenna(void *ccp, u32 *antenna_array)
 
 static inline int sa_core_get_txdefaultantenna(u8 radio_id, u32 *antenna)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_txdefaultantenna || !antenna) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_txdefaultantenna || !antenna) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_txdefaultantenna invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_txdefaultantenna(radio_id, antenna);
+	ret = ops->sa_get_txdefaultantenna(radio_id, antenna);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_txdefaultantenna op failed (%d)\n", ret);
 
@@ -105,14 +113,18 @@ static inline int sa_core_get_txdefaultantenna(u8 radio_id, u32 *antenna)
 
 static inline int sa_core_get_rxantenna(u8 radio_id, u32 *rx_antenna)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_rxantenna || !rx_antenna) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_rxantenna || !rx_antenna) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_rxantenna invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_rxantenna(radio_id, rx_antenna);
+	ret = ops->sa_get_rxantenna(radio_id, rx_antenna);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_rxantenna op failed (%d)\n", ret);
 
@@ -122,16 +134,19 @@ static inline int sa_core_get_rxantenna(u8 radio_id, u32 *rx_antenna)
 static inline int sa_core_get_traininginfo(void *ccp, u32 *rate_array,
 					   u32 *antenna_array, u32 *numpkts)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_traininginfo ||
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_traininginfo ||
 	    !rate_array || !antenna_array || !numpkts) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_traininginfo invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_traininginfo(ccp, rate_array,
-					    antenna_array, numpkts);
+	ret = ops->sa_get_traininginfo(ccp, rate_array, antenna_array, numpkts);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_traininginfo op failed (%d)\n", ret);
 
@@ -140,14 +155,18 @@ static inline int sa_core_get_traininginfo(void *ccp, u32 *rate_array,
 
 static inline int sa_core_get_bcn_txantenna(u8 radio_id, u32 *bcn_txantenna)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_bcn_txantenna || !bcn_txantenna) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_bcn_txantenna || !bcn_txantenna) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_bcn_txantenna invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_bcn_txantenna(radio_id, bcn_txantenna);
+	ret = ops->sa_get_bcn_txantenna(radio_id, bcn_txantenna);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_bcn_txantenna op failed (%d)\n", ret);
 
@@ -156,14 +175,18 @@ static inline int sa_core_get_bcn_txantenna(u8 radio_id, u32 *bcn_txantenna)
 
 static inline int sa_core_get_param(struct ath12k_sa_config_params *params)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_param || !params) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_param || !params) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_param invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_param(params);
+	ret = ops->sa_get_param(params);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_param op failed (%d)\n", ret);
 
@@ -172,14 +195,18 @@ static inline int sa_core_get_param(struct ath12k_sa_config_params *params)
 
 static inline int sa_core_get_node_config(void *ccp, u32 id, u32 *config)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_node_config || !config) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_node_config || !config) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_node_config invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_node_config(ccp, id, config);
+	ret = ops->sa_get_node_config(ccp, id, config);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_node_config op failed (%d)\n", ret);
 
@@ -189,15 +216,18 @@ static inline int sa_core_get_node_config(void *ccp, u32 id, u32 *config)
 static inline
 int sa_core_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_ext_traininginfo ||
-	    !minpkts || !per_th) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_ext_traininginfo || !minpkts || !per_th) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_ext_traininginfo invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_ext_traininginfo(ccp, minpkts, per_th);
+	ret = ops->sa_get_ext_traininginfo(ccp, minpkts, per_th);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_ext_traininginfo op failed (%d)\n", ret);
 
@@ -207,14 +237,18 @@ int sa_core_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th)
 static inline
 int sa_core_get_gpio_config(u8 radio_id, struct ath12k_sa_gpio_config *gpio_cfg)
 {
+	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
-	if (!g_sa_ops || !g_sa_ops->sa_get_gpio_config || !gpio_cfg) {
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_gpio_config || !gpio_cfg) {
+		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_gpio_config invalid ops/args\n");
 		return -1;
 	}
-
-	ret = g_sa_ops->sa_get_gpio_config(radio_id, gpio_cfg);
+	ret = ops->sa_get_gpio_config(radio_id, gpio_cfg);
+	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_gpio_config op failed (%d)\n", ret);
 
@@ -239,6 +273,7 @@ void sa_get_cfg_flags(struct ath12k_base *ab, u8 *sa_en, u8 *sa_sw_test)
 static void sa_core_peer_connect_notify(struct ath12k_link_sta *arsta,
 					struct ath12k_sa_rate_cap *rate_cap)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct ieee80211_channel *chan;
 	struct ieee80211_link_sta *link_sta;
 	struct ath12k *ar;
@@ -246,18 +281,25 @@ static void sa_core_peer_connect_notify(struct ath12k_link_sta *arsta,
 	struct sa_sta_extn *sa_sta;
 	struct ath12k_sa_node_info node_info = {0};
 
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
 	if (!arsta || !arsta->arvif || !arsta->arvif->ar || !rate_cap ||
-	    !g_sa_ops || !g_sa_ops->sa_peer_connect)
+	    !ops || !ops->sa_peer_connect) {
+		rcu_read_unlock();
 		return;
+	}
 
 	arvif = arsta->arvif;
 	ar = arvif->ar;
-	if (!ar->ab || !ath12k_smart_ant_is_enable(ar->ab))
+	if (!ar->ab || !ath12k_smart_ant_is_enable(ar->ab)) {
+		rcu_read_unlock();
 		return;
+	}
 
 	link_sta = ath12k_mac_get_link_sta(arsta);
 	if (!link_sta) {
 		ath12k_err(ar->ab, "sa_core: unable to access link_sta\n");
+		rcu_read_unlock();
 		return;
 	}
 	sa_sta = &arsta->arsta_extn.sa_sta;
@@ -286,27 +328,36 @@ static void sa_core_peer_connect_notify(struct ath12k_link_sta *arsta,
 	else if (link_sta->ht_cap.ht_supported)
 		node_info.opmode = SA_OPMODE_HT;
 
-	if (g_sa_ops->sa_peer_connect(&sa_sta->ctx, &node_info))
+	if (ops->sa_peer_connect(&sa_sta->ctx, &node_info))
 		ath12k_err(ar->ab, "sa_core: unable to update STA info\n");
+	rcu_read_unlock();
 }
 
 void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct sa_sta_extn *sa_sta;
 	struct ath12k *ar;
 
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
 	if (!arsta || !arsta->arvif || !arsta->arvif->ar ||
-	    !g_sa_ops || !g_sa_ops->sa_peer_disconnect)
+	    !ops || !ops->sa_peer_disconnect) {
+		rcu_read_unlock();
 		return;
+	}
 
 	ar = arsta->arvif->ar;
-	if (!ar->ab || !ath12k_smart_ant_is_enable(ar->ab))
+	if (!ar->ab || !ath12k_smart_ant_is_enable(ar->ab)) {
+		rcu_read_unlock();
 		return;
+	}
 
 	sa_sta = &arsta->arsta_extn.sa_sta;
 	if (sa_sta->ctx)
-		g_sa_ops->sa_peer_disconnect(sa_sta->ctx);
+		ops->sa_peer_disconnect(sa_sta->ctx);
 	sa_sta->ctx = NULL;
+	rcu_read_unlock();
 }
 
 static int
@@ -775,22 +826,27 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 
 static int sa_core_trigger_training(struct ath12k_link_sta *arsta, u8 *macaddr)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct sa_sta_extn *sa_sta = &arsta->arsta_extn.sa_sta;
 	struct smart_ant_train_info param = {0};
 	int ret = 0;
 
 	param.vdev_id = arsta->arvif->vdev_id;
-	if (g_sa_ops->sa_get_traininginfo)
-		ret = g_sa_ops->sa_get_traininginfo(sa_sta->ctx,
-						    &param.rate_array[0],
-						    &param.antenna_array[0],
-						    &param.numpkts);
+
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (ops && ops->sa_get_traininginfo)
+		ret = ops->sa_get_traininginfo(sa_sta->ctx,
+					       &param.rate_array[0],
+					       &param.antenna_array[0],
+					       &param.numpkts);
 	param.minpkts = SA_INVALID_PARAM_VALUE;
 	param.per_th = SA_INVALID_PARAM_VALUE;
-	if (g_sa_ops->sa_get_ext_traininginfo)
-		g_sa_ops->sa_get_ext_traininginfo(sa_sta->ctx,
-						  &param.minpkts,
-						  &param.per_th);
+	if (ops && ops->sa_get_ext_traininginfo)
+		ops->sa_get_ext_traininginfo(sa_sta->ctx,
+					     &param.minpkts,
+					     &param.per_th);
+	rcu_read_unlock();
 
 	if (!ret)
 		ret = sa_core_wmi_set_train_info(arsta->arvif->ar,
@@ -805,6 +861,7 @@ static int sa_core_trigger_training(struct ath12k_link_sta *arsta, u8 *macaddr)
 
 static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct ath12k_sa_rx_feedback rx = {0};
 	struct hal_rx_mon_ppdu_info *ppdu;
 	struct hal_rx_user_status *stats;
@@ -815,7 +872,8 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 	u32 value = 0;
 	int i, j;
 
-	if (!g_sa_ops || !g_sa_ops->sa_update_rxfeedback)
+	/* Quick guard: bail early if no ops registered */
+	if (!rcu_access_pointer(g_sa_ops))
 		return -1;
 
 	ppdu = &rx_info->ppdu_info;
@@ -842,11 +900,20 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 			rx.rx_rssi[i][j] = ppdu->rssi_chain[i][j];
 	rx.rx_rate_index = ppdu->bw;
 
-	if (g_sa_ops->sa_update_rxfeedback(sa_sta->ctx, &rx, &status)) {
-		ath12k_err(ar->ab, "Failed to update RX Feedback for %pM",
-			   stats->peer_mac);
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_update_rxfeedback) {
+		rcu_read_unlock();
 		return -1;
 	}
+	if (ops->sa_update_rxfeedback(sa_sta->ctx, &rx, &status)) {
+		ath12k_err(ar->ab, "Failed to update RX Feedback for %pM",
+			   stats->peer_mac);
+		rcu_read_unlock();
+		return -1;
+	}
+	rcu_read_unlock();
+
 	if (status & SA_RX_CONFIG_REQUIRED) {
 		sa_core_get_rxantenna(ar->radio_idx, &value);
 		sa_core_wmi_set_rx_antenna(ar, value);
@@ -860,6 +927,7 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 static int sa_core_get_tx_user_stats(struct htt_ppdu_user_stats *stats,
 				     struct ath12k_ppdu_tx_info *tx_info)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct ath12k *ar;
 	struct ath12k_link_sta *arsta;
 	struct sa_sta_extn *sa_sta;
@@ -934,11 +1002,20 @@ static int sa_core_get_tx_user_stats(struct htt_ppdu_user_stats *stats,
 			tx.nshort_retries[tx.rate_index] -= 1;
 	}
 
-	if (g_sa_ops->sa_update_txfeedback(sa_sta->ctx, &tx, &status)) {
-		ath12k_err(ar->ab, "Failed to update TX Feedback for %pM",
-			   stats->peer_mac);
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_update_txfeedback) {
+		rcu_read_unlock();
 		return -1;
 	}
+	if (ops->sa_update_txfeedback(sa_sta->ctx, &tx, &status)) {
+		ath12k_err(ar->ab, "Failed to update TX Feedback for %pM",
+			   stats->peer_mac);
+		rcu_read_unlock();
+		return -1;
+	}
+	rcu_read_unlock();
+
 	if (status & SA_RX_CONFIG_REQUIRED) {
 		sa_core_get_rxantenna(ar->radio_idx, &value);
 		sa_core_wmi_set_rx_antenna(ar, value);
@@ -964,7 +1041,8 @@ static int sa_core_update_tx_feedback(struct ath12k_ppdu_tx_info *tx_info)
 	struct htt_ppdu_stats_info *ppdu;
 	int i;
 
-	if (!g_sa_ops || !g_sa_ops->sa_update_txfeedback)
+	/* Quick guard: bail early if no ops registered */
+	if (!rcu_access_pointer(g_sa_ops))
 		return -1;
 
 	ppdu = &tx_info->ppdu_info;
@@ -1056,17 +1134,29 @@ static inline void sa_core_extract_mac_from_params(u32 *params, u8 *mac)
 
 int sa_core_get_configs(struct ath12k *ar, u32 *params)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct ath12k_sa_config_params sa_params = {0};
 	struct sa_sta_extn *sa_sta = NULL;
 	struct ath12k_link_sta *arsta = NULL;
 	u8 mac[ETH_ALEN] = {0};
 	int ret = 0;
 
-	if (!ar || !ar->ab || !params || !g_sa_ops || !g_sa_ops->sa_get_param)
+	if (!ar || !ar->ab || !params)
 		return -EINVAL;
 
 	if (!ath12k_smart_ant_is_enable(ar->ab))
 		return -EPERM;
+	/*
+	 * Hold rcu_read_lock() for the entire operation so that the ops
+	 * pointer and the function pointers it contains remain valid for
+	 * the duration of the call into the algorithm module.
+	 */
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_param) {
+		rcu_read_unlock();
+		return -EINVAL;
+	}
 
 	sa_params.radio_id = ar->radio_idx;
 	sa_params.param_type = (params[0] & SA_PARM_TYPE_MASK) >>
@@ -1076,22 +1166,25 @@ int sa_core_get_configs(struct ath12k *ar, u32 *params)
 	if (sa_params.param_type) {
 		sa_core_extract_mac_from_params(params, mac);
 
-		rcu_read_lock();
+		/* ath12k_link_sta_find_by_addr() requires rcu_read_lock(),
+		 * which is already held above — no need to nest it again.
+		 */
 		arsta = ath12k_link_sta_find_by_addr(ar->ab, mac);
 		if (!arsta) {
 			ath12k_err(ar->ab, "STA not found %pM\n", mac);
 			rcu_read_unlock();
 			return -EPERM;
 		}
-		rcu_read_unlock();
 		sa_sta = &arsta->arsta_extn.sa_sta;
 		if (!sa_sta->ctx) {
 			ath12k_err(ar->ab, "Invalid context for STA %pM\n", mac);
+			rcu_read_unlock();
 			return -EPERM;
 		}
 		sa_params.ccp = sa_sta->ctx;
 	}
-	ret = g_sa_ops->sa_get_param(&sa_params);
+	ret = ops->sa_get_param(&sa_params);
+	rcu_read_unlock();
 	params[3] = sa_params.param_value;
 
 	return ret;
@@ -1099,6 +1192,7 @@ int sa_core_get_configs(struct ath12k *ar, u32 *params)
 
 int sa_core_set_configs(struct ath12k *ar, u32 *params)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct ath12k_sa_config_params sa_params = {0};
 	struct sa_sta_extn *sa_sta = NULL;
 	struct ath12k_link_sta *arsta = NULL;
@@ -1107,11 +1201,23 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 	u8 mac[ETH_ALEN] = {0};
 	int ret = 0;
 
-	if (!ar || !ar->ab || !params || !g_sa_ops || !g_sa_ops->sa_set_param)
+	if (!ar || !ar->ab || !params)
 		return -EINVAL;
 
 	if (!ath12k_smart_ant_is_enable(ar->ab))
 		return -EPERM;
+
+	/*
+	 * Hold rcu_read_lock() for the entire operation so that the ops
+	 * pointer and the function pointers it contains remain valid for
+	 * the duration of the call into the algorithm module.
+	 */
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_set_param) {
+		rcu_read_unlock();
+		return -EINVAL;
+	}
 
 	sa_params.radio_id = ar->radio_idx;
 	sa_params.param_type = (params[0] & SA_PARM_TYPE_MASK) >>
@@ -1122,22 +1228,25 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 	if (sa_params.param_type) {
 		sa_core_extract_mac_from_params(params, mac);
 
-		rcu_read_lock();
+		/* ath12k_link_sta_find_by_addr() requires rcu_read_lock(),
+		 * which is already held above — no need to nest it again.
+		 */
 		arsta = ath12k_link_sta_find_by_addr(ar->ab, mac);
 		if (!arsta) {
 			ath12k_err(ar->ab, "STA not found %pM\n", mac);
 			rcu_read_unlock();
 			return -EPERM;
 		}
-		rcu_read_unlock();
 		sa_sta = &arsta->arsta_extn.sa_sta;
 		if (!sa_sta->ctx) {
 			ath12k_err(ar->ab, "Invalid context for STA %pM\n", mac);
+			rcu_read_unlock();
 			return -EPERM;
 		}
 		sa_params.ccp = sa_sta->ctx;
 	}
-	ret = g_sa_ops->sa_set_param(&sa_params);
+	ret = ops->sa_set_param(&sa_params);
+	rcu_read_unlock();
 	if (ret > 0) {
 		if (ret & SA_RX_CONFIG_REQUIRED) {
 			sa_core_get_rxantenna(ar->radio_idx, &value);
@@ -1176,6 +1285,7 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 int sa_core_init(struct ath12k *ar,
 		 struct ath12k_link_vif *arvif, u8 init_flags)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct sa_base_extn *sa_base;
 	struct sa_ar_extn *sa_ar;
 	struct ath12k_base *ab;
@@ -1188,10 +1298,11 @@ int sa_core_init(struct ath12k *ar,
 	u32 tx_ant[WMI_SMART_ANT_MAX_RATE_SERIES] = {0};
 	u8 i, ret;
 
-	if (!g_sa_ops || !ar || !arvif || !ar->ab)
+	if (!ar || !arvif || !ar->ab)
 		return -1;
 
-	if (!g_sa_ops->sa_algo_init)
+	/* Quick guard: bail early if no ops registered */
+	if (!rcu_access_pointer(g_sa_ops))
 		return -1;
 
 	ab = ar->ab;
@@ -1226,7 +1337,21 @@ int sa_core_init(struct ath12k *ar,
 		init_cfg.band = chan->band;
 		init_cfg.chan_num = chan->hw_value;
 	}
-	sa_mode = g_sa_ops->sa_algo_init(&init_cfg, init_flags);
+
+	/*
+	 * Re-check ops under RCU before calling into the algorithm module.
+	 * rmmod sa_test may have raced between the guard above and here.
+	 */
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_algo_init) {
+		rcu_read_unlock();
+		atomic_dec(&ag_sa_init);
+		return -1;
+	}
+	sa_mode = ops->sa_algo_init(&init_cfg, init_flags);
+	rcu_read_unlock();
+
 	if (sa_mode < 0) {
 		ath12k_err(ab, "SA Init error (%d)\n", sa_mode);
 		atomic_dec(&ag_sa_init);
@@ -1287,13 +1412,18 @@ int sa_core_init(struct ath12k *ar,
 
 int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 {
+	struct ath12k_smart_ant_ops *ops;
 	struct sa_base_extn *sa_base;
 	struct sa_ar_extn *sa_ar;
 	struct ath12k_base *ab;
 	struct ath12k_sa_gpio_config gpio_cfg = {0};
 	int ret;
 
-	if (!g_sa_ops || !ar || !ar->ab)
+	if (!ar || !ar->ab)
+		return -1;
+
+	/* Quick guard: bail early if no ops registered */
+	if (!rcu_access_pointer(g_sa_ops))
 		return -1;
 
 	ab = ar->ab;
@@ -1311,8 +1441,15 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 	}
 	if (init_flags) {
 		atomic_dec(&ag_sa_init);
-		if (g_sa_ops->sa_algo_deinit)
-			g_sa_ops->sa_algo_deinit(ar->radio_idx);
+
+		/* Call deinit under RCU so the module cannot be unloaded
+		 * while we are executing inside it.
+		 */
+		rcu_read_lock();
+		ops = rcu_dereference(g_sa_ops);
+		if (ops && ops->sa_algo_deinit)
+			ops->sa_algo_deinit(ar->radio_idx);
+		rcu_read_unlock();
 
 		/*
 		 * Unregister the notifier first, then clear the cached

@@ -531,6 +531,8 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_all_extn(struct wiphy *wiph
 {
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct ath12k_hw *ah = hw->priv;
+	struct ath12k_hw_blocklist_state *hw_bl_snapshots;
+	bool *hw_bl_snapshot_valid;
 	struct sk_buff *reply_skb = NULL;
 	struct nlattr *radio_list = NULL;
 	struct nlattr *radio_info = NULL;
@@ -541,9 +543,21 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_all_extn(struct wiphy *wiph
 	bool has_6ghz_radio = false;
 	int ret;
 
-	for (radio_id = 0; radio_id < ah->num_radio; radio_id++) {
-		struct ath12k_hw_blocklist_state snap = {};
+	hw_bl_snapshots = kcalloc(ah->num_radio, sizeof(*hw_bl_snapshots), GFP_KERNEL);
+	if (!hw_bl_snapshots)
+		return -ENOMEM;
 
+	hw_bl_snapshot_valid = kcalloc(ah->num_radio, sizeof(*hw_bl_snapshot_valid), GFP_KERNEL);
+	if (!hw_bl_snapshot_valid) {
+		kfree(hw_bl_snapshots);
+		return -ENOMEM;
+	}
+
+	/* Take snapshots upfront and reuse them in the fill pass below.
+	 * A new WMI event between the two passes could grow the data beyond
+	 * the already-allocated SKB, causing nla_put to silently fail.
+	 */
+	for (radio_id = 0; radio_id < ah->num_radio; radio_id++) {
 		ar = &ah->radio[radio_id];
 		if (!ar->supports_6ghz)
 			continue;
@@ -551,30 +565,38 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_all_extn(struct wiphy *wiph
 		has_6ghz_radio = true;
 		ret = ath12k_vendor_validate_hw_blocked_chans_state_extn(ar, radio_id);
 		if (ret)
-			return ret;
+			goto free_snaps;
 
-		ret = ath12k_reg_hw_blocklist_snapshot_extn(ar->ab, ar->pdev_idx, &snap);
+		ret = ath12k_reg_hw_blocklist_snapshot_extn(ar->ab, ar->pdev_idx,
+							    &hw_bl_snapshots[radio_id]);
 		if (ret)
-			memset(&snap, 0, sizeof(snap));
+			memset(&hw_bl_snapshots[radio_id], 0, sizeof(hw_bl_snapshots[radio_id]));
+		hw_bl_snapshot_valid[radio_id] = true;
 
 		radio_reply_len =
-		    ath12k_hw_blocked_chans_event_update_or_get_len_extn(NULL, &snap,
+		    ath12k_hw_blocked_chans_event_update_or_get_len_extn(NULL,
+									 &hw_bl_snapshots[radio_id],
 									 radio_id);
-		ath12k_reg_hw_blocklist_free_snapshot_extn(&snap);
-		if (radio_reply_len <= 0)
-			return -EINVAL;
+		if (radio_reply_len <= 0) {
+			ret = -EINVAL;
+			goto free_snaps;
+		}
 
 		reply_len += nla_total_size(0); /* radio_info nest header */
 		reply_len += radio_reply_len;
 	}
 
-	if (!has_6ghz_radio)
-		return -EOPNOTSUPP;
+	if (!has_6ghz_radio) {
+		ret = -EOPNOTSUPP;
+		goto free_snaps;
+	}
 
 	reply_len += nla_total_size(0); /* radio_list nest header */
 	reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_HDRLEN + reply_len);
-	if (!reply_skb)
-		return -ENOMEM;
+	if (!reply_skb) {
+		ret = -ENOMEM;
+		goto free_snaps;
+	}
 
 	radio_list = nla_nest_start(reply_skb,
 				    QCA_WLAN_VENDOR_ATTR_HW_BLOCKED_CHANS_RESP_RADIO_LIST);
@@ -583,28 +605,21 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_all_extn(struct wiphy *wiph
 		goto fail;
 	}
 
+	/* Fill using the snapshots from above — no re-snapshot needed. */
 	for (radio_id = 0; radio_id < ah->num_radio; radio_id++) {
-		struct ath12k_hw_blocklist_state snap = {};
-
 		ar = &ah->radio[radio_id];
 		if (!ar->supports_6ghz)
 			continue;
 
-		ret = ath12k_reg_hw_blocklist_snapshot_extn(ar->ab, ar->pdev_idx, &snap);
-		if (ret)
-			memset(&snap, 0, sizeof(snap));
-
 		radio_info = nla_nest_start(reply_skb, radio_id);
 		if (!radio_info) {
-			ath12k_reg_hw_blocklist_free_snapshot_extn(&snap);
 			ret = -EINVAL;
 			goto fail;
 		}
 
 		ret = ath12k_hw_blocked_chans_event_update_or_get_len_extn(reply_skb,
-									   &snap,
+									   &hw_bl_snapshots[radio_id],
 									   radio_id);
-		ath12k_reg_hw_blocklist_free_snapshot_extn(&snap);
 		if (ret)
 			goto fail;
 
@@ -614,12 +629,25 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_all_extn(struct wiphy *wiph
 
 	nla_nest_end_checked(reply_skb, radio_list);
 	radio_list = NULL;
+
+	for (radio_id = 0; radio_id < ah->num_radio; radio_id++)
+		if (hw_bl_snapshot_valid[radio_id])
+			ath12k_reg_hw_blocklist_free_snapshot_extn(&hw_bl_snapshots[radio_id]);
+
+	kfree(hw_bl_snapshot_valid);
+	kfree(hw_bl_snapshots);
 	return cfg80211_vendor_cmd_reply(reply_skb);
 
 fail:
 	nla_nest_end_checked(reply_skb, radio_info);
 	nla_nest_end_checked(reply_skb, radio_list);
 	kfree_skb(reply_skb);
+free_snaps:
+	for (radio_id = 0; radio_id < ah->num_radio; radio_id++)
+		if (hw_bl_snapshot_valid[radio_id])
+			ath12k_reg_hw_blocklist_free_snapshot_extn(&hw_bl_snapshots[radio_id]);
+	kfree(hw_bl_snapshot_valid);
+	kfree(hw_bl_snapshots);
 	return ret;
 }
 

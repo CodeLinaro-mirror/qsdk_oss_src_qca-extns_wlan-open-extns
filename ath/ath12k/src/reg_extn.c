@@ -1192,7 +1192,7 @@ static int ath12k_reg_hw_blocklist_idx_width_extn(u32 num_entries)
 	return max(digits, ATH12K_HWBL_IDX_MIN_WIDTH);
 }
 
-static void
+void
 ath12k_reg_hw_blocklist_free_snapshot_extn(struct ath12k_hw_blocklist_state *snapshot)
 {
 	int i;
@@ -1201,7 +1201,7 @@ ath12k_reg_hw_blocklist_free_snapshot_extn(struct ath12k_hw_blocklist_state *sna
 		ath12k_reg_hw_blocklist_free_chans_extn(&snapshot->pwr[i]);
 }
 
-static int
+int
 ath12k_reg_hw_blocklist_snapshot_extn(struct ath12k_base *ab, u8 phy_id,
 				      struct ath12k_hw_blocklist_state *snapshot)
 {

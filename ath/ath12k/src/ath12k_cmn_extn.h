@@ -400,6 +400,8 @@ struct ath12k_pdev_mon_dp_extn {
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
 
+struct ath12k *ath12k_get_radio_by_id(struct wiphy *wiphy, u8 radio_id);
+
 /*
  * struct ath12k_mgmt_irq_grp_extn - Driver private extension for mgmt irq_grp
  * @priority: Priority interrupt
@@ -1080,6 +1082,9 @@ void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
  * @ab: Pointer to the ath12k base structure
  */
 void ath12k_reg_hw_blocklist_free_extn(struct ath12k_base *ab);
+int ath12k_reg_hw_blocklist_snapshot_extn(struct ath12k_base *ab, u8 phy_id,
+					  struct ath12k_hw_blocklist_state *snapshot);
+void ath12k_reg_hw_blocklist_free_snapshot_extn(struct ath12k_hw_blocklist_state *snapshot);
 
 /**
  * ath12k_change_6g_txpow_sta_mode_validate_extn - Validate SP power mode

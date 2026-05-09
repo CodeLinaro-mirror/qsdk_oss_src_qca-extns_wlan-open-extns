@@ -297,6 +297,15 @@ int ath12k_vendor_peer_ulofdma_rtd_extn(struct wiphy *wiphy,
     return -1;
 }
 
+static inline int
+ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
+					struct wireless_dev *wdev,
+					const void *data,
+					int data_len)
+{
+    return -1;
+}
+
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy,
 					   struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
@@ -458,6 +467,19 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       const void *data,
 				       int data_len);
+
+/**
+ * ath12k_vendor_get_hw_blocked_chans_extn - Get hardware blocked channels command handler
+ * @wiphy - WIPHY pointer
+ * @wdev - Wireless dev pointer
+ * @data - Pointer to command data
+ * @data_len - Length of command data
+ * Return 0 on success and -ve on failure
+ */
+int ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
+					    struct wireless_dev *wdev,
+					    const void *data,
+					    int data_len);
 
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params);

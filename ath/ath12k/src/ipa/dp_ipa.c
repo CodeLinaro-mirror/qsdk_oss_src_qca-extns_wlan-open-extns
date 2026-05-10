@@ -1865,7 +1865,8 @@ bool ipa_is_wds_enabled(void)
 	return g_ipa_config ? g_ipa_config->ipa_wds : 0;
 }
 
-int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id, bool mld_enabled)
+int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id,
+			 bool mld_enabled, u8 link_id, struct ath12k_ipa *ipa_ctx)
 {
 	int ret;
 	ret = ipa_wdi_dereg_intf_per_inst_mlo(ifname, hdl, session_id, mld_enabled);
@@ -1873,6 +1874,8 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id, bool m
 		ath12k_err(NULL, "ipa_wdi_dereg_intf: IPA pipe deregistration failed: ret=%d \n", ret);
 		return -EPERM;
 	}
+
+	ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx, ifname, link_id);
 
 	return 0;
 }
@@ -1885,7 +1888,8 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 		       u16 session_id, bool is_ipv6_enabled,
 		       ipa_wdi_hdl_t hdl,
 		       bool is_tx1_used,
-		       int is_mlo)
+		       int is_mlo,
+		       u8 link_id)
 {
 	struct ipa_wdi_reg_intf_in_params in = { 0 };
 	struct ipa_wdi_hdr_info hdr_info = { 0 };
@@ -1928,7 +1932,7 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 	dp_ipa_setup_iface_session_id(&in, session_id, is_tx1_used);
 
-	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(ipa_ctx, &in);
+	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(ipa_ctx, link_id, &in);
 	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(ipa_ctx, &in, intf_idx);
 
 	/* IPV6 header */
@@ -1952,10 +1956,9 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 
 void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
-			    const u8 *mac_addr,
-			    ipa_wdi_hdl_t hdl,
-			    u16 session_id,
-			    bool mld_enabled)
+			    const u8 *mac_addr, ipa_wdi_hdl_t hdl,
+			    u16 session_id, bool mld_enabled,
+			    u8 link_id)
 {
 	struct ath12k_ipa *ipa_ctx = iface_context->ipa_ctx;
 	char *ifname;
@@ -1965,9 +1968,9 @@ void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 	ifname = wlan_ipa_get_iface_ifname(iface_context);
 
-	if (dp_ipa_cleanup_iface(ifname, hdl, session_id, mld_enabled)) {
+	if (dp_ipa_cleanup_iface(ifname, hdl, session_id,
+				 mld_enabled, link_id, ipa_ctx))
 		ath12k_err(ipa_ctx->ab, "ipa_cleanup_iface failed \n");
-	}
 
 	if (iface_context->device_mode == ATH12K_IPA_SAP) {
 		if(ipa_ctx->num_sap_connected > 0) {
@@ -2009,7 +2012,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 			 enum ath12k_ipa_opmode device_mode,
 			 u16 session_id,
 			 const u8 *mac_addr,
-			 bool is_2g_iface, bool is_mlo_vdev, bool is_tx1_used)
+			 bool is_2g_iface, bool is_mlo_vdev,
+			 bool is_tx1_used, u8 link_id)
 {
 	struct ath12k_ipa_iface_context *iface_context = NULL;
 	int status = 0;
@@ -2027,9 +2031,13 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 				}
 			}
 
-			wlan_ipa_cleanup_iface(iface_context, NULL, ipa_ctx->hdl, session_id, is_mlo_vdev);
+			wlan_ipa_cleanup_iface(iface_context, NULL,
+					       ipa_ctx->hdl, session_id,
+					       is_mlo_vdev, link_id);
 		} else if (iface_context->session_id == session_id) {
-			wlan_ipa_cleanup_iface(iface_context, NULL, ipa_ctx->hdl, session_id, is_mlo_vdev);
+			wlan_ipa_cleanup_iface(iface_context, NULL,
+					       ipa_ctx->hdl, session_id,
+					       is_mlo_vdev, link_id);
 		}
 	}
 
@@ -2085,7 +2093,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 						    ipv6_en,
 						    ipa_ctx->hdl,
 						    is_tx1_used,
-						    is_mlo_vdev);
+						    is_mlo_vdev,
+						    link_id);
 		} else {
 			status = dp_ipa_setup_iface(iface_context,
 						    (u8 *)net_dev_priv->dev_addr,
@@ -2095,7 +2104,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 						    ipv6_en,
 						    ipa_ctx->hdl,
 						    is_tx1_used,
-						    is_mlo_vdev);
+						    is_mlo_vdev,
+						    link_id);
 		}
 
 		if (status)
@@ -2111,7 +2121,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 
 end:
 	if (iface_context)
-		wlan_ipa_cleanup_iface(iface_context, mac_addr, ipa_ctx->hdl, session_id, is_mlo_vdev);
+		wlan_ipa_cleanup_iface(iface_context, mac_addr, ipa_ctx->hdl, session_id,
+				       is_mlo_vdev, link_id);
 
 	return status;
 }
@@ -2193,7 +2204,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			enum ipa_wlan_event event,
 			u32 vdev_id, u8 pdev_idx, const u8 mac[ETH_ALEN],
 			struct dp_ipa_net_device_priv *dev, enum nl80211_iftype mode,
-			enum nl80211_band band, bool is_mlo)
+			enum nl80211_band band, bool is_mlo, u8 link_id)
 {
 	struct ath12k_ipa_iface_context *iface_ctx = NULL;
 	struct ath12k_base *ab;
@@ -2279,7 +2290,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 				mlo = iface_ctx->is_mlo_vdev;
 				ipa_ctx->sta_connected--;
 				wlan_ipa_cleanup_iface(iface_ctx, NULL, ipa_ctx->hdl,
-						       id, mlo);
+						       id, mlo, link_id);
 			}
 			if (ath12k_wlan_ipa_send_msg(ipa_ctx, WLAN_STA_DISCONNECT,
 						     mac, dev, mlo, id) != 0) {
@@ -2288,8 +2299,10 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 				goto end;
 			}
 		}
-		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode, session_id, mac,
-					 is_2g_iface, is_mlo, is_tx1_used) != 0) {
+		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode,
+					 session_id, mac,
+					 is_2g_iface, is_mlo,
+					 is_tx1_used, link_id) != 0) {
 			ath12k_err(ab, "Setup iface failed\n");
 			mutex_unlock(&ipa_ctx->event_lock);
 			goto end;
@@ -2324,8 +2337,10 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			mutex_unlock(&ipa_ctx->event_lock);
 			return 0;
 		}
-		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode, session_id, mac,
-					 is_2g_iface, is_mlo, is_tx1_used) != 0) {
+		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode,
+					 session_id, mac,
+					 is_2g_iface, is_mlo,
+					 is_tx1_used, link_id) != 0) {
 			ath12k_err(ab, "Setup iface failed\n");
 			mutex_unlock(&ipa_ctx->event_lock);
 			goto end;
@@ -2359,7 +2374,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			if (iface) {
 				ath12k_info(ab, "Found existing STA iface\n");
 				wlan_ipa_cleanup_iface(iface, mac, ipa_ctx->hdl,
-						       session_id, is_mlo);
+						       session_id, is_mlo, link_id);
 			}
 			return -EINVAL;
 		}
@@ -2383,7 +2398,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		if (iface_ctx) {
 			ath12k_info(ab, "Found existing STA iface\n");
 			wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
-					       session_id, is_mlo);
+					       session_id, is_mlo, link_id);
 		}
 		mutex_unlock(&ipa_ctx->event_lock);
 		ath12k_info(ab, "STA connected = %d, vdev_to_iface[%u] = %u\n",
@@ -2408,7 +2423,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 							       dev, session_id)) {
 				ath12k_info(ab, "Found matching AP iface\n");
 				wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
-						       session_id, is_mlo);
+						       session_id, is_mlo, link_id);
 				break;
 			}
 		}
@@ -2611,7 +2626,8 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 							    entry->mac_addr, &entry->dev,
 							    NL80211_IFTYPE_AP,
 							    NL80211_BAND_UNSPECIFIED,
-							    entry->is_mlo);
+							    entry->is_mlo,
+							    ATH12K_INVALID_LINK_ID);
 					rhashtable_remove_fast(ctx->mac_table,
 							       &entry->node,
 							       ctx->mac_table_params);
@@ -2670,7 +2686,8 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 					    &curr_evt->dev,
 					    curr_evt->mode,
 					    curr_evt->band,
-					    curr_evt->is_mlo);
+					    curr_evt->is_mlo,
+					    curr_evt->link_id);
 			kfree(curr_evt);
 			continue;
 
@@ -2737,6 +2754,7 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	ev->band = chanctx->def.chan->band;
 	ether_addr_copy(ev->mac_addr, mac);
 	ev->is_mlo = is_mlo;
+	ev->link_id = arvif->link_id;
 
 	spin_lock_bh(&ipa_global_ctx->list_lock);
 	list_add_tail(&ev->list_elem, &ipa_global_ctx->list);

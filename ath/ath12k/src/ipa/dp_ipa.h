@@ -335,8 +335,9 @@ struct ath12k_ipa_arch_ops {
 				   struct ipa_wdi_pipe_setup_info_smmu *rx_smmu);
 	u8 (*ipa_get_wdi_version)(void);
 	void (*ipa_iface_setup_set_metadata)(struct ipa_wdi_reg_intf_in_params *in);
-	void (*ipa_iface_setup_set_vp_num)(struct ipa_wdi_reg_intf_in_params *in);
-	void (*ipa_iface_cleanup_vp_num)(const char *dev_name);
+	void (*ipa_iface_setup_set_vp_num)(u8 link_id,
+					   struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_cleanup_vp_num)(const char *dev_name, u8 link_id);
 	void (*ipa_iface_setup_set_intf_idx)(struct ipa_wdi_reg_intf_in_params *in,
 					     int intf_idx);
 	int (*ipa_client_connect_ex)(struct ath12k_ipa *ipa_ctx,
@@ -926,6 +927,7 @@ struct wlan_ipa_evt_wq_args {
 	u16 session_id;
 	u8 pdev_idx;
 	u8 device_id;
+	u8 link_id;
 	bool is_mlo;
 	struct dp_ipa_net_device_priv dev;
 	enum nl80211_iftype mode;
@@ -965,7 +967,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			enum ipa_wlan_event event,
 			u32 vdev_id, u8 pdev_idx, const u8 mac[ETH_ALEN],
 			struct dp_ipa_net_device_priv *dev, enum nl80211_iftype mode,
-			enum nl80211_band band, bool is_mlo);
+			enum nl80211_band band, bool is_mlo, u8 link_id);
 
 int ath12k_wlan_ipa_send_msg(struct ath12k_ipa *ipa_ctx,
 			     enum ipa_wlan_event event, const u8 mac[ETH_ALEN],
@@ -1015,13 +1017,14 @@ enum ath12k_ipa_opmode ath12k_ipa_mode(enum nl80211_iftype mode);
 
 void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 			    const u8 *mac_addr, ipa_wdi_hdl_t hdl, u16 session_id,
-			    bool mld_enabled);
+			    bool mld_enabled, u8 link_id);
 
 int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 			 struct dp_ipa_net_device_priv *net_dev_priv,
 			 enum ath12k_ipa_opmode device_mode, u16 session_id,
 			 const u8 *mac_addr,
-			 bool is_2g_iface, bool is_mlo_vdev, bool is_tx1_used);
+			 bool is_2g_iface, bool is_mlo_vdev,
+			 bool is_tx1_used, u8 link_id);
 
 int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ctx,
 				       struct dp_ipa_net_device_priv *net_dev_priv,
@@ -1063,11 +1066,22 @@ ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(struct ath12k_ipa *ipa_ctx,
+						 u8 link_id,
 						 struct ipa_wdi_reg_intf_in_params *in)
 {
 	if (ipa_ctx && ipa_ctx->arch_ops &&
 	    ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num)
-		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(in);
+		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(link_id, in);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(struct ath12k_ipa *ipa_ctx,
+					       const char *dev_name,
+					       u8 link_id)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num)
+		ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num(dev_name, link_id);
 }
 
 static inline void

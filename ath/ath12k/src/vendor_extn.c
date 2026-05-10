@@ -4032,6 +4032,16 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_CHAN_144:
 		ret = ath12k_vendor_chan144_apply(ar, value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_TO_REO_DEST:
+		if (value < ATH12K_REO2SW1_RING || value > ATH12K_REO2SW4_RING) {
+			ath12k_err(NULL, "REO dest ring value should be between %d and %d\n",
+					ATH12K_REO2SW1_RING, ATH12K_REO2SW4_RING);
+                        ret = -EINVAL;
+                } else {
+                        ar->radio_cfg.pdev_to_reo_dest = value;
+                        ret = 0;
+                }
+                break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -5831,6 +5841,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_CHAN_144:
 		ret = ath12k_vendor_get_en_chan144(ar, value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_TO_REO_DEST:
+                *value = ar->radio_cfg.pdev_to_reo_dest;
+                ret = 0;
+                break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);

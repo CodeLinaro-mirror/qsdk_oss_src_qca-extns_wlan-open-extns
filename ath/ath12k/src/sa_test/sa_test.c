@@ -390,24 +390,593 @@ static int sa_test_get_bcn_txantenna(u8 radio_id, u32 *bcn_txantenna)
 	return 0;
 }
 
+static void display_help(void)
+{
+	pr_info("    ParamName                   ParamId          Description");
+	pr_info(" SMART_ANT_PARAM_HELP                    %d    "
+		"Displays current available commands list",
+		SMART_ANT_PARAM_HELP);
+	pr_info(" SMART_ANT_PARAM_TRAIN_MODE              %d    "
+		"Training mode self packet generation or existing traffic mode",
+		SMART_ANT_PARAM_TRAIN_MODE);
+	pr_info(" SMART_ANT_PARAM_TRAIN_PER_THRESHOLD     %d    "
+		"Smart antenna lower, upper and per diff thresholds",
+		SMART_ANT_PARAM_TRAIN_PER_THRESHOLD);
+	pr_info(" SMART_ANT_PARAM_PKT_LEN                 %d    "
+		"Packet length of the training packet",
+		SMART_ANT_PARAM_PKT_LEN);
+	pr_info(" SMART_ANT_PARAM_NUM_PKTS                %d    "
+		"Number of packets requied for training",
+		SMART_ANT_PARAM_NUM_PKTS);
+	pr_info(" SMART_ANT_PARAM_TRAIN_START             %d    "
+		"Training init for a particualr node",
+		SMART_ANT_PARAM_TRAIN_START);
+	pr_info(" SMART_ANT_PARAM_TRAIN_ENABLE            %d    "
+		"Enable bitmap for init,periodic & performence triggers",
+		SMART_ANT_PARAM_TRAIN_ENABLE);
+	pr_info(" SMART_ANT_PARAM_PERFTRAIN_INTERVAL      %d    "
+		"Performence monitoring interval",
+		SMART_ANT_PARAM_PERFTRAIN_INTERVAL);
+	pr_info(" SMART_ANT_PARAM_RETRAIN_INTERVAL        %d    "
+		"Periodic retrain interval", SMART_ANT_PARAM_RETRAIN_INTERVAL);
+	pr_info(" SMART_ANT_PARAM_PERFTRAIN_THRESHOLD     %d    "
+		"percentage change in goodput to tigger performance training",
+		SMART_ANT_PARAM_PERFTRAIN_THRESHOLD);
+	pr_info(" SMART_ANT_PARAM_MIN_GOODPUT_THRESHOLD   %d    "
+		"Minimum Good put threshold to tigger performance training",
+		SMART_ANT_PARAM_MIN_GOODPUT_THRESHOLD);
+	pr_info(" SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL    %d    "
+		"goodput avg interval", SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL);
+	pr_info(" SMART_ANT_PARAM_DEFAULT_ANTENNA         %d    "
+		"Default antenna for RX", SMART_ANT_PARAM_DEFAULT_ANTENNA);
+	pr_info(" SMART_ANT_PARAM_DEFAULT_TX_ANTENNA      %d    "
+		"Default tx antenna when node connects",
+		SMART_ANT_PARAM_DEFAULT_TX_ANTENNA);
+	pr_info(" SMART_ANT_PARAM_TX_ANTENNA              %d    "
+		"Selected antenna for TX", SMART_ANT_PARAM_TX_ANTENNA);
+	pr_info(" SMART_ANT_PARAM_DBG_LEVEL               %d    "
+		"Debug level for each radio", SMART_ANT_PARAM_DBG_LEVEL);
+	pr_info(" SMART_ANT_PARAM_PRETRAIN_PKTS           %d    "
+		"num of pre train packets", SMART_ANT_PARAM_PRETRAIN_PKTS);
+	pr_info(" SMART_ANT_PARAM_OTHER_BW_PKTS_TH        %d    "
+		"Threshold for other bw packets",
+		SMART_ANT_PARAM_OTHER_BW_PKTS_TH);
+	pr_info(" SMART_ANT_PARAM_GOODPUT_IGNORE_INTERVAL %d    "
+		"goodput ignore interval",
+		SMART_ANT_PARAM_GOODPUT_IGNORE_INTERVAL);
+	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW20         %d    "
+		"min num packets in 20 to indicate active bw",
+		SMART_ANT_PARAM_MIN_PKT_TH_BW20);
+	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW40         %d    "
+		"min num packets in 40 to indicate active bw",
+		SMART_ANT_PARAM_MIN_PKT_TH_BW40);
+	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW80         %d    "
+		"min num packets in 80 to indicate active bw",
+		SMART_ANT_PARAM_MIN_PKT_TH_BW80);
+	pr_info(" SMART_ANT_PARAM_DEBUG_INFO              %d    "
+		"Displays node debug info", SMART_ANT_PARAM_DEBUG_INFO);
+	pr_info(" SMART_ANT_PARAM_MAX_TRAIN_PPDU          %d    "
+		"max number of train ppdus", SMART_ANT_PARAM_MAX_TRAIN_PPDU);
+	pr_info(" SMART_ANT_PARAM_PERF_HYSTERESIS         %d    "
+		"hysteresis for performence based trigger",
+		SMART_ANT_PARAM_PERF_HYSTERESIS);
+	pr_info(" SMART_ANT_PARAM_TX_FEEDBACK_CONFIG      %d    "
+		"Tx Feedback config", SMART_ANT_PARAM_TX_FEEDBACK_CONFIG);
+	pr_info(" SMART_ANT_PARAM_BCN_ANTENNA             %d    "
+		"Beacon Antenna", SMART_ANT_PARAM_BCN_ANTENNA);
+	pr_info(" SMART_ANT_PARAM_PARALLEL_MODE_GPIO_DRIVE %d   "
+		"GPIO Drive config in parallel mode",
+		SMART_ANT_PARAM_PARALLEL_MODE_GPIO_DRIVE);
+	if (sa_enable_test_mode) {
+		pr_info(" SMART_ANT_PARAM_TRAIN_RATE_TESTMODE     %d    "
+			"Training Rate Code in test mode",
+			SMART_ANT_PARAM_TRAIN_RATE_TESTMODE);
+		pr_info(" SMART_ANT_PARAM_TRAIN_ANTENNA_TESTMODE  %d    "
+			"Training Antenna in test mode",
+			SMART_ANT_PARAM_TRAIN_ANTENNA_TESTMODE);
+		pr_info(" SMART_ANT_PARAM_TRAIN_PACKETS_TESTMODE  %d    "
+			"Number of training packets in test mode",
+			SMART_ANT_PARAM_TRAIN_PACKETS_TESTMODE);
+		pr_info(" SMART_ANT_PARAM_TRAIN_MINPKTS_TESTMODE  %d    "
+			"Number of minimum packets to be trained in test mode",
+			SMART_ANT_PARAM_TRAIN_MINPKTS_TESTMODE);
+		pr_info(" SMART_ANT_PARAM_TRAIN_PERTH_TESTMODE    %d    "
+			"PER threshold to stop training in test mode post min pkts",
+			SMART_ANT_PARAM_TRAIN_PERTH_TESTMODE);
+		pr_info(" SMART_ANT_PARAM_TRAIN_START_TESTMODE    %d    "
+			"Training start in test mode",
+			SMART_ANT_PARAM_TRAIN_START_TESTMODE);
+	}
+}
+
 static int sa_test_set_param(struct ath12k_sa_config_params *params)
 {
+	struct smartantenna_params *sa_params;
+	struct radio_config *radio;
+	struct sa_node_ccp *node;
+	int retval = 0;
+	u8 rate_index = 0;
+	u8 i;
+
 	if (!params)
 		return -1;
 
-	SA_DEBUG_PRINT(SA_DEBUG_LVL1, 0, "SA Test: set_param type=%u id=%u val=%u",
+	if (params->radio_id >= SA_MAX_RADIOS)
+		return -1;
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+		       "SA Test: set_param type=%u id=%u val=%u",
 		       params->param_type, params->param_id, params->param_value);
 
-	return 0;
+	radio = &g_sa.radio[params->radio_id];
+	if (!radio->init_done)
+		return -1;
+
+	sa_params = &radio->sa_params;
+
+	switch (params->param_id) {
+	case SMART_ANT_PARAM_HELP:
+		display_help();
+		break;
+	case SMART_ANT_PARAM_TRAIN_MODE:
+		sa_params->training_mode = params->param_value;
+		break;
+	case SMART_ANT_PARAM_TRAIN_PER_THRESHOLD:
+		sa_params->lower_bound = (params->param_value) & SA_BYTE_MASK;
+		sa_params->upper_bound = (params->param_value >>
+					SA_8TH_POSITION) & SA_BYTE_MASK;
+		sa_params->per_diff_threshold = (params->param_value >>
+					SA_16TH_POSITION) & SA_BYTE_MASK;
+		sa_params->config = (params->param_value >> SA_24TH_POSITION) &
+							SA_BYTE_MASK;
+		break;
+	case SMART_ANT_PARAM_PKT_LEN:
+		sa_params->packetlen = params->param_value;
+		break;
+	case SMART_ANT_PARAM_NUM_PKTS:
+		sa_params->n_packets_to_train = params->param_value;
+		break;
+	case SMART_ANT_PARAM_PERFTRAIN_INTERVAL:
+		sa_params->perftrain_interval = params->param_value;
+		break;
+	case SMART_ANT_PARAM_RETRAIN_INTERVAL:
+		sa_params->retrain_interval = params->param_value;
+		break;
+	case SMART_ANT_PARAM_PERFTRAIN_THRESHOLD:
+		sa_params->max_throughput_change = params->param_value;
+		break;
+	case SMART_ANT_PARAM_MIN_GOODPUT_THRESHOLD:
+		sa_params->min_goodput_threshold = params->param_value;
+		break;
+	case SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL:
+		sa_params->goodput_avg_interval = params->param_value;
+		break;
+	case SMART_ANT_PARAM_DEFAULT_ANTENNA:
+		radio->default_antenna = params->param_value;
+		retval |= SA_RX_CONFIG_REQUIRED;
+		sa_params->train_enable &= ~(SA_RX_TRAIN_EN);
+		break;
+	case SMART_ANT_PARAM_DEFAULT_TX_ANTENNA:
+		retval |= SA_DEFAULT_TX_CONFIG_REQUIRED;
+		sa_params->default_tx_antenna = params->param_value;
+		break;
+	case SMART_ANT_PARAM_TX_ANTENNA:
+		if (sa_params->train_enable & (SA_INIT_TRAIN_EN |
+		    SA_PERF_TRAIN_EN | SA_PERIOD_TRAIN_EN)) {
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+				"Fixing Antenna is not permitted when "
+				"Smart Antenna algo is enabled %d\n",
+				sa_params->train_enable);
+			return -1;
+		}
+		if (params->param_type) {
+			node = params->ccp;
+			if (!node)
+				return -1;
+			node->train_info.selected_antenna = params->param_value;
+			/*sa_update_ant_map(node,
+					  node->train_info.selected_antenna);*/
+			node->train_info.antenna_change_ind |=
+						SA_TX_CONFIG_REQUIRED;
+			retval |= SA_TX_CONFIG_REQUIRED;
+		} else {
+			sa_params->default_tx_antenna = params->param_value;
+			if (radio->nodes_connected ==
+			    radio->node_count_per_ant[params->param_value]) {
+				sa_params->antenna_change_ind &=
+						~SA_TX_CONFIG_REQUIRED;
+				SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					"global tx antenna changed to %d\n",
+					sa_params->default_tx_antenna);
+			} else {
+				sa_params->antenna_change_ind |=
+						SA_TX_CONFIG_REQUIRED;
+			}
+		}
+		break;
+	case SMART_ANT_PARAM_TRAIN_START:
+		if (params->param_type && params->ccp) {
+			node = params->ccp;
+			node->train_info.training_start = params->param_value;
+		} else {
+			return -1;
+		}
+		break;
+	case SMART_ANT_PARAM_TRAIN_ENABLE:
+		if (params->param_type) {
+			node = params->ccp;
+			if (!node)
+				return -1;
+			node->train_info.train_enable = params->param_value;
+			if (node->train_info.train_enable &
+			    (SA_INIT_TRAIN_EN | SA_PERF_TRAIN_EN |
+			    SA_PERIOD_TRAIN_EN)) {
+				node->train_info.antenna_change_ind &=
+							~SA_TX_CONFIG_REQUIRED;
+			}
+		} else {
+			sa_params->train_enable = params->param_value;
+			if (sa_params->train_enable & (SA_INIT_TRAIN_EN |
+			    SA_PERF_TRAIN_EN | SA_PERIOD_TRAIN_EN)) {
+				sa_params->antenna_change_ind &=
+							~SA_TX_CONFIG_REQUIRED;
+			}
+		}
+		break;
+	case SMART_ANT_PARAM_DBG_LEVEL:
+		radio->sa_dbg_level = params->param_value;
+		break;
+	case SMART_ANT_PARAM_PRETRAIN_PKTS:
+		sa_params->num_pretrain_packets = params->param_value;
+		break;
+	case SMART_ANT_PARAM_OTHER_BW_PKTS_TH:
+		sa_params->num_other_bw_pkts_th = params->param_value;
+		break;
+	case SMART_ANT_PARAM_GOODPUT_IGNORE_INTERVAL:
+		sa_params->goodput_ignore_interval = params->param_value;
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW20:
+		sa_params->num_min_pkt_threshod[SA_BW_20] = params->param_value;
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW40:
+		sa_params->num_min_pkt_threshod[SA_BW_40] = params->param_value;
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW80:
+		sa_params->num_min_pkt_threshod[SA_BW_80] = params->param_value;
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW160:
+		sa_params->num_min_pkt_threshod[SA_BW_160] = params->param_value;
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW320:
+		sa_params->num_min_pkt_threshod[SA_BW_320] = params->param_value;
+		break;
+	case SMART_ANT_PARAM_DEBUG_INFO:
+		if (params->param_type && params->ccp) {
+			node = params->ccp;
+			node->train_info.last_training_time = 0;
+			node->train_info.prd_trigger_count = 0;
+			node->train_info.perf_trigger_count = 0;
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+				"Last training time :%d ,Periodic triggers: %d,"
+				"performence triggers: %d\n",
+				node->train_info.last_training_time,
+				node->train_info.prd_trigger_count,
+				node->train_info.perf_trigger_count);
+		} else {
+			return -1;
+		}
+		break;
+	case SMART_ANT_PARAM_MAX_TRAIN_PPDU:
+		sa_params->max_train_ppdu = params->param_value;
+		break;
+	case SMART_ANT_PARAM_PERF_HYSTERESIS:
+		sa_params->hysteresis =  params->param_value;
+		break;
+	case SMART_ANT_PARAM_TX_FEEDBACK_CONFIG:
+		if (params->param_type && params->ccp) {
+			node = params->ccp;
+			node->train_info.tx_feedback_config =
+							params->param_value;
+			retval |= SA_TX_FEEDBACK_CONFIG_REQUIRED;
+		} else {
+			return -1;
+		}
+		break;
+	case SMART_ANT_PARAM_BCN_ANTENNA:
+		radio->bcn_antenna = params->param_value;
+		retval |= SA_BEACON_ANT_CONFIG_REQUIRED;
+		break;
+	case SMART_ANT_PARAM_PARALLEL_MODE_GPIO_DRIVE:
+		sa_params->parallel_gpio_drive = params->param_value;
+		retval |= SA_PARALLEL_GPIO_CFG_REQUIRED;
+		break;
+	case SMART_ANT_PARAM_TRAIN_RATE_TESTMODE:
+		if (sa_enable_test_mode && params->param_type) {
+			node = params->ccp;
+			if (!node) {
+				SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					"Node is null!\n");
+				return -1;
+			}
+			rate_index =
+				SA_GET_BW_FROM_RC(params->param_value >> 16);
+			if (rate_index >= SA_NUM_BW) {
+				SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					"Incorrect Param; RateCode: bit 0-11 "
+					"Bandwidth: bit 16-17\n 0 - Legacy\\"
+					"20MHz\n1 - 40MHz\n2 - 80MHz\n3 - "
+					"160MHz\n4 - 320Mhz\n");
+				return -1;
+			}
+			if (rate_index > node->node_info.max_ch_bw) {
+				SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					"Incorrect BW Param; Peer connected in "
+					"BW %d", node->node_info.max_ch_bw);
+				return -1;
+			}
+			for (i = node->node_info.max_ch_bw; i < SA_NUM_BW; i++)
+				g_train_params.ratecode[i] = 0;
+			g_train_params.ratecode[rate_index] =
+					(params->param_value & SA_WORD_MASK);
+		} else {
+			return -1;
+		}
+		break;
+	case SMART_ANT_PARAM_TRAIN_ANTENNA_TESTMODE:
+		if (sa_enable_test_mode)
+			g_train_params.antenna = params->param_value;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_PACKETS_TESTMODE:
+		if (sa_enable_test_mode)
+			g_train_params.numpkts = params->param_value;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_MINPKTS_TESTMODE:
+		if (sa_enable_test_mode)
+			g_train_params.minpkts = params->param_value;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_PERTH_TESTMODE:
+		if (sa_enable_test_mode)
+			g_train_params.per_threshold = params->param_value;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_START_TESTMODE:
+		if (sa_enable_test_mode)
+			retval |= SA_TRAINING_REQUIRED;
+		else
+			return -1;
+		break;
+	default:
+		display_help();
+		return -1;
+	}
+
+	return retval;
 }
 
 static int sa_test_get_param(struct ath12k_sa_config_params *params)
 {
+	struct smartantenna_params *sa_params;
+	struct radio_config *radio;
+	struct sa_node_ccp *node;
+	u32 value = 0;
+	u8 i;
+
 	if (!params)
 		return -1;
 
-	SA_DEBUG_PRINT(SA_DEBUG_LVL1, 0, "SA Test: get_param type=%u id=%u",
+	if (params->radio_id >= SA_MAX_RADIOS)
+		return -1;
+
+	SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+		       "SA Test: get_param type=%u id=%u",
 		       params->param_type, params->param_id);
+
+	radio = &g_sa.radio[params->radio_id];
+	if (!radio->init_done)
+		return -1;
+
+	sa_params = &radio->sa_params;
+
+	switch (params->param_id) {
+	case SMART_ANT_PARAM_HELP:
+		display_help();
+		break;
+	case SMART_ANT_PARAM_TRAIN_MODE:
+		params->param_value = sa_params->training_mode;
+		break;
+	case SMART_ANT_PARAM_TRAIN_PER_THRESHOLD:
+		value = 0;
+		value |= (sa_params->lower_bound & SA_BYTE_MASK);
+		value |= ((sa_params->upper_bound & SA_BYTE_MASK) <<
+							SA_8TH_POSITION);
+		value |= ((sa_params->per_diff_threshold & SA_BYTE_MASK) <<
+							SA_16TH_POSITION);
+		value |= ((sa_params->config & SA_BYTE_MASK) <<
+							SA_24TH_POSITION);
+		params->param_value = value;
+		break;
+	case SMART_ANT_PARAM_PKT_LEN:
+		params->param_value = sa_params->packetlen;
+		break;
+	case SMART_ANT_PARAM_NUM_PKTS:
+		params->param_value = sa_params->n_packets_to_train;
+		break;
+	case SMART_ANT_PARAM_PERFTRAIN_INTERVAL:
+		params->param_value = sa_params->perftrain_interval;
+		break;
+	case SMART_ANT_PARAM_RETRAIN_INTERVAL:
+		params->param_value = sa_params->retrain_interval;
+		break;
+	case SMART_ANT_PARAM_PERFTRAIN_THRESHOLD:
+		params->param_value = sa_params->max_throughput_change;
+		break;
+	case SMART_ANT_PARAM_MIN_GOODPUT_THRESHOLD:
+		params->param_value = sa_params->min_goodput_threshold;
+		break;
+	case SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL:
+		params->param_value = sa_params->goodput_avg_interval;
+		break;
+	case SMART_ANT_PARAM_DEFAULT_ANTENNA:
+		params->param_value = radio->default_antenna;
+		break;
+	case SMART_ANT_PARAM_DEFAULT_TX_ANTENNA:
+		params->param_value = sa_params->default_tx_antenna;
+		break;
+	case SMART_ANT_PARAM_TX_ANTENNA:
+		if (params->param_type) {
+			node = params->ccp;
+			if (!node)
+				return -1;
+			params->param_value = node->train_info.selected_antenna;
+		} else {
+			params->param_value = sa_params->default_tx_antenna;
+		}
+		break;
+	case SMART_ANT_PARAM_TRAIN_START:
+		if (params->param_type && params->ccp) {
+			node = params->ccp;
+			params->param_value = node->train_info.training_start;
+		} else {
+			return -1;
+		}
+		break;
+	case SMART_ANT_PARAM_TRAIN_ENABLE:
+		if (params->param_type) {
+			node = params->ccp;
+			if (!node)
+				return -1;
+			params->param_value = node->train_info.train_enable;
+		} else {
+			params->param_value = sa_params->train_enable;
+		}
+		break;
+	case SMART_ANT_PARAM_DBG_LEVEL:
+		params->param_value = radio->sa_dbg_level;
+		break;
+	case SMART_ANT_PARAM_PRETRAIN_PKTS:
+		params->param_value = sa_params->num_pretrain_packets;
+		break;
+	case SMART_ANT_PARAM_OTHER_BW_PKTS_TH:
+		params->param_value = sa_params->num_other_bw_pkts_th;
+		break;
+	case SMART_ANT_PARAM_GOODPUT_IGNORE_INTERVAL:
+		params->param_value = sa_params->goodput_ignore_interval;
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW20:
+		params->param_value = sa_params->num_min_pkt_threshod[SA_BW_20];
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW40:
+		params->param_value = sa_params->num_min_pkt_threshod[SA_BW_40];
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW80:
+		params->param_value = sa_params->num_min_pkt_threshod[SA_BW_80];
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW160:
+		params->param_value =
+				sa_params->num_min_pkt_threshod[SA_BW_160];
+		break;
+	case SMART_ANT_PARAM_MIN_PKT_TH_BW320:
+		params->param_value =
+				sa_params->num_min_pkt_threshod[SA_BW_320];
+		break;
+	case SMART_ANT_PARAM_DEBUG_INFO:
+		if (params->param_type && params->ccp) {
+			node = params->ccp;
+			params->param_value = node->train_info.train_enable;
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+				       "Last training time: %d, Periodic "
+				       "triggers: %d, performence triggers: "
+				       "%d\n",
+				       node->train_info.last_training_time,
+				       node->train_info.prd_trigger_count,
+				       node->train_info.perf_trigger_count);
+		} else {
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+				       "%s: nodes connected %d\n", __func__,
+				       radio->nodes_connected);
+			for (i = 0; i < sa_params->num_tx_antennas; i++)
+				SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					      "    ant %d, nodes %d\n", i,
+					      radio->node_count_per_ant[i]);
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+				       "antenna change ind %d\n",
+				       sa_params->antenna_change_ind);
+		}
+		break;
+	case SMART_ANT_PARAM_MAX_TRAIN_PPDU:
+		params->param_value = sa_params->max_train_ppdu;
+		break;
+	case SMART_ANT_PARAM_PERF_HYSTERESIS:
+		params->param_value = sa_params->hysteresis;
+		break;
+	case SMART_ANT_PARAM_TX_FEEDBACK_CONFIG:
+		if (params->param_type && params->ccp) {
+			node = params->ccp;
+			params->param_value =
+					node->train_info.tx_feedback_config;
+		} else {
+			return -1;
+		}
+		break;
+	case SMART_ANT_PARAM_BCN_ANTENNA:
+		params->param_value = radio->bcn_antenna;
+		break;
+	case SMART_ANT_PARAM_PARALLEL_MODE_GPIO_DRIVE:
+		params->param_value = sa_params->parallel_gpio_drive;
+		break;
+	case SMART_ANT_PARAM_TRAIN_RATE_TESTMODE:
+		if (sa_enable_test_mode)
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+				       "Legacy\\20Mhz 0x%x 40Mhz 0x%x 80Mhz "
+				       "0x%x 160Mhz 0x%x 320Mhz 0x%x\n",
+				       g_train_params.ratecode[0],
+				       g_train_params.ratecode[1],
+				       g_train_params.ratecode[2],
+				       g_train_params.ratecode[3],
+				       g_train_params.ratecode[4]);
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_ANTENNA_TESTMODE:
+		if (sa_enable_test_mode)
+			params->param_value = g_train_params.antenna;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_PACKETS_TESTMODE:
+		if (sa_enable_test_mode)
+			params->param_value = g_train_params.numpkts;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_MINPKTS_TESTMODE:
+		if (sa_enable_test_mode)
+			params->param_value = g_train_params.minpkts;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_PERTH_TESTMODE:
+		if (sa_enable_test_mode)
+			params->param_value = g_train_params.per_threshold;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_START_TESTMODE:
+		/* No state to report here; return success in test mode */
+		if (!sa_enable_test_mode)
+			return -1;
+		break;
+	default:
+		display_help();
+		return -1;
+	}
 
 	return 0;
 }

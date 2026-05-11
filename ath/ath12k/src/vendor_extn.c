@@ -41,7 +41,6 @@ ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] =
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_ID] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BSSID] = NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN),
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_LOW] = { .type = NLA_U32 },
-	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_HIGH] = { .type = NLA_U32 },
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_NUM_BUSY_SLOTS] = { .type = NLA_U16 },
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_DUR] = { .type = NLA_U16 },
 	[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_BUSY_SLOTS_INTVL] = { .type = NLA_U16 },
@@ -8348,10 +8347,6 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 		sched.start_time_tsf_low =
 			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_LOW]);
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_HIGH])
-		sched.start_time_tsf_high =
-			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_START_TIME_TSF_HIGH]);
-
 	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_NUM_BUSY_SLOTS])
 		sched.num_busy_slots =
 			nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_NUM_BUSY_SLOTS]);
@@ -8392,9 +8387,9 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 	}
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-		   "TDMA sched : pdev %u type %u id %u bssid %pM tsf %08x:%08x slots %u dur %u intvl %u edca %d\n",
+		   "TDMA sched : pdev %u type %u id %u bssid %pM tsf %08x slots %u dur %u intvl %u edca %d\n",
 		   sched.pdev_id, sched.sched_type, sched.sched_id, sched.bssid,
-		   sched.start_time_tsf_high, sched.start_time_tsf_low,
+		   sched.start_time_tsf_low,
 		   sched.num_busy_slots, sched.busy_slot_dur_ms,
 		   sched.busy_slot_intvl_ms, sched.edca_params_valid);
 

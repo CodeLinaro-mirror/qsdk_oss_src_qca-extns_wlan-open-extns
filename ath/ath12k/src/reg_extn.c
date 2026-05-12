@@ -1792,7 +1792,7 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 		bss_conf = wiphy_dereference(hw->wiphy, vif->link_conf[link_id]);
 		if (bss_conf) {
 			ath12k_mac_get_6ghz_power_mode_decision(ar, arvif,
-								bss_conf,
+								power_type,
 								&decision);
 			if (decision.ap_repeater_sp_client)
 				return 0;

@@ -48,6 +48,107 @@ static const char *ath12k_cbs_event_str(enum ath12k_cbs_event event)
 	return "UNKNOWN";
 }
 
+void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
+{
+	u32 idx;
+
+	if (!cbs)
+		return;
+
+	memset(cbs->scan_offset, 0, sizeof(cbs->scan_offset));
+	memset(cbs->scan_dwell_rest, 0, sizeof(cbs->scan_dwell_rest));
+	cbs->max_arr_size_used = 0;
+	cbs->max_dwell_split_cnt = 0;
+	cbs->dwell_split_cnt = 0;
+
+	switch (cbs->dwell_split_time) {
+	case ATH12K_CBS_DWELL_TIME_20MS:
+		switch (cbs->cbs_total_dwell_time) {
+		case ATH12K_CBS_TOTAL_DWELL_TIME_20MS:
+			cbs->max_arr_size_used = 1;
+			cbs->scan_offset[0] = 0;
+			break;
+		case ATH12K_CBS_TOTAL_DWELL_TIME_200MS:
+			cbs->max_arr_size_used = 10;
+			for (idx = 0; idx < cbs->max_arr_size_used; idx++)
+				cbs->scan_offset[idx] = idx * 10;
+			break;
+		default:
+			return;
+		}
+		break;
+	case ATH12K_CBS_DWELL_TIME_25MS:
+		switch (cbs->cbs_total_dwell_time) {
+		case ATH12K_CBS_TOTAL_DWELL_TIME_25MS:
+			cbs->max_arr_size_used = 1;
+			cbs->scan_offset[0] = 0;
+			break;
+		case ATH12K_CBS_TOTAL_DWELL_TIME_100MS:
+			cbs->max_arr_size_used = 4;
+			cbs->scan_offset[0] = 0;
+			cbs->scan_offset[1] = 25;
+			cbs->scan_offset[2] = 50;
+			cbs->scan_offset[3] = 75;
+			break;
+		case ATH12K_CBS_TOTAL_DWELL_TIME_200MS:
+			cbs->max_arr_size_used = 8;
+			cbs->scan_offset[0] = 0;
+			cbs->scan_offset[1] = 25;
+			cbs->scan_offset[2] = 50;
+			cbs->scan_offset[3] = 75;
+			cbs->scan_offset[4] = 0;
+			cbs->scan_offset[5] = 25;
+			cbs->scan_offset[6] = 50;
+			cbs->scan_offset[7] = 75;
+			break;
+		default:
+			return;
+		}
+		break;
+	case ATH12K_CBS_DWELL_TIME_50MS:
+		switch (cbs->cbs_total_dwell_time) {
+		case ATH12K_CBS_TOTAL_DWELL_TIME_50MS:
+			cbs->max_arr_size_used = 1;
+			cbs->scan_offset[0] = 0;
+			break;
+		case ATH12K_CBS_TOTAL_DWELL_TIME_100MS:
+			cbs->max_arr_size_used = 2;
+			cbs->scan_offset[0] = 0;
+			cbs->scan_offset[1] = 50;
+			break;
+		case ATH12K_CBS_TOTAL_DWELL_TIME_200MS:
+			cbs->max_arr_size_used = 4;
+			cbs->scan_offset[0] = 0;
+			cbs->scan_offset[1] = 50;
+			cbs->scan_offset[2] = 0;
+			cbs->scan_offset[3] = 50;
+			break;
+		default:
+			return;
+		}
+		break;
+	default:
+		return;
+	}
+
+	cbs->dwell_split_cnt = cbs->max_arr_size_used ? cbs->max_arr_size_used - 1 : 0;
+	cbs->max_dwell_split_cnt = cbs->dwell_split_cnt;
+	/* Initialize scan_dwell_rest array.
+	 * The first scan (idx=0) should NOT have a rest period before it.
+	 * Rest periods apply AFTER each scan completes, not before.
+	 */
+	for (idx = 0; idx < ATH12K_CBS_SCAN_OFFSET_ARRAY_SIZE; idx++) {
+		if (idx == 0)
+			/* No rest before the first scan */
+			cbs->scan_dwell_rest[idx] = 0;
+		else if (idx < cbs->max_arr_size_used)
+			/* Rest after each subsequent scan */
+			cbs->scan_dwell_rest[idx] = cbs->rest_time;
+		else
+			cbs->scan_dwell_rest[idx] = 0;
+	}
+}
+
 static void ath12k_cbs_set_state(struct ath12k_cbs *cbs,
 				 enum ath12k_cbs_state state)
 {
@@ -320,6 +421,7 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 		case ATH12K_CBS_STATE_INIT:
 		case ATH12K_CBS_STATE_WAIT:
 			cbs->chan_list_idx = 0;
+			ath12k_cbs_init_dwell_params(cbs);
 			if (!cbs->max_arr_size_used) {
 				ret = -EINVAL;
 				break;

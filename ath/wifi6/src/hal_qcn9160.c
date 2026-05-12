@@ -169,6 +169,14 @@ static const struct hal_srng_config hw_srng_config_template[HAL_MAX_RING_TYPES] 
 		.max_size = HAL_RXDMA_RING_MAX_SIZE,
 		.name = "Rxdma_monitor_status",
 	},
+	[HAL_RXDMA_DIR_BUF] = {
+		.start_ring_id = HAL_SRNG_RING_ID_RXDMA_DIR_BUF,
+		.max_rings = 2,
+		.entry_size = 8 >> 2, /* TODO: Define the struct */
+		.mac_type = ATH12K_HAL_SRNG_PMAC,
+		.ring_dir = HAL_SRNG_DIR_SRC,
+		.max_size = HAL_RXDMA_RING_MAX_SIZE,
+        },
 };
 
 const struct ath12k_hw_regs qcn9160_regs = {

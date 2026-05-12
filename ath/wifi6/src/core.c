@@ -8,25 +8,33 @@
 
 #include "../../pci.h"
 #include "pci.h"
+#include "ahb.h"
 
-
-static int pci_err;
+static int ahb_err,pci_err;
 
 static int ath12k_wifi6_init(void)
 {
+	ahb_err = ath12k_wifi6_ahb_init();
+	if (ahb_err)
+		pr_warn("Failed to initialize ath12k WiFi6 AHB device: %d\n",
+			ahb_err);
+
 	pci_err = ath12k_wifi6_pci_init();
 	if (pci_err)
 		pr_warn("Failed to initialize ath12k WiFi6 PCI device: %d\n",
 			pci_err);
 
-	/* Return PCI initialization result */
-	return pci_err;
+	/* If both failed, return one of the failures (arbitrary) */
+	return ahb_err && pci_err ? ahb_err : 0;
 }
 
 static void ath12k_wifi6_exit(void)
 {
 	if (!pci_err)
 		ath12k_wifi6_pci_exit();
+
+	if (!ahb_err)
+		ath12k_wifi6_ahb_exit();
 }
 
 module_init(ath12k_wifi6_init);

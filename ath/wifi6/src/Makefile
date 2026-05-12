@@ -16,6 +16,8 @@ ath12k_wifi6-y += core.o \
 		  dp_mon.o \
 		  dp_mon_filter.o
 
+ath12k_wifi6-$(CPTCFG_ATH12K_AHB) += ahb.o
+
 ifeq ($(CONFIG_KERNEL_ATH_GCOV_PROFILE),)
 GCOV_PROFILE:=y
 endif

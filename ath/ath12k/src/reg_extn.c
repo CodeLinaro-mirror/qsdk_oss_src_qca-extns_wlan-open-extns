@@ -190,7 +190,7 @@ __ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 
 void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 						int pdev_idx,
-						enum wmi_reg_6g_ap_type pwr_type)
+						u32 pwr_type)
 {
 	spin_lock_bh(&ab->base_lock);
 	__ath12k_reg_hw_blocklist_free_for_mode_extn(ab, pdev_idx, pwr_type);

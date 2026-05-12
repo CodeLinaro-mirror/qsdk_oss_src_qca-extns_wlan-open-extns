@@ -21,6 +21,19 @@ struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
 struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
+struct ath12k_link_vif;
+struct wmi_chan_info_event;
+struct ath12k_wmi_scan_req_arg;
+enum wmi_tlv_event_id;
+struct wmi_dcs_wlan_interference_stats;
+struct wmi_start_scan_cmd;
+struct ath12k_wmi_vdev_create_arg;
+struct ath12k_wmi_peer_assoc_arg;
+struct ath12k_wmi_mgmt_rx_arg;
+enum hal_ring_type;
+struct hal_srng_params;
+struct ath12k_link_sta;
+struct ath12k_hw;
 struct ath12k_skb_cb;
 struct ath12k_sta;
 struct ath12k_wmi_resource_config_params;
@@ -222,27 +235,6 @@ struct ath12k_raw_pkt_ctx {
 
 #define DCS_TX_MAX_CU          30
 
-/* DCS user-configured thresholds (from hostapd_cli),
- * fallback to macros in dcs_extn.h when not set.
- */
-struct dcs_wlan_intr_user_cfg {
-	u32 intr_detection_threshold;
-	u32 phyerr_penalty;
-	u32 phyerr_threshold;
-	u32 radarerr_threshold;
-	u32 txerr_threshold;
-	u32 sample_size;
-	u8  coch_intr_threshold;
-	u8  user_max_cu;
-};
-
-struct wlan_intf_extn {
-	struct wmi_dcs_wlan_interference_stats prev_stats;
-	struct wmi_dcs_wlan_interference_stats curr_stats;
-	bool prev_valid;
-	bool curr_valid;
-	struct dcs_wlan_intr_user_cfg dcs_cfg;
-};
 
 /**
  * struct ath12k_sta_extn - per-STA extension state
@@ -262,6 +254,28 @@ struct ath12k_sta_extn {
  */
 struct ath12k_link_sta_extn {
 	s8 rssi_assoc;
+};
+
+/* DCS user-configured thresholds (from hostapd_cli),
+ * fallback to macros in dcs_extn.h when not set.
+ */
+struct dcs_wlan_intr_user_cfg {
+	u32 intr_detection_threshold;
+	u32 phyerr_penalty;
+	u32 phyerr_threshold;
+	u32 radarerr_threshold;
+	u32 txerr_threshold;
+	u32 sample_size;
+	u8  coch_intr_threshold;
+	u8  user_max_cu;
+};
+
+struct wlan_intf_extn {
+	void *prev_stats;
+	void *curr_stats;
+	bool prev_valid;
+	bool curr_valid;
+	struct dcs_wlan_intr_user_cfg dcs_cfg;
 };
 
 /**
@@ -353,6 +367,14 @@ struct ath12k_home_offchan_params {
 	u8 func;
 	u8 link_id;
 	bool is_mld;
+};
+
+/**
+ * struct ath12k_wmi_scan_req_arg_extn - Extension parameters for scan request
+ * @scan_start_offset: scan start offset
+ */
+struct ath12k_wmi_scan_req_arg_extn {
+	u32 scan_start_offset;
 };
 
 /**
@@ -579,7 +601,20 @@ ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
 
 static inline void
 ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
-						struct ath12k_wmi_scan_req_arg *arg)
+					struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
+static inline void
+ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
+				struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
+static inline void
+ath12k_wmi_send_scan_start_cmd_extn(struct ath12k *ar,
+				    struct wmi_start_scan_cmd *cmd,
+				    struct ath12k_wmi_scan_req_arg *arg)
 {
 }
 
@@ -725,7 +760,7 @@ ath12k_wmi_set_hw_blocklist_service_support_extn(
 
 static inline void
 ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab, int pdev_idx,
-					   enum wmi_reg_6g_ap_type pwr_type)
+					   u32 pwr_type)
 {
 }
 
@@ -1014,8 +1049,32 @@ void ath12k_custom_tx_send(struct ieee80211_vif *vif,
  * custom txrx.
  */
 void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
-						     struct ath12k_wmi_scan_req_arg *arg);
+					     struct ath12k_wmi_scan_req_arg *arg);
 
+
+/**
+ * ath12k_wmi_start_scan_init_extn - Initialize CBS scan offset in scan args
+ * @ar: Pointer to the ath12k radio structure
+ * @arg: Pointer to the scan parameter
+ *
+ * This function initializes the scan_start_offset field in the scan request
+ * argument for CBS support.
+ */
+void ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
+				     struct ath12k_wmi_scan_req_arg *arg);
+
+/**
+ * ath12k_wmi_send_scan_start_cmd_extn - Copy CBS scan offset into WMI command
+ * @ar: Pointer to the ath12k radio structure
+ * @cmd: Pointer to the WMI start scan command
+ * @arg: Pointer to the scan parameter
+ *
+ * This function copies the scan_start_offset from the scan request argument
+ * into the WMI start scan command for CBS support.
+ */
+void ath12k_wmi_send_scan_start_cmd_extn(struct ath12k *ar,
+					 struct wmi_start_scan_cmd *cmd,
+					 struct ath12k_wmi_scan_req_arg *arg);
 
                    int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);
@@ -1075,7 +1134,7 @@ void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
  */
 void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 						int pdev_idx,
-						enum wmi_reg_6g_ap_type pwr_type);
+						u32 pwr_type);
 
 /**
  * ath12k_reg_hw_blocklist_free_extn - Free all HW blocklist entries

@@ -30,10 +30,12 @@
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
 #include <linux/device.h>
+#include <linux/slab.h>
 #include "../wmi.h"
 #include "ini.h"
 #include "rropinfo.h"
 #include "qcn_extns/if_meta_hdr.h"
+#include "vendor_extn.h"
 
 struct ath12k_vif_sysfs_entry {
 	struct kobject kobj;
@@ -48,6 +50,78 @@ static int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 					      int *psoc_id);
 static int ath12k_get_total_stations_ab(struct ath12k_base *ab);
 static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab);
+
+static void ath12k_cbs_scan_work(struct work_struct *work)
+{
+	struct ath12k_extn *ar_extn = container_of(work, struct ath12k_extn,
+						   cbs_scan_work);
+	struct ath12k *ar = container_of(ar_extn, struct ath12k, ar_extn);
+
+	if (!ar_extn->cbs_scan_event)
+		return;
+
+	ath12k_vendor_send_cbs_scan_event(ar, ar_extn->cbs_scan_event);
+}
+
+bool ath12k_is_cbs_vendor_event(struct ath12k *ar)
+{
+	if (!ar->ar_extn.cbs_params.enable)
+		return false;
+
+	return true;
+}
+
+bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
+		struct ath12k *ar,
+		const struct wmi_scan_event *scan_ev)
+{
+	struct ath12k_cbs_scan_params *cbs_params;
+
+	if (!ar)
+		return false;
+
+	spin_lock_bh(&ar->data_lock);
+
+	if (!ath12k_is_cbs_vendor_event(ar)) {
+		spin_unlock_bh(&ar->data_lock);
+		return false;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_WMI,
+		   "ath12k scan state machine for CBS vendor scan event type %d req_id %d vdev_id %d reason %d freq %d\n",
+		   le32_to_cpu(scan_ev->event_type),
+		   le32_to_cpu(scan_ev->scan_req_id),
+		   le32_to_cpu(scan_ev->vdev_id),
+		   le32_to_cpu(scan_ev->reason),
+		   le32_to_cpu(scan_ev->channel_freq));
+
+	if (!(le32_to_cpu(scan_ev->event_type) == WMI_SCAN_EVENT_COMPLETED &&
+	    le32_to_cpu(scan_ev->reason) == WMI_SCAN_REASON_COMPLETED)) {
+		/* No operation required if scan is not successful */
+		spin_unlock_bh(&ar->data_lock);
+		return true;
+	}
+
+	if (!ar->ar_extn.cbs_scan_event) {
+		ar->ar_extn.cbs_scan_event =
+			kzalloc(sizeof(*ar->ar_extn.cbs_scan_event),
+				GFP_ATOMIC);
+		if (!ar->ar_extn.cbs_scan_event) {
+			spin_unlock_bh(&ar->data_lock);
+			ath12k_warn(ar->ab, "CBS: failed to alloc scan event, dropping\n");
+			return true;
+		}
+	}
+
+	memcpy(ar->ar_extn.cbs_scan_event, scan_ev,
+	       sizeof(*ar->ar_extn.cbs_scan_event));
+
+	spin_unlock_bh(&ar->data_lock);
+
+	ath12k_dbg(NULL, ATH12K_DBG_WMI, "Scheduling workq for CBS to send scan completion to Application\n");
+	schedule_work(&ar->ar_extn.cbs_scan_work);
+	return true;
+}
 
 void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev)
@@ -929,6 +1003,9 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 	ath12k_extn_ini_debugfs_register(ar->ab);
 	ath12k_cbs_init(ar);
 
+	/* Initialize CBS params */
+	INIT_WORK(&ar->ar_extn.cbs_scan_work, ath12k_cbs_scan_work);
+
 	/* Initialize WLAN interference stats cache */
 	ar->ar_extn.wlan_intf.prev_valid = false;
 	ar->ar_extn.wlan_intf.curr_valid = false;
@@ -941,6 +1018,8 @@ void ath12k_ar_extn_deinit(struct ath12k *ar)
 	kfree(ar->ar_extn.cbs_params.freq_list);
 	ar->ar_extn.cbs_params.freq_list = NULL;
 	ar->ar_extn.cbs_params.num_freqs = 0;
+	kfree(ar->ar_extn.cbs_scan_event);
+	ar->ar_extn.cbs_scan_event = NULL;
 }
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
@@ -949,6 +1028,7 @@ void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 	ath12k_cbs_deinit(ar);
 	ath12k_esp_cleanup_extn(ar);
 	ath12k_custom_txrx_deinit(ar);
+	cancel_work_sync(&ar->ar_extn.cbs_scan_work);
 	ath12k_ar_extn_deinit(ar);
 }
 

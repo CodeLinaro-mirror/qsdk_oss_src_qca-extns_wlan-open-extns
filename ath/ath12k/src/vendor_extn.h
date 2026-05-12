@@ -241,6 +241,11 @@ static inline void ath12k_vendor_send_event(struct ath12k_base *ab,
 
 }
 
+static inline void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
+						      struct wmi_scan_event *scan_ev)
+{
+}
+
 int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
 					struct ath12k_wifi_generic_params *params)
 {
@@ -500,6 +505,9 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag);
+
+void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
+				       struct wmi_scan_event *scan_ev);
 
 int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
 					struct ath12k_wifi_generic_params *params);

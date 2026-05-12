@@ -488,8 +488,15 @@ static int ath12k_dp_ipa_alt_tx_ipa_uc_attach(struct ath12k_base *ab)
 		return -EINVAL;
 	}
 
+	/* Use kvmalloc: num_entries * sizeof(void*) = 8192 * 8 = 64KB (order-4).
+	 * After repeated UMAC recoveries the buddy allocator may not have a
+	 * contiguous 64KB block, so fall back to vmalloc via kvmalloc rather
+	 * than failing the recovery entirely.
+	 * This issue was seen with OOM as well, CR: 4531029, due to repeated OOM
+	 * cycles exhaust contigous memory.
+	 */
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned =
-		kmalloc(num_entries *
+		kvmalloc(num_entries *
 		sizeof(*ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned), GFP_KERNEL);
 	if (!ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned) {
 		ath12k_err(ab, "IPA WBM Ring Alt Tx buf pool vaddr alloc fail");
@@ -544,8 +551,9 @@ static int ath12k_dp_ipa_alt_tx_ipa_uc_attach(struct ath12k_base *ab)
 		ath12k_info(ab, "IPA WDI Alt TX buffer: %d allocated", tx_buffer_count);
 	} else {
 		ath12k_err(ab, "No IPA WDI Alt TX buffer allocated!");
-		kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
+		kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
 		ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
+		ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt = 0;
 		retval = -ENOMEM;
 	}
 	return retval;
@@ -575,6 +583,7 @@ fail_free_skb:
 	}
 	kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
+	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt = 0;
 	return -ENOMEM;
 }
 
@@ -605,12 +614,12 @@ static void ath12k_dp_ipa_alt_tx_ipa_uc_detach(struct ath12k_base *ab)
 						(void *)NULL;
 	}
 
-	kfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
+	kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned);
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
+	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt = 0;
 
-	//TODO: fix this code
-	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
-	//sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
+	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_tcl);
+	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_wbm);
 }
 
 int dp_ipa_uc_attach(struct ath12k_base *ab)
@@ -867,7 +876,7 @@ static int ath12k_dp_ipa_alt_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool 
 		if (!skb)
 			continue;
 
-		buf_len = skb_end_pointer(skb) - skb->data;
+		buf_len = skb->len + skb_tailroom(skb);
 		ret = __dp_ipa_handle_buf_smmu_map_unmap(ab, skb, buf_len,
 							 create, ipa_ctx->hdl);
 	}
@@ -1126,7 +1135,7 @@ static inline void dp_ipa_set_pipe_db(struct ath12k_wlan_ipa_priv *ipa_ctx,
 	tx_rsc->tx_comp_doorbell_paddr = out->tx_uc_db_pa;
 	rx_rsc->rx_ready_doorbell_paddr = out->rx_uc_db_pa;
 
-	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn()) {
+	if (ath12k_dp_ipa_is_alt_tx_required(ipa_ctx->ab)) {
 		struct ipa_dp_tx_rsc *tx_alt_rsc = (struct ipa_dp_tx_rsc *)&ipa_ctx->ipa_uc_tx_alt_rsc;
 		tx_alt_rsc->tx_comp_doorbell_paddr = out->tx1_uc_db_pa;
 	}

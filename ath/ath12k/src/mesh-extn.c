@@ -27,6 +27,7 @@
 #include "../core.h"
 #include "../dp_htt.h"
 #include "../dp_stats.h"
+#include "../wifi7/hal.h"
 
 u_int32_t ath12k_dp_mesh_rx_status_dump(struct ath12k_base *ab, struct mesh_recv_hdr_s *rs1)
 {
@@ -166,45 +167,45 @@ u_int32_t ath12k_dp_mesh_rx_status_dump(struct ath12k_base *ab, struct mesh_recv
 EXPORT_SYMBOL(ath12k_dp_mesh_rx_status_dump);
 
 bool ath12k_dp_mesh_rx_filter_mesh_packets(struct ath12k_base *ab,
-					  struct ath12k_vif *ahvif,
-					  struct hal_rx_desc_data *rx_desc_data,
-					  struct hal_rx_desc *rx_desc)
+					   struct ath12k_dp_peer *peer,
+					   struct hal_rx_spd_data *rx_desc_data)
 {
-	struct ath12k_hal *hal = &ab->hal;
-	u32 rx_filter = ahvif->dp_vif.dp_extn.rx_filter;
-	char *addr;
+	struct ath12k_vif *ahvif = NULL;
+	u32 rx_filter;
+
+	ahvif = ath12k_vif_to_ahvif(peer->vif);
+	rx_filter = ahvif->dp_vif.dp_extn.rx_filter;
 
 	if (unlikely(rx_filter)) {
 		if (rx_filter & MESH_FILTER_OUT_FROMDS)
-			if (rx_desc_data->is_from_ds)
+			if (rx_desc_data->rx_msdu_info.fr_ds)
 				return true;
 
 		if (rx_filter & MESH_FILTER_OUT_TODS)
-			if (rx_desc_data->is_to_ds)
+			if (rx_desc_data->rx_msdu_info.to_ds)
 				return true;
 
 		if (rx_filter & MESH_FILTER_OUT_NODS)
-			if (!rx_desc_data->is_from_ds  &&
-			    !rx_desc_data->is_to_ds)
+			if (!rx_desc_data->rx_msdu_info.fr_ds  &&
+			    !rx_desc_data->rx_msdu_info.to_ds)
 				return true;
 
 		if (rx_filter & MESH_FILTER_OUT_RA) {
-			addr = ath12k_hal_rxdesc_get_mpdu_start_addr1(hal, rx_desc);
-			if (!addr)
-				return false;
-
-			if (!memcmp(addr, ahvif->vif->addr, MAC_ADDR_SIZE))
-				return true;
+			if (rx_desc_data->rx_msdu_info.to_ds) {
+				if (!memcmp(rx_desc_data->ad1,
+					    ahvif->vif->addr,
+					    MAC_ADDR_SIZE))
+					return true;
+			}
 		}
 
 		if (rx_filter & MESH_FILTER_OUT_TA) {
-
-			addr = ath12k_hal_rxdesc_get_mpdu_start_addr2(hal, rx_desc);
-			if (!addr)
-				return false;
-
-			if (!memcmp(addr, ahvif->vif->addr, MAC_ADDR_SIZE))
-				return true;
+			if (rx_desc_data->rx_msdu_info.fr_ds) {
+				if (!memcmp(rx_desc_data->ad2,
+					    ahvif->vif->addr,
+					    MAC_ADDR_SIZE))
+					return true;
+			}
 		}
 	}
 
@@ -225,16 +226,12 @@ EXPORT_SYMBOL(ath12k_dp_mesh_rx_filter_mesh_packets);
  *
  */
 void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
-				     struct ath12k_dp_link_peer *peer,
+				     struct ath12k_dp_peer *peer,
 				     struct sk_buff *skb,
-				     struct ath12k_vif *ahvif,
-				     struct hal_rx_desc_data *rx_desc,
-				     struct hal_rx_desc *rx_hwdesc)
+				     struct hal_rx_spd_data *rx_desc)
 {
 	struct mesh_recv_hdr_s *rx_info;
-	struct ath12k_skb_rxcb *rxcb;
 	struct ath12k_base *ab = dp_pdev->dp->ab;
-	struct ath12k_hal *hal = &ab->hal;
 	u32 center_chan_freq;
 	u8 primary_chan_num;
 	u32 rate_mcs;
@@ -242,35 +239,39 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 	u32 nss;
 	u32 bw;
 	u8 klen = 0;
-	int link_id = peer->link_id;
+	int link_id;
 	const u8 *peer_mac;
 	bool pairwise;
+	struct ath12k_dp_link_peer *link_peer = NULL;
+	struct ath12k_vif *ahvif = NULL;
 	int ret;
 
-	rxcb = ATH12K_SKB_RXCB(skb);
+	ahvif = ath12k_vif_to_ahvif(peer->vif);
+
+	link_peer = ath12k_dp_link_peer_find_by_peerid_index(dp_pdev->dp,
+							     dp_pdev,
+							     peer->peer_id);
+
+	link_id = link_peer->link_id;
 
 	/* fill recv mesh stats */
-	rx_info = kzalloc(sizeof(struct mesh_recv_hdr_s), GFP_ATOMIC);
-	if (!rx_info) {
-		pr_err("Memory allocation failed for mesh rx stats");
-		DP_PEER_MISC_STATS_INC(peer->dp_peer, mmesh_stat, rxhdr_alloc_fail, 0, 1);
-		return;
-	}
+	rx_info = (struct mesh_recv_hdr_s *)(skb->data -
+					     sizeof(struct mesh_recv_hdr_s));
 
 	rx_info->rs_flags = MESH_RXHDR_VER1;
-	if (rx_desc->is_first_msdu)
+	if (rx_desc->rx_msdu_info.first_msdu)
 		rx_info->rs_flags |= MESH_RX_FIRST_MSDU;
 
-	if (rx_desc->is_last_msdu)
+	if (rx_desc->rx_msdu_info.last_msdu)
 		rx_info->rs_flags |= MESH_RX_LAST_MSDU;
 
-	rx_info->rs_snr = peer->peer_stats.dp_mon_stats.avg_snr;
+	rx_info->rs_snr = link_peer->peer_stats.dp_mon_stats.avg_snr;
 
-	if (rx_desc->is_decrypted) {
+	if (rx_desc->tlv_info.is_decrypted) {
 		rx_info->rs_flags |= MESH_RX_DECRYPTED;
-		rx_info->rs_keyix = ath12k_hal_rxdesc_get_get_key_id_octet(hal, rx_hwdesc);
-		pairwise = !rx_desc->is_mcbc;
-		peer_mac = pairwise ? peer->addr:NULL;
+		rx_info->rs_keyix = rx_desc->key_id_octate;
+		pairwise = !rx_desc->rx_msdu_info.da_is_mcbc;
+		peer_mac = pairwise ? link_peer->addr:NULL;
 
 		ret = ieee80211_extn_get_key_material(ahvif->vif,
 						link_id,
@@ -281,18 +282,18 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 						sizeof(rx_info->rs_decryptkey),
 						&klen);
 		if (ret)
-			DP_PEER_MISC_STATS_INC(peer->dp_peer, mmesh_stat,
+			DP_PEER_MISC_STATS_INC(peer, mmesh_stat,
 					       rxkey_lookp_up_fail, 0, 1);
 		else
-			DP_PEER_MISC_STATS_INC(peer->dp_peer, mmesh_stat,
+			DP_PEER_MISC_STATS_INC(peer, mmesh_stat,
 					       rxkey_lookp_up_succ, 0, 1);
 
 	}
 
 	rx_info->rs_rssi = rx_info->rs_snr + ATH12K_DEFAULT_NOISE_FLOOR;
 
-	primary_chan_num =  rx_desc->freq;
-	center_chan_freq = rx_desc->freq  >> 16;
+	primary_chan_num =  rx_desc->tlv_info.freq;
+	center_chan_freq = rx_desc->tlv_info.freq  >> 16;
 
 	if (center_chan_freq < ATH12K_MIN_5GHZ_FREQ)
 		rx_info->rs_band = NL80211_BAND_2GHZ;
@@ -302,10 +303,10 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 		rx_info->rs_band = NL80211_BAND_6GHZ;
 
 	rx_info->rs_channel = primary_chan_num;
-	pkt_type =  rx_desc->pkt_type;
-	rate_mcs = rx_desc->rate_mcs;
-	bw = rx_desc->bw;
-	nss = rx_desc->nss;
+	pkt_type =  rx_desc->tlv_info.pkt_type;
+	rate_mcs = rx_desc->tlv_info.rate_mcs;
+	bw = rx_desc->tlv_info.bw;
+	nss = rx_desc->tlv_info.nss;
 
 	/*
 	 * The MCS index does not start with 0 when NSS>1 in HT mode.
@@ -334,13 +335,11 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 			rx_info->rs_keyix,
 			rx_info->rs_snr);
 
-	rxcb->mhdr = rx_info;
-
 	if (ahvif->dp_vif.dp_extn.mdbg & MESH_DBG_RXHDR_DUMP)
 		ath12k_dp_mesh_rx_status_dump(ab, rx_info);
 
 	if (ath12k_dp_stats_enabled(dp_pdev))
-		DP_PEER_MISC_STATS_INC(peer->dp_peer, mmesh_stat, rxhdr_updt, 0, 1);
+		DP_PEER_MISC_STATS_INC(peer, mmesh_stat, rxhdr_updt, 0, 1);
 }
 EXPORT_SYMBOL(ath12k_dp_rx_fill_mesh_metadata);
 

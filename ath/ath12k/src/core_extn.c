@@ -902,11 +902,19 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 	ar->ar_extn.wlan_intf.curr_stats = NULL;
 }
 
+void ath12k_ar_extn_deinit(struct ath12k *ar)
+{
+	kfree(ar->ar_extn.cbs_params.freq_list);
+	ar->ar_extn.cbs_params.freq_list = NULL;
+	ar->ar_extn.cbs_params.num_freqs = 0;
+}
+
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 	ath12k_extn_ini_debugfs_unregister(ar->ab);
 	ath12k_esp_cleanup_extn(ar);
 	ath12k_custom_txrx_deinit(ar);
+	ath12k_ar_extn_deinit(ar);
 }
 
 int ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,

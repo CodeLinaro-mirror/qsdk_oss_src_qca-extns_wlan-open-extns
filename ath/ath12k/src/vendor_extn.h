@@ -63,6 +63,12 @@ extern const struct nla_policy
 ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
 
 extern const struct nla_policy
+ath12k_vendor_scan_policy[QCA_WLAN_VENDOR_ATTR_SCAN_MAX + 1];
+
+extern const struct nla_policy
+ath12k_vendor_split_scan_params_policy[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX + 1];
+
+extern const struct nla_policy
 ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
 
 #if LINUX_VERSION_IS_LESS(6,6,116)
@@ -481,6 +487,11 @@ int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 				  struct wireless_dev *wdev,
 				  const void *data,
 				  int data_len);
+
+int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
+					struct wireless_dev *wdev,
+					const void *data,
+					int data_len);
 
 int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,

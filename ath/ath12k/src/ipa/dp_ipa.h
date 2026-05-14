@@ -95,6 +95,7 @@ struct ipa_header {
 #define IPA_TX_COMP_ALT_RING	IPA_TCL_ALT_RING
 #define IPA_REO_DST_RING        3
 #define IPA_RX_REFILL_RING      IPA_REO_DST_RING
+#define IPA_ALT_REO_DEST_RING	2
 
 /* IPA buffer defines */
 #define IPA_TX_BUF_CNT          8192
@@ -800,6 +801,8 @@ bool ath12k_wlan_ipa_is_sta_only_offload_enabled(void);
 
 bool ath12k_ipa_config_is_enabled(void);
 
+bool ath12k_ipa_is_vlan_enabled(void);
+
 void ath12k_wlan_ipa_intrabss_enable_disable(struct ath12k_wlan_ipa_priv *ipa_ctx,
 					     u32 vdev_id, bool enable);
 
@@ -855,6 +858,8 @@ void ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 pe
 				      u8 *mac_addr);
 
 void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
+
+bool ipa_config_is_vlan_enabled(void);
 
 #ifndef ETH_P_WAPI
 #define ETH_P_WAPI 0x88B4

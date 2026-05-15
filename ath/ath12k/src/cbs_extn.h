@@ -27,6 +27,8 @@
 #define ath12k_cbs_dbg(ar, fmt, ...) do { } while (0)
 #endif
 
+#define ATH12K_CBS_SCAN_ID				0xA001
+
 /* CBS Default Configuration Parameters */
 #define ATH12K_CBS_DEFAULT_RESTTIME			500	/* msec - rest between channels */
 #define ATH12K_CBS_DEFAULT_DWELL_TIME			50	/* msec - time on each channel */

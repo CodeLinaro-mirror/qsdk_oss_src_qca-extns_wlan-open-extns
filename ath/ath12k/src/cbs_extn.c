@@ -8,6 +8,8 @@
 #include "ath12k_cmn_extn.h"
 #include "cbs_extn.h"
 
+static int ath12k_cbs_submit_scan(struct ath12k *ar, struct ath12k_cbs *cbs);
+
 static const char *ath12k_cbs_state_str(enum ath12k_cbs_state state)
 {
 	switch (state) {
@@ -327,6 +329,8 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 			cbs->scan_count++;
 			cbs->dwell_split_cnt = 0;
 			cbs->scan_offset_idx = 0;
+			if (ar)
+				ret = ath12k_cbs_submit_scan(ar, cbs);
 			break;
 		default:
 			ret = -EALREADY;
@@ -343,6 +347,8 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 				ath12k_cbs_post_event(cbs, ATH12K_CBS_EVENT_SCAN_COMPLETE);
 				break;
 			}
+			if (ar)
+				ret = ath12k_cbs_submit_scan(ar, cbs);
 			break;
 		case ATH12K_CBS_STATE_REST:
 			cbs->chan_list_idx++;
@@ -353,6 +359,8 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 				break;
 			}
 			ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_SCAN);
+			if (ar)
+				ret = ath12k_cbs_submit_scan(ar, cbs);
 			break;
 		default:
 			break;
@@ -383,6 +391,8 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 					break;
 				}
 			}
+			if (ar)
+				ret = ath12k_cbs_submit_scan(ar, cbs);
 			break;
 		case ATH12K_CBS_STATE_REST:
 			ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_SCAN);
@@ -391,6 +401,8 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 				cbs->scan_offset_idx = 0;
 			if (cbs->dwell_split_cnt < cbs->max_dwell_split_cnt)
 				cbs->dwell_split_cnt++;
+			if (ar)
+				ret = ath12k_cbs_submit_scan(ar, cbs);
 			break;
 		default:
 			break;
@@ -401,6 +413,8 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 		case ATH12K_CBS_STATE_REST:
 			ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_SCAN);
 			cbs->scan_offset_idx = 0;
+			if (ar)
+				ret = ath12k_cbs_submit_scan(ar, cbs);
 			break;
 		default:
 			break;
@@ -464,4 +478,66 @@ void ath12k_cbs_scan_event_handler(struct ath12k *ar, u32 scan_id,
 	default:
 		break;
 	}
+}
+
+static int ath12k_cbs_submit_scan(struct ath12k *ar, struct ath12k_cbs *cbs)
+{
+	struct ath12k_wmi_scan_req_arg *scan_arg;
+	struct ath12k_link_vif *arvif;
+	struct ieee80211_vif *vif;
+	int ret;
+
+	if (!ar || !cbs || !cbs->arvif)
+		return -EINVAL;
+
+	if (!cbs->max_arr_size_used)
+		cbs->max_arr_size_used = 1;
+
+	if (cbs->scan_offset_idx >= cbs->max_arr_size_used)
+		return -EINVAL;
+
+	if (!cbs->nchans || cbs->chan_list_idx >= cbs->nchans)
+		return -EINVAL;
+
+	arvif = cbs->arvif;
+	if (!arvif->ahvif || !arvif->ahvif->vif)
+		return -EINVAL;
+
+	vif = arvif->ahvif->vif;
+	if (!vif)
+		return -EINVAL;
+
+	scan_arg = kzalloc(sizeof(*scan_arg), GFP_KERNEL);
+	if (!scan_arg)
+		return -ENOMEM;
+
+	ath12k_wmi_start_scan_init(ar, scan_arg, vif->type);
+	scan_arg->scan_id = ATH12K_CBS_SCAN_ID;
+	scan_arg->scan_req_id = ATH12K_CBS_SCAN_ID;
+	scan_arg->vdev_id = arvif->vdev_id;
+	scan_arg->pdev_id = ar->pdev ? ar->pdev->pdev_id : 0;
+	scan_arg->notify_scan_events = WMI_SCAN_EVENT_STARTED | WMI_SCAN_EVENT_COMPLETED;
+	scan_arg->min_rest_time = cbs->rest_time;
+	scan_arg->max_rest_time = cbs->min_dwell_rest_time;
+	scan_arg->idle_time = cbs->wait_time;
+	scan_arg->burst_duration = cbs->cbs_total_dwell_time;
+	scan_arg->extn.scan_start_offset = cbs->scan_offset[cbs->scan_offset_idx];
+	scan_arg->chan_list.num_chan = 1;
+	scan_arg->chan_list.chan = kcalloc(1, sizeof(struct chan_info), GFP_KERNEL);
+	if (!scan_arg->chan_list.chan) {
+		ret = -ENOMEM;
+		goto out_free;
+	}
+
+	scan_arg->chan_list.chan[0].freq = cbs->chan_list[cbs->chan_list_idx];
+	if (!scan_arg->chan_list.chan[0].freq)
+		scan_arg->chan_list.chan[0].freq = 2412;
+	scan_arg->chan_list.chan[0].phymode = MODE_11BE_EHT20;
+
+	ret = ath12k_wmi_send_scan_start_cmd(ar, scan_arg);
+
+out_free:
+	kfree(scan_arg->chan_list.chan);
+	kfree(scan_arg);
+	return ret;
 }

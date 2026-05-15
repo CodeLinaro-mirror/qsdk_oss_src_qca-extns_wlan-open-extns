@@ -6,7 +6,6 @@
 #include "../debug.h"
 
 struct ath12k_smart_ant_ops __rcu *g_sa_ops;
-atomic_t ag_sa_init;
 static DEFINE_MUTEX(sa_ops_lock);
 
 bool ath12k_smart_ant_is_enable(struct ath12k_base *ab)
@@ -128,7 +127,6 @@ int ath12k_register_smart_ant_ops(struct ath12k_smart_ant_ops *ops)
 		return -EBUSY;
 	}
 
-	atomic_set(&ag_sa_init, 0);
 	rcu_assign_pointer(g_sa_ops, ops);
 	mutex_unlock(&sa_ops_lock);
 

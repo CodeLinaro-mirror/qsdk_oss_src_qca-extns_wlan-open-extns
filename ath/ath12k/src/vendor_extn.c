@@ -15,6 +15,7 @@
 #include <linux/limits.h>
 #include <linux/timekeeping.h>
 #include <linux/vmalloc.h>
+#include <linux/workqueue.h>
 #include "../core.h"
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
@@ -871,6 +872,48 @@ static int ath12k_vendor_event_iface_reload_link(struct wiphy *wiphy,
         cfg80211_vendor_event(skb, GFP_KERNEL);
 
         return 0;
+}
+
+static int ath12k_wsi_bypass_event(struct ath12k_base *ab, int status)
+{
+	struct ath12k *ar;
+	struct sk_buff *skb;
+
+	if (ab->num_radios > 0 && ab->pdevs[0].ar)
+		ar = ab->pdevs[0].ar;
+
+	if (!ar || !ar->ah || !ar->ah->hw)
+		return -EINVAL;
+
+	skb = cfg80211_vendor_event_alloc(ar->ah->hw->wiphy,
+					  NULL,
+					  NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_SET_WIFI_INDEX,
+					  GFP_KERNEL);
+	if (!skb)
+		return -ENOMEM;
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SET_RADIO_PARAM,
+	    QCA_WLAN_VENDOR_RADIO_PARAM_WSI_BYPASS)) {
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SET_RADIO_VALUE,
+	    ab->wsi_remap_state)) {
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SET_RADIO_STATUS,
+	    status)) {
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	cfg80211_vendor_event(skb, GFP_KERNEL);
+	ath12k_info(ab, "wsi_bypass_event: cfg80211_vendor_event sent with state %d, status %d\n", ab->wsi_remap_state, status);
+	return 0;
 }
 
 /* Find the wdevs corresponding to the radio index of the wiphy
@@ -1732,6 +1775,27 @@ static int ath12k_set_chainmask(struct ath12k *ar, u32 value, bool is_tx)
         	return ath12k_mac_set_tx_antenna(ar, value);
 
     	return ath12k_mac_set_rx_antenna(ar, value);
+}
+
+static void ath12k_wsi_bypass_workfn(struct work_struct *work)
+{
+	struct ath12k_wsi_remap_work *w =
+	    container_of(work, struct ath12k_wsi_remap_work, work);
+	struct ath12k_base *ab = w->ab;
+	int ret;
+
+	ret = ath12k_mac_dynamic_wsi_remap(ab);
+	if (ret) {
+	        struct ath12k_hw_group *ag = ab->ag;
+	        if (ag)
+	                ag->wsi_remap_in_progress = false;
+	        ab->wsi_remap_state = ATH12K_WSI_BYPASS_DEFAULT;
+	        ab->is_bypassed = false;
+	        ath12k_err(ab, "WSI bypass worker failed: %d\n", ret);
+	}
+
+	ath12k_wsi_bypass_event(ab, ret);
+	kfree(w);
 }
 
 /* Set link-vif level parameters
@@ -4167,6 +4231,83 @@ static int ath12k_vendor_set_radio_params(struct ath12k *ar,
 		ret = ath12k_vendor_reply_u32_extn(wiphy, updated);
 		break;
 	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_WSI_BYPASS:
+	        int i, ret;
+	        struct ath12k_hw_group *ag;
+	        struct ath12k_base *ab;
+	        struct ath12k_wsi_remap_work *w;
+
+	        ath12k_err(ar->ab,
+	                   "set_radio_params: WSI_BYPASS param=%u value=%u\n",
+	                   param, value);
+
+	        /* Expect val: 1 = bypass(remove) device, 2 = re-add device */
+	        if (value != ATH12K_WSI_BYPASS_REMOVE_DEVICE &&
+	            value != ATH12K_WSI_BYPASS_ADD_DEVICE) {
+	                ath12k_err(ar->ab,
+	                           "set_radio_params: invalid WSI_BYPASS value=%u\n",
+	                           value);
+	                return -EINVAL;
+	        }
+
+	        ab = ar->ab;
+	        if (!ab) {
+	                ath12k_err(NULL, "set_radio_params: ab is NULL\n");
+	                return -EINVAL;
+	        }
+
+	        /* Reject if any device is statically bypassed */
+	        ag = ab->ag;
+	        if (!ag) {
+	                ath12k_err(ab, "set_radio_params: ag is NULL\n");
+	                return -EINVAL;
+	        }
+
+	        for (i = 0; i < ag->num_devices; i++) {
+	                struct ath12k_base *partner_ab = ag->ab[i];
+	                if (partner_ab && partner_ab->is_static_bypassed) {
+	                        ath12k_err(ab,
+	                                   "set_radio_params: reject, static bypassed dev idx=%d\n",
+	                                   i);
+	                        return -EINVAL;
+	                }
+	        }
+
+	        mutex_lock(&ab->core_lock);
+	        ret = ath12k_wsi_bypass_precheck(ab, value);
+	        if (ret) {
+	                ath12k_err(ab,
+	                           "set_radio_params: wsi_bypass_precheck failed ret=%d value=%u state=%u is_bypassed=%d\n",
+	                           ret, value, ab->wsi_remap_state, ab->is_bypassed);
+	                mutex_unlock(&ab->core_lock);
+	                return ret;
+	        }
+
+	        ab->wsi_remap_state = value;
+
+	        /* Redundant safety: if already bypassed and request is remove */
+	        if (ab->is_bypassed &&
+	                ab->wsi_remap_state == ATH12K_WSI_BYPASS_REMOVE_DEVICE) {
+	                ath12k_err(ab,
+	                           "set_radio_params: reject redundant remove (is_bypassed=1)\n");
+	                mutex_unlock(&ab->core_lock);
+	                return -EINVAL;
+	        }
+	        mutex_unlock(&ab->core_lock);
+
+	        /* Schedule bypass/remap asynchronously to avoid blocking cfg80211 */
+	        w = kzalloc(sizeof(*w), GFP_KERNEL);
+	        if (!w) {
+	                ath12k_err(ab, "set_radio_params: kzalloc work failed\n");
+	                return -ENOMEM;
+	        }
+
+	        INIT_WORK(&w->work, ath12k_wsi_bypass_workfn);
+	        w->ab = ab;
+
+	        queue_work(system_unbound_wq, &w->work);
+
+	        return 0;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -7179,6 +7320,11 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		ret = 0;
 		break;
 	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_WSI_BYPASS:
+		/* Report 1 if device is currently bypassed, else 0 */
+		*value = ar->ab->is_bypassed ? 1 : 0;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);

@@ -66,6 +66,16 @@ u32 ath12k_dp_ipa_arch_op_rx_default_routing(struct ath12k_base *ab, u32 reo_des
 	return reo_dest;
 }
 
+static inline int ath12k_dp_ipa_arch_op_srng_rx_init(struct ath12k_base *ab)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_srng_rx_init)
+		return ipa_ctx->arch_ops->dp_srng_rx_init(ab);
+
+	return 0;
+}
+
 /* IPA attach/detach */
 int ath12k_dp_ipa_global_config_alloc(void)
 {
@@ -1242,6 +1252,7 @@ int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 	u8 i;
 	int ret = 0;
 	struct device *dev = ipa_ctx->ab->dev;
+	struct ath12k_base *ab = ipa_ctx->ab;
 
 	ath12k_info(ipa_ctx->ab, "enter");
 
@@ -1281,8 +1292,6 @@ int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 			goto free_res;
 		}
 
-		/* TODO: TX and RX buf alloc and map should happen here for wifi8 */
-
 		ret = ath12k_dp_ipa_tx_buf_smmu_map_unmap(ipa_ctx->ab, 1);
 		if (ret) {
 			ath12k_err(ipa_ctx->ab,
@@ -1291,6 +1300,13 @@ int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 			goto free_res;
 		}
 		ath12k_info(ipa_ctx->ab, "TX buffers mapped to IPA");
+
+		ret = ath12k_dp_ipa_arch_op_srng_rx_init(ab);
+		if (ret) {
+			ath12k_ipa_err(ab, "failed to init RX ring");
+			goto rx_init_err;
+		}
+		ath12k_ipa_info(ab, "initialized RX ring");
 
 		/* TODO: Re-visit this when defered loading of IPA is needed
 		ret = dp_ipa_rx_buf_smmu_map_unmap(ipa_ctx->ab, 1);
@@ -1321,6 +1337,8 @@ int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 	ipa_ctx->ipa_init_state = ATH12K_IPA_STATE_PIPE_CONNECTION_DONE;
 	goto out;
 
+rx_init_err:
+	ath12k_dp_ipa_tx_buf_smmu_map_unmap(ab, 0);
 free_res:
 	ath12k_err(ipa_ctx->ab, "failure case: free allocated resources");
 	for (i = 0; i < ATH12K_IPA_UC_OPCODE_MAX; i++) {
@@ -3107,6 +3125,44 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 exit:
 	rcu_read_unlock();
 }
+
+/**
+ * ath12_dp_ipa_sg_tbl_setup() - Setup scatter-gather table for DMA buffer
+ * @dev: Pointer to device structure
+ * @sgt: Pointer to scatter-gather table to be populated
+ * @cpu_addr: CPU virtual address of the DMA buffer
+ * @dma_addr: DMA address of the buffer
+ * @size: Size of the DMA buffer in bytes
+ *
+ * The function performs two main operations:
+ * 1. Obtains the scatter-gather table from the DMA layer using dma_get_sgtable()
+ * 2. Iterates through all scatter-gather entries and sets their dma_address
+ *    field to the physical address obtained via sg_phys()
+ *
+ * Return: 0 on success, -1 on failure
+ */
+int ath12k_dp_ipa_sg_tbl_setup(struct device *dev, struct sg_table *sgt,
+			       void *cpu_addr, dma_addr_t dma_addr, size_t size)
+{
+	struct scatterlist *sg;
+	int ret;
+	int i;
+
+	ret = dma_get_sgtable(dev, sgt, cpu_addr, dma_addr, size);
+	if (ret) {
+		ath12k_ipa_err(NULL, "dma_get_sgtable failed (%d)", ret);
+		return -1;
+	}
+
+	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
+		if (!sg)
+			break;
+		sg->dma_address = sg_phys(sg);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_sg_tbl_setup);
 
 /**
  * ath12k_dp_ipa_mac80211_rx() - Submit packet to mac80211 RX path

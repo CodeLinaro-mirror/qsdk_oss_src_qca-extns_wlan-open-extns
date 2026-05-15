@@ -48,20 +48,20 @@ static int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 static int ath12k_get_total_stations_ab(struct ath12k_base *ab);
 static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab);
 
-void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
+void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev)
 {
 	struct ath12k_link_sta *arsta;
 	if (ieee80211_is_assoc_req(hdr->frame_control)) {
-		spin_lock_bh(&ab->base_lock);
-		arsta = ath12k_link_sta_find_by_addr(ab, hdr->addr2);
+		spin_lock_bh(&ar->arsta_lock);
+		arsta = ath12k_link_sta_find_by_addr(ar, hdr->addr2);
 		if (!arsta || arsta->is_bridge_peer) {
-			ath12k_warn(ab, "arsta not found %pM\n",
+			ath12k_warn(ar->ab, "arsta not found %pM\n",
 					hdr->addr2);
 		} else {
 			arsta->arsta_extn.rssi_assoc = rx_ev->rssi;
 		}
-		spin_unlock_bh(&ab->base_lock);
+		spin_unlock_bh(&ar->arsta_lock);
 	}
 }
 

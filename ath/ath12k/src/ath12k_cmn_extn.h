@@ -1126,7 +1126,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
                                          unsigned long valid_links,
                                          u8 *primary_link_id);
 
-void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
+void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
 
 /**

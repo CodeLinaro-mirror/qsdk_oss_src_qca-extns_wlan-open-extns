@@ -8811,6 +8811,10 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 	info = rdev->cur_cmd_info;
 	if (info && info->attrs[NL80211_ATTR_MLO_LINK_ID])
 		cbs.link_id = nla_get_u8(info->attrs[NL80211_ATTR_MLO_LINK_ID]);
+	else {
+		ath12k_err(NULL, "CBS: MLO link ID attribute missing\n");
+		return -EINVAL;
+	}
 
 	/* Get vif and arvif from wdev */
 	vif = wdev_to_ieee80211_vif(wdev);
@@ -8948,7 +8952,7 @@ void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 
 	spin_lock_bh(&ar->data_lock);
 
-	split_scan_type = cbs->enable;
+	split_scan_type = ar->ar_extn.cbs.cbs_enable;
 
 	if (ar->ar_extn.cbs.chan_list[ar->ar_extn.cbs.nchans - 1] ==
 	    le32_to_cpu(scan_ev->channel_freq))

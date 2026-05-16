@@ -75,10 +75,17 @@ bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
 		struct ath12k *ar,
 		const struct wmi_scan_event *scan_ev)
 {
-	struct ath12k_cbs_scan_params *cbs_params;
+	u32 scan_req_id;
+	u32 event_type;
+	u32 reason;
+	bool is_final_scan_offset = 0;
 
 	if (!ar)
 		return false;
+
+	event_type = le32_to_cpu(scan_ev->event_type);
+	reason = le32_to_cpu(scan_ev->reason);
+	scan_req_id = le32_to_cpu(scan_ev->scan_req_id);
 
 	spin_lock_bh(&ar->data_lock);
 
@@ -89,11 +96,8 @@ bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
 
 	ath12k_dbg(NULL, ATH12K_DBG_WMI,
 		   "ath12k scan state machine for CBS vendor scan event type %d req_id %d vdev_id %d reason %d freq %d\n",
-		   le32_to_cpu(scan_ev->event_type),
-		   le32_to_cpu(scan_ev->scan_req_id),
-		   le32_to_cpu(scan_ev->vdev_id),
-		   le32_to_cpu(scan_ev->reason),
-		   le32_to_cpu(scan_ev->channel_freq));
+		   event_type, scan_req_id, le32_to_cpu(scan_ev->vdev_id),
+		   reason, le32_to_cpu(scan_ev->channel_freq));
 
 	if (!(le32_to_cpu(scan_ev->event_type) == WMI_SCAN_EVENT_COMPLETED &&
 	    le32_to_cpu(scan_ev->reason) == WMI_SCAN_REASON_COMPLETED)) {
@@ -116,10 +120,20 @@ bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
 	memcpy(ar->ar_extn.cbs_scan_event, scan_ev,
 	       sizeof(*ar->ar_extn.cbs_scan_event));
 
+	is_final_scan_offset = (ar->ar_extn.cbs.scan_offset_idx == 0 ||
+				ar->ar_extn.cbs.scan_offset_idx >= ar->ar_extn.cbs.max_arr_size_used);
+
 	spin_unlock_bh(&ar->data_lock);
 
-	ath12k_dbg(NULL, ATH12K_DBG_WMI, "Scheduling workq for CBS to send scan completion to Application\n");
-	schedule_work(&ar->ar_extn.cbs_scan_work);
+	if (is_final_scan_offset) {
+		ath12k_dbg(NULL, ATH12K_DBG_WMI, "Scheduling workq for CBS to send scan completion to Application\n");
+		schedule_work(&ar->ar_extn.cbs_scan_work);
+	}
+
+	if (event_type == WMI_SCAN_EVENT_DEQUEUED ||
+	    event_type == WMI_SCAN_EVENT_COMPLETED)
+		ath12k_cbs_scan_event_handler(ar, scan_req_id, event_type);
+
 	return true;
 }
 

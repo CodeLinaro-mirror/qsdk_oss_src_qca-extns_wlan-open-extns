@@ -69,4 +69,17 @@ void ath12k_wmi_peer_ratecode_list_event_handler(struct ath12k_base *ab,
 	sa_core_wmi_peer_rc_list_ev_handler(ab, skb);
 }
 
+/**
+ * ath12k_smart_ant_api_peer_disconnect - Notify SA of peer disconnection
+ * @arsta: ath12k link sta corresponding to the peer
+ *
+ * Notifies Smart Antenna core that a peer has disconnected so that any
+ * per-peer state can be cleaned up. This wraps
+ * sa_core_peer_disconnect_notify().
+ */
+static inline
+void ath12k_smart_ant_api_peer_disconnect(struct ath12k_link_sta *arsta)
+{
+	sa_core_peer_disconnect_notify(arsta);
+}
 #endif /* ATH12K_SA_API_H */

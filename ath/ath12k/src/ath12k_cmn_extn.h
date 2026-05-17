@@ -251,9 +251,11 @@ struct ath12k_sta_extn {
  * struct ath12k_link_sta_extn - per-link STA extension state
  * @rssi_assoc: RSSI captured during association for this link; used as the base
  *		RSSI when deriving per-link averages and primary link selection.
+ * @sa_sta: Smart Antenna extention for STA
  */
 struct ath12k_link_sta_extn {
 	s8 rssi_assoc;
+	struct sa_sta_extn sa_sta;
 };
 
 /* DCS user-configured thresholds (from hostapd_cli),

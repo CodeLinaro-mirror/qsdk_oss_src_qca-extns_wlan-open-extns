@@ -147,7 +147,8 @@ void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar, u16 type,
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
 			   "Checking arvif: is_started=%d ahvif=%p\n",
 			   arvif->is_started, arvif->ahvif);
-		if (!tmp_arvif && arvif->is_started) {
+		if (!tmp_arvif && (arvif->ahvif->vdev_type == WMI_VDEV_TYPE_AP)
+		    && arvif->is_started) {
 			tmp_arvif = arvif;
 			break;
 		}

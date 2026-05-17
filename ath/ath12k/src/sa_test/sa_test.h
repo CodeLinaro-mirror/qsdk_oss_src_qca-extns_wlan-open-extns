@@ -148,12 +148,13 @@
 #define SA_DEBUG_LVL3 0x4
 #define SA_DEBUG_LVL4 0x8
 #define SA_DEBUG_LVL5 0x10
+#define SA_DEBUG_LVL6 0x20
 
 #define SA_DEBUG_MASK(mask, radio_id) \
 	(((radio_id) < SA_MAX_RADIOS) && (g_sa.radio[radio_id].sa_dbg_level & (mask)))
-#define SA_DEBUG_PRINT(mask, radio_id, args...) do { \
+#define SA_DEBUG_PRINT(mask, radio_id, fmt, ...) do { \
 	if (SA_DEBUG_MASK(mask, radio_id)) { \
-		pr_info(args); \
+		pr_info("%s: " fmt, __func__, ##__VA_ARGS__); \
 	} \
 } while (0)
 
@@ -359,36 +360,36 @@ enum smart_ant_param  {
 
 /*
  * struct smartantenna_params - Per-radio Smart Antenna configuration
+ * @retrain_interval: Periodic retrain interval (minutes).
+ * @perftrain_interval: Performance monitor interval (milliseconds).
+ * @default_tx_antenna: Default TX antenna used when node connects.
+ * @n_packets_to_train: Number of packets used for training.
+ * @packetlen: Training packet length in bytes.
+ * @num_pkt_threshold: Minimum traffic threshold (packets) to consider.
+ * @num_pretrain_packets: Number of pre-training packets.
+ * @num_other_bw_pkts_th: Threshold for packets sent in non-active bandwidth.
+ * @max_train_ppdu: Maximum number of PPDUs for training.
+ * @min_train_pkts: Minimum training packets.
+ * @per_threshold: PER threshold for training.
+ * @parallel_gpio_drive: Parallel mode GPIO drive configuration.
+ * @num_min_pkt_threshod: Minimum packet thresholds to detect active
+ *     bandwidth per BW.
  * @training_mode: Training mode selector (0 = existing traffic only,
- * 1 = self packet generation with existing traffic)
+ *     1 = self packet generation with existing traffic)
  * @lower_bound: Lower bound for rate drop in training.
  * @upper_bound: Upper bound for rate increase in training.
  * @per_diff_threshold: PER difference treated as equal when comparing.
- * @n_packets_to_train: Number of packets used for training.
- * @packetlen: Training packet length in bytes.
  * @num_tx_antennas: Number of possible TX antenna combinations.
  * @num_recv_chains: Number of RX chains.
- * @num_pkt_threshold: Minimum traffic threshold (packets) to consider.
- * @retrain_interval: Periodic retrain interval (minutes).
- * @perftrain_interval: Performance monitor interval (milliseconds).
  * @max_throughput_change: Goodput change threshold (percent) for
- * performance trigger.
+ *     performance trigger.
  * @hysteresis: Hysteresis value (intervals) for throughput fluctuations.
  * @min_goodput_threshold: Minimum goodput drop (Mbps) to trigger retraining.
  * @goodput_avg_interval: Goodput averaging interval (number of slots).
  * @goodput_ignore_interval: Goodput ignoring interval before averaging.
  * @config: Algorithm configuration bitmask (see SA_CONFIG_*).
- * @num_pretrain_packets: Number of pre-training packets.
- * @num_other_bw_pkts_th: Threshold for packets sent in non-active bandwidth.
  * @train_enable: Master bitmap indicating training enable for init/perf/prd.
- * @num_min_pkt_threshod: Minimum packet thresholds to detect active
- * bandwidth per BW.
- * @default_tx_antenna: Default TX antenna used when node connects.
  * @antenna_change_ind: Global indication to change antenna in next feedback.
- * @max_train_ppdu: Maximum number of PPDUs for training.
- * @min_train_pkts: Minimum training packets.
- * @per_threshold: PER threshold for training.
- * @parallel_gpio_drive: Parallel mode GPIO drive configuration.
  */
 struct smartantenna_params {
 	u32 retrain_interval;
@@ -424,6 +425,7 @@ struct smartantenna_params {
  * struct radio_config - Per-radio runtime configuration and state
  * @init_config: Initial SA config pushed to target.
  * @sa_params: Smart Antenna configuration parameters.
+ * @gpio_cfg: User defined GPIO pins and functions as per board design
  * @default_antenna: Default RX/TX antenna.
  * @bcn_antenna: Beacon antenna.
  * @node_count_per_ant: Count of nodes per antenna combination.
@@ -434,6 +436,7 @@ struct smartantenna_params {
 struct radio_config {
 	struct ath12k_sa_config init_config;
 	struct smartantenna_params sa_params;
+	struct ath12k_sa_gpio_config gpio_cfg;
 	u32 default_antenna;
 	u32 bcn_antenna;
 	u8 node_count_per_ant[SA_ANTENNA_COMBINATIONS];

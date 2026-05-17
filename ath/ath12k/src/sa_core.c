@@ -9,93 +9,6 @@
 #include <linux/notifier.h>
 #include "ath12k_notif.h"
 
-struct wmi_peer_ratecode_list_fixed_param {
-	struct ath12k_wmi_mac_addr_params macaddr;
-	u32 ratecount;
-	u32 vdev_id;
-	u32 pdev_id;
-	u32 ratecount_ext;
-} __packed;
-
-struct wmi_peer_cck_ofdm_rate_info {
-	u32 ratecode_legacy;
-} __packed;
-
-struct wmi_peer_mcs_rate_info {
-	u32 rt_code_20;
-	u32 rt_code_40;
-	u32 rt_code_80;
-	u32 rt_code_160;
-	u32 rt_code_320;
-} __packed;
-
-struct wmi_pdev_set_smart_ant_cmd {
-	u32 tlv_header;
-	union {
-		u32 mac_id;
-		u32 pdev_id;
-	};
-	u32 enable;
-	u32 mode;
-	u32 rx_antenna;
-	u32 tx_default_antenna;
-} __packed;
-
-struct wmi_pdev_smart_ant_gpio_handle_cmd {
-	u32 tlv_header;
-	u32 gpio_pin;
-	u32 gpio_func;
-	u32 pdev_id;
-} __packed;
-
-struct wmi_pdev_set_rx_antenna_cmd {
-	u32 tlv_header;
-	union {
-		u32 mac_id;
-		u32 pdev_id;
-	};
-	u32 rx_antenna;
-} __packed;
-
-struct wmi_pdev_set_tx_antenna_cmd {
-	u32 tlv_header;
-	u32 vdev_id;
-	struct ath12k_wmi_mac_addr_params macaddr;
-} __packed;
-
-struct wmi_peer_set_smart_tx_ant_series_cmd {
-	u32 tlv_header;
-	u32 ant_series;
-} __packed;
-
-struct wmi_peer_set_smart_ant_train_ant_fixed_param_cmd {
-	u32 tlv_header;
-	u32 vdev_id;
-	struct ath12k_wmi_mac_addr_params macaddr;
-	u32 numpkts;
-	u32 per_check_bitmap;
-} __packed;
-
-struct wmi_peer_set_smart_ant_train_ant_param {
-	u32 tlv_header;
-	union {
-		u32 train_rate_series;
-		u32 train_rate_series_lo;
-	};
-	u32 train_antenna_series;
-	u32 rc_flags;
-	u32 train_rate_series_hi;
-	u32 train_rate_series_ext;
-} __packed;
-
-struct wmi_peer_set_smart_ant_node_config_ops_cmd {
-	u32 tlv_header;
-	u32 vdev_id;
-	struct ath12k_wmi_mac_addr_params macaddr;
-	u32 cmd_id;
-	u32 args_count;
-} __packed;
-
 extern struct ath12k_smart_ant_ops *g_sa_ops;
 extern atomic_t ag_sa_init;
 
@@ -103,67 +16,59 @@ extern atomic_t ag_sa_init;
 static struct notifier_block sa_ppdu_nb;
 static atomic_t sa_ppdu_nb_registered = ATOMIC_INIT(0);
 
-static int sa_core_ppdu_event_notify(struct notifier_block *nb,
-                                     unsigned long action, void *data)
+/*
+ * Cached pointer to the hw_group (ag).
+ *
+ * Set once in sa_core_init() which runs in process context, and cleared
+ * in sa_core_deinit() when the last radio is torn down.  The atomic
+ * notifier callbacks (sa_core_ppdu_event_notify and its callees) read
+ * this pointer without any lock: this is safe because:
+ *   - writes happen only in process context, serialised by the driver
+ *     init/deinit sequence;
+ *   - the pointer is stable for the entire lifetime of the SA session;
+ *   - a stale NULL read in the notifier simply causes an early return.
+ */
+static struct ath12k_hw_group __rcu *sa_cached_ag;
+
+static struct ath12k_link_sta *sa_core_get_sta_from_device(u8 device_id, u8 *sta_mac)
 {
-	struct ath12k_ppdu_event *event = data;
+	struct ath12k_hw_group *ag;
+	struct ath12k_base *ab = NULL;
+	struct ath12k_link_sta *arsta = NULL;
 
-	if (!event || !event->skb)
-		return NOTIFY_DONE;
+	if (!is_valid_ether_addr(sta_mac))
+		return NULL;
 
-	switch (action) {
-	case ATH12K_EVENT_PPDU_RX_COMPLETE:
-		/* RX PPDU complete: listeners may parse skb->data as ath12k_ppdu_rx_info */
-		return NOTIFY_DONE;
-	case ATH12K_EVENT_PPDU_TX_COMPLETE:
-		/* TX PPDU complete: listeners may parse skb->data as ath12k_ppdu_tx_info */
-		return NOTIFY_DONE;
-	default:
-		return NOTIFY_DONE;
+	rcu_read_lock();
+	/*
+	 * Use the cached ag pointer instead of ath12k_core_get_ag().
+	 * ath12k_core_get_ag() acquires a sleepable mutex which is illegal
+	 * here because this function is called from an ATOMIC_NOTIFIER
+	 * callback (BH/softirq context).  sa_cached_ag is set once at
+	 * sa_core_init() time (process context) and is stable for the
+	 * lifetime of the SA session, so reading it without a lock is safe.
+	 */
+	ag = rcu_dereference(sa_cached_ag);
+	if (!ag) {
+		rcu_read_unlock();
+		return NULL;
 	}
-}
 
-static int sa_core_ppdu_notifier_register(u8 en_mask)
-{
-	unsigned long mask = 0;
-	int ret;
+	/* Directly index ab using device_id to avoid iterating */
+	if (device_id >= ag->num_devices) {
+		rcu_read_unlock();
+		return NULL;
+	}
+	ab = ag->ab[device_id];
+	if (!ab) {
+		rcu_read_unlock();
+		return NULL;
+	}
 
-	if (atomic_cmpxchg(&sa_ppdu_nb_registered, 0, 1) != 0)
-		return 0;
+	arsta = ath12k_link_sta_find_by_addr(ab, sta_mac);
+	rcu_read_unlock();
 
-	sa_ppdu_nb.notifier_call = sa_core_ppdu_event_notify;
-	sa_ppdu_nb.priority = 0;
-
-	if (en_mask & SA_TX_FEEDBACK_MASK)
-		mask |= (1UL << ATH12K_EVENT_PPDU_TX_COMPLETE);
-	if (en_mask & SA_RX_FEEDBACK_MASK)
-		mask |= (1UL << ATH12K_EVENT_PPDU_RX_COMPLETE);
-
-	ret = ath12k_register_ppdu_notifier(&sa_ppdu_nb, mask);
-	if (ret)
-		atomic_set(&sa_ppdu_nb_registered, 0);
-
-	return ret;
-}
-
-static int sa_core_ppdu_notifier_unregister(u8 en_mask)
-{
-	unsigned long mask = 0;
-	int ret;
-
-	if (atomic_read(&sa_ppdu_nb_registered) == 0)
-		return 0;
-
-	if (en_mask & SA_TX_FEEDBACK_MASK)
-		mask |= (1UL << ATH12K_EVENT_PPDU_TX_COMPLETE);
-	if (en_mask & SA_RX_FEEDBACK_MASK)
-		mask |= (1UL << ATH12K_EVENT_PPDU_RX_COMPLETE);
-
-	ret = ath12k_unregister_ppdu_notifier(&sa_ppdu_nb, mask);
-	if (!ret)
-		atomic_set(&sa_ppdu_nb_registered, 0);
-
-	return ret;
+	return arsta;
 }
 
 static inline int sa_core_get_txantenna(void *ccp, u32 *antenna_array)
@@ -898,6 +803,247 @@ static int sa_core_trigger_training(struct ath12k_link_sta *arsta, u8 *macaddr)
 	return ret;
 }
 
+static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
+{
+	struct ath12k_sa_rx_feedback rx = {0};
+	struct hal_rx_mon_ppdu_info *ppdu;
+	struct hal_rx_user_status *stats;
+	struct ath12k *ar;
+	struct ath12k_link_sta *arsta;
+	struct sa_sta_extn *sa_sta;
+	u8 status = 0;
+	u32 value = 0;
+	int i, j;
+
+	if (!g_sa_ops || !g_sa_ops->sa_update_rxfeedback)
+		return -1;
+
+	ppdu = &rx_info->ppdu_info;
+	if (ppdu->num_users > 1)
+		return 0;
+
+	stats = &ppdu->userstats[0];
+	arsta = sa_core_get_sta_from_device(ppdu->device_id, stats->peer_mac);
+	if (!arsta)
+		return -1;
+
+	ar = arsta->arvif->ar;
+	sa_sta = &arsta->arsta_extn.sa_sta;
+	if (!sa_sta->ctx)
+		return -1;
+
+	rx.rx_antenna = ppdu->rx_antenna;
+	rx.rx_rate_mcs = (ATH12K_HW_RATE_CODE(ppdu->mcs, ppdu->nss,
+			 ppdu->preamble_type, 0) & SA_MASK_RCODE);
+	rx.npackets = ppdu->tcp_msdu_count +
+			ppdu->udp_msdu_count + ppdu->other_msdu_count;
+	for (i = 0; i < SA_MAX_RSSI_CHAINS; i++)
+		for (j = 0; j < SA_MAX_BW; j++)
+			rx.rx_rssi[i][j] = ppdu->rssi_chain[i][j];
+	rx.rx_rate_index = ppdu->bw;
+
+	if (g_sa_ops->sa_update_rxfeedback(sa_sta->ctx, &rx, &status)) {
+		ath12k_err(ar->ab, "Failed to update RX Feedback for %pM",
+			   stats->peer_mac);
+		return -1;
+	}
+	if (status & SA_RX_CONFIG_REQUIRED) {
+		sa_core_get_rxantenna(ar->radio_idx, &value);
+		sa_core_wmi_set_rx_antenna(ar, value);
+	} else if ((status & SA_TRAINING_REQUIRED) && sa_sta) {
+		sa_core_trigger_training(arsta, stats->peer_mac);
+	}
+
+	return 0;
+}
+
+static int sa_core_get_tx_user_stats(struct htt_ppdu_user_stats *stats,
+				     struct ath12k_ppdu_tx_info *tx_info)
+{
+	struct ath12k *ar;
+	struct ath12k_link_sta *arsta;
+	struct sa_sta_extn *sa_sta;
+	struct ath12k_sa_tx_feedback tx = {0};
+	u32 rate_flag;
+	u32 ant_array[SA_MAX_SA_CHAINS] = {0};
+	u32 value = 0;
+	u8 status = 0;
+	u8 i, chains, bw, mcs, preamble, nss;
+
+	if (tx_info->ppdu_info.frame_type != HTT_STATS_PPDU_FTYPE_DATA)
+		return -1;
+
+	arsta = sa_core_get_sta_from_device(tx_info->device_id, stats->peer_mac);
+	if (!arsta)
+		return -1;
+
+	ar = arsta->arvif->ar;
+	sa_sta = &arsta->arsta_extn.sa_sta;
+	if (!sa_sta->ctx)
+		return -1;
+
+	tx.tx_antenna[0] = stats->cmpltn_cmn.tx_antenna_mask;
+	chains = min_t(u32, SA_MAX_RSSI_CHAINS, HTT_STATS_MAX_CHAINS);
+	for (i = 0; i < chains; i++)
+		tx.rssi[i] = stats->cmpltn_cmn.rssi_chain[i];
+
+	for (i = 0; i < HTT_STATS_MAX_SA_BW; i++)
+		tx.ratemaxphy[i] = stats->cmpltn_cmn.max_rates[i];
+	tx.ratemaxphy[4] = stats->cmpltn_cmn.max_rates_ext;
+
+	tx.is_trainpkt = (stats->cmpltn_cmn.is_sa_training & 1);
+	if (tx.is_trainpkt)
+		tx.goodput = stats->cmpltn_cmn.pending_training_pkts;
+
+	tx.num_packets = stats->cmpltn_cmn.mpdu_tried;
+	tx.num_bad = stats->cmpltn_cmn.mpdu_tried -
+			stats->cmpltn_cmn.mpdu_success;
+
+	if (u32_get_bits(stats->rate.info1,
+			 HTT_PPDU_STATS_USER_RATE_INFO1_RESP_TYPE_VALID))
+		rate_flag = stats->rate.resp_rate_flags;
+	else
+		rate_flag = stats->rate.rate_flags;
+	bw = HTT_USR_RATE_BW(rate_flag);
+	if (bw == HTT_PPDU_STATS_BANDWIDTH_320MHZ)
+		bw -= 3;
+	else
+		bw -= 2;
+	tx.rate_index = bw;
+	preamble = HTT_USR_RATE_PREAMBLE(rate_flag);
+	mcs = HTT_USR_RATE_MCS(rate_flag);
+	nss = HTT_USR_RATE_NSS(rate_flag);
+	tx.rate_mcs[0] = (ATH12K_HW_RATE_CODE(mcs, nss, preamble, 0) &
+			 SA_MASK_RCODE);
+
+	for (i = 0; i < SA_MAX_RETRIES_INDEX; i++) {
+		tx.nshort_retries[i] =
+			(HTT_USR_CMPLTN_SHORT_RETRY(stats->cmpltn_cmn.flags) >>
+			(i * SA_NIBBLE_BITS)) & SA_MASK_LOWER_NIBBLE;
+		tx.nlong_retries[i] =
+			(HTT_USR_CMPLTN_LONG_RETRY(stats->cmpltn_cmn.flags) >>
+			(i * SA_NIBBLE_BITS)) & SA_MASK_LOWER_NIBBLE;
+		if (tx.nlong_retries[i])
+			if (tx.nlong_retries[i] == tx.nshort_retries[i])
+				tx.nshort_retries[i]--;
+	}
+	if (tx.num_packets != tx.num_bad) {
+		if (tx.nlong_retries[tx.rate_index])
+			tx.nlong_retries[tx.rate_index] -= 1;
+		if (tx.nshort_retries[tx.rate_index])
+			tx.nshort_retries[tx.rate_index] -= 1;
+	}
+
+	if (g_sa_ops->sa_update_txfeedback(sa_sta->ctx, &tx, &status)) {
+		ath12k_err(ar->ab, "Failed to update TX Feedback for %pM",
+			   stats->peer_mac);
+		return -1;
+	}
+	if (status & SA_RX_CONFIG_REQUIRED) {
+		sa_core_get_rxantenna(ar->radio_idx, &value);
+		sa_core_wmi_set_rx_antenna(ar, value);
+	} else if ((status & SA_TX_CONFIG_REQUIRED) && sa_sta) {
+		sa_core_get_txantenna(sa_sta->ctx, &ant_array[0]);
+		sa_core_wmi_set_tx_antenna(ar, arsta->arvif->vdev_id,
+					   stats->peer_mac, ant_array);
+	} else if ((status & SA_TRAINING_REQUIRED) && sa_sta) {
+		sa_core_trigger_training(arsta, stats->peer_mac);
+	} else if ((status & SA_TX_FEEDBACK_CONFIG_REQUIRED) && sa_sta) {
+		sa_core_get_node_config(sa_sta->ctx,
+					SA_TX_FEEDBACK_CONFIG, &value);
+		sa_core_wmi_send_node_config_ops(arsta, stats->peer_mac,
+						 SA_TX_FEEDBACK_CONFIG,
+						 1, &value);
+	}
+
+	return 0;
+}
+
+static int sa_core_update_tx_feedback(struct ath12k_ppdu_tx_info *tx_info)
+{
+	struct htt_ppdu_stats_info *ppdu;
+	int i;
+
+	if (!g_sa_ops || !g_sa_ops->sa_update_txfeedback)
+		return -1;
+
+	ppdu = &tx_info->ppdu_info;
+	for (i = 0; (i < ppdu->ppdu_stats.common.num_users) &&
+	     (i < HTT_PPDU_STATS_MAX_USERS); i++)
+		sa_core_get_tx_user_stats(&ppdu->ppdu_stats.user_stats[i],
+					  tx_info);
+
+	return 0;
+}
+
+static int sa_core_ppdu_event_notify(struct notifier_block *nb,
+                                     unsigned long action, void *data)
+{
+	struct ath12k_ppdu_event *event = data;
+	struct sk_buff *skb;
+
+	if (!event || !event->skb)
+		return NOTIFY_DONE;
+
+	skb = event->skb;
+	if (!skb->data || !skb->len)
+		return NOTIFY_DONE;
+
+	switch (action) {
+	case ATH12K_EVENT_PPDU_RX_COMPLETE:
+		sa_core_update_rx_feedback((struct ath12k_ppdu_rx_info *)skb->data);
+		return NOTIFY_OK;
+	case ATH12K_EVENT_PPDU_TX_COMPLETE:
+		sa_core_update_tx_feedback((struct ath12k_ppdu_tx_info *)skb->data);
+		return NOTIFY_OK;
+	default:
+		return NOTIFY_DONE;
+	}
+}
+
+static int sa_core_ppdu_notifier_register(u8 en_mask)
+{
+	unsigned long mask = 0;
+	int ret;
+
+	if (atomic_cmpxchg(&sa_ppdu_nb_registered, 0, 1) != 0)
+		return 0;
+
+	sa_ppdu_nb.notifier_call = sa_core_ppdu_event_notify;
+	sa_ppdu_nb.priority = 0;
+
+	if (en_mask & SA_TX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_TX_COMPLETE);
+	if (en_mask & SA_RX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_RX_COMPLETE);
+
+	ret = ath12k_register_ppdu_notifier(&sa_ppdu_nb, mask);
+	if (ret)
+		atomic_set(&sa_ppdu_nb_registered, 0);
+
+	return ret;
+}
+
+static int sa_core_ppdu_notifier_unregister(u8 en_mask)
+{
+	unsigned long mask = 0;
+	int ret;
+
+	if (atomic_read(&sa_ppdu_nb_registered) == 0)
+		return 0;
+
+	if (en_mask & SA_TX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_TX_COMPLETE);
+	if (en_mask & SA_RX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_RX_COMPLETE);
+
+	ret = ath12k_unregister_ppdu_notifier(&sa_ppdu_nb, mask);
+	if (!ret)
+		atomic_set(&sa_ppdu_nb_registered, 0);
+
+	return ret;
+}
+
 static inline void sa_core_extract_mac_from_params(u32 *params, u8 *mac)
 {
 	mac[0] = (u8)((params[0] & 0x0000FF00) >> 8);
@@ -1115,6 +1261,13 @@ int sa_core_init(struct ath12k *ar,
 		}
 		if (sa_ar->sa_mode == WMI_SMART_ANT_MODE_PARALLEL)
 			sa_core_wmi_send_parallel_mode_gpio_drive(ar, ar->cfg_tx_chainmask);
+		/*
+		 * Cache ag before registering the PPDU notifier so that the
+		 * atomic notifier callbacks can resolve device_id -> ab without
+		 * taking the sleepable ath12k_hw_group_mutex.
+		 */
+		rcu_assign_pointer(sa_cached_ag, ath12k_ab_to_ag(ab));
+		synchronize_rcu();
 		ret = sa_core_ppdu_notifier_register(sa_ar->enable_mask);
 		if (ret)
 			ath12k_warn(ab, "SA PPDU registration failed:%d\n",
@@ -1161,10 +1314,17 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 		if (g_sa_ops->sa_algo_deinit)
 			g_sa_ops->sa_algo_deinit(ar->radio_idx);
 
+		/*
+		 * Unregister the notifier first, then clear the cached
+		 * ag pointer.  This ordering ensures that no new atomic
+		 * callbacks can fire after the pointer is nulled.
+		 */
 		ret = sa_core_ppdu_notifier_unregister(sa_ar->enable_mask);
 		if (ret)
 			ath12k_warn(ab, "SA PPDU unregistration failed:%d\n",
 				    ret);
+		rcu_assign_pointer(sa_cached_ag, NULL);
+		synchronize_rcu();
 		sa_ar->enable_mask = 0;
 		ret = sa_core_wmi_send_smart_ant_enable(ar, 0, 0, &gpio_cfg);
 		if (ret)

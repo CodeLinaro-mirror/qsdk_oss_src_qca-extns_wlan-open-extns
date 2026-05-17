@@ -43,7 +43,7 @@ int ath12k_vendor_get_wiphy_sa_configs(struct wiphy *wiphy,
 	ar = &ah->radio[params->radio_idx];
 
 	configs[0] = params->value;
-	configs[1] = *((u32 *)params->data);
+	configs[1] = get_unaligned_le32(params->data);
 	configs[2] = params->length;
 
 	ret = sa_core_get_configs(ar, configs);
@@ -78,7 +78,7 @@ int ath12k_vendor_set_wiphy_sa_configs(struct wiphy *wiphy,
 	ar = &ah->radio[params->radio_idx];
 
 	configs[0] = params->value;
-	configs[1] = *((u32 *)params->data);
+	configs[1] = get_unaligned_le32(params->data);
 	configs[2] = params->length;
 	configs[3] = params->flags;
 

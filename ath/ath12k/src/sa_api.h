@@ -9,6 +9,37 @@
 #include "sa_core.h"
 
 /**
+ * ath12k_vendor_get_wiphy_sa_configs - Get Smart Antenna configuration
+ * @wiphy: wiphy on which to apply the configuration
+ * @params: vendor generic params carrying cfg id, value and length
+ * @value: ouput pointer to carry the configuration value
+ *
+ * Fetches Smart Antenna configuration from userspace to the core. Depending on
+ * the parameter, this may query radio-wide settings or peer-specific settings
+ * and gets configuration using smart antenna algorithm hooks.
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+int ath12k_vendor_get_wiphy_sa_configs(struct wiphy *wiphy,
+				       struct ath12k_wifi_generic_params *params,
+				       u32 *value);
+
+/**
+ * ath12k_vendor_set_wiphy_sa_configs - Set Smart Antenna configuration
+ * @wiphy: wiphy on which to apply the configuration
+ * @params: vendor generic params carrying cfg id, value, length and flags
+ *
+ * Passes Smart Antenna configuration from userspace to the core. Depending on
+ * the parameter, this may apply radio-wide settings or peer-specific settings
+ * and can trigger corresponding WMI commands to firmware and/or callbacks into
+ * the Smart Antenna algorithm hooks.
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+int ath12k_vendor_set_wiphy_sa_configs(struct wiphy *wiphy,
+				       struct ath12k_wifi_generic_params *params);
+
+/**
  * ath12k_smart_ant_is_enable - Query whether Smart Antenna is enabled
  * @ab: ath12k base pointer
  *

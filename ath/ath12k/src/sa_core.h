@@ -98,6 +98,36 @@ struct sa_sta_ratecode_list {
 };
 
 /**
+ * sa_core_get_configs - Read Smart Antenna configuration
+ * @ar: ath12k device context
+ * @params: pointer to encoded parameters array
+ *
+ * Fetches Smart Antenna configuration stored in driver or algorithm module.
+ * The parameter encoding determines whether the configuration targets
+ * radio-wide or peer-specific state (see sa_api_defs.h for details).
+ *
+ * Return: 0 on success, negative errno on failure. Configuration returned in
+ * 3rd index of params array, i.e. params[3].
+ */
+int sa_core_get_configs(struct ath12k *ar, u32 *params);
+
+/**
+ * sa_core_set_configs - Apply Smart Antenna configuration
+ * @ar: ath12k device context
+ * @params: pointer to encoded parameters array
+ *
+ * Applies Smart Antenna configuration originating from userspace or internal
+ * control paths. The parameter encoding determines whether the configuration
+ * targets radio-wide or peer-specific state (see sa_api_defs.h for details).
+ * This may trigger WMI commands and/or callbacks into the Smart Antenna
+ * algorithm implementation.
+ *
+ * Return: 0 on success, negative errno on failure. Some implementations
+ * may return a positive bitmask to indicate follow-up actions required.
+ */
+int sa_core_set_configs(struct ath12k *ar, u32 *params);
+
+/**
  * sa_get_cfg_flags - Read Smart Antenna configuration flags
  * @ab: ath12k base pointer
  * @sa_en: output flag indicating if Smart Antenna is enabled by config

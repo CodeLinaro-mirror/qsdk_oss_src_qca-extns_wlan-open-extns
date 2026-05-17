@@ -5,7 +5,7 @@
 #include "sa_api.h"
 #include "../debug.h"
 
-struct ath12k_smart_ant_ops *g_sa_ops;
+struct ath12k_smart_ant_ops __rcu *g_sa_ops;
 atomic_t ag_sa_init;
 static DEFINE_MUTEX(sa_ops_lock);
 
@@ -123,13 +123,13 @@ int ath12k_register_smart_ant_ops(struct ath12k_smart_ant_ops *ops)
 		return -EINVAL;
 
 	mutex_lock(&sa_ops_lock);
-	if (g_sa_ops) {
+	if (rcu_access_pointer(g_sa_ops)) {
 		mutex_unlock(&sa_ops_lock);
 		return -EBUSY;
 	}
 
 	atomic_set(&ag_sa_init, 0);
-	g_sa_ops = ops;
+	rcu_assign_pointer(g_sa_ops, ops);
 	mutex_unlock(&sa_ops_lock);
 
 	return 0;
@@ -138,15 +138,20 @@ EXPORT_SYMBOL(ath12k_register_smart_ant_ops);
 
 int ath12k_unregister_smart_ant_ops(void)
 {
-	int ret = 0;
-
 	mutex_lock(&sa_ops_lock);
-	if (atomic_read(&ag_sa_init) == 0)
-		g_sa_ops = NULL;
-	else
-		ret = -EBUSY;
+	rcu_assign_pointer(g_sa_ops, NULL);
 	mutex_unlock(&sa_ops_lock);
 
-	return ret;
+	/*
+	 * Wait for all in-flight RCU read-side critical sections (i.e. any
+	 * ongoing sa_core callbacks that are currently executing code inside
+	 * the sa_test module) to complete before returning.  Once this call
+	 * returns the caller's module_exit() will proceed and the kernel will
+	 * unmap the module text, so it is essential that no CPU is still
+	 * executing a function pointer that lives in that module.
+	 */
+	synchronize_rcu();
+
+	return 0;
 }
 EXPORT_SYMBOL(ath12k_unregister_smart_ant_ops);

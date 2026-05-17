@@ -113,4 +113,38 @@ void ath12k_smart_ant_api_peer_disconnect(struct ath12k_link_sta *arsta)
 {
 	sa_core_peer_disconnect_notify(arsta);
 }
+
+/**
+ * ath12k_smart_ant_api_start - Start Smart Antenna per-radio/per-vif context
+ * @ar: ath12k radio context
+ * @arvif: ath12k link vif for which SA is started
+ * @init_flags: bitmask controlling which parts to initialize
+ *
+ * Initializes Smart Antenna core for the given radio and VIF according to
+ * the requested initialization flags. This wraps sa_core_init().
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+static inline
+int ath12k_smart_ant_api_start(struct ath12k *ar, struct ath12k_link_vif *arvif,
+			       u8 init_flags)
+{
+	return sa_core_init(ar, arvif, init_flags);
+}
+
+/**
+ * ath12k_smart_ant_api_stop - Stop Smart Antenna for a radio/VIF
+ * @ar: ath12k radio context
+ * @init_flags: bitmask controlling which parts to deinitialize
+ *
+ * Deinitializes Smart Antenna core for the given radio according to the
+ * provided flags. This wraps sa_core_deinit().
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+static inline int ath12k_smart_ant_api_stop(struct ath12k *ar, u8 init_flags)
+{
+	return sa_core_deinit(ar, init_flags);
+}
+
 #endif /* ATH12K_SA_API_H */

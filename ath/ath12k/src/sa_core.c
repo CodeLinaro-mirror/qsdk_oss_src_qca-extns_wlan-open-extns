@@ -6,6 +6,8 @@
 #include <linux/etherdevice.h>
 #include "../peer.h"
 #include "../debug.h"
+#include <linux/notifier.h>
+#include "ath12k_notif.h"
 
 struct wmi_peer_ratecode_list_fixed_param {
 	struct ath12k_wmi_mac_addr_params macaddr;
@@ -96,6 +98,73 @@ struct wmi_peer_set_smart_ant_node_config_ops_cmd {
 
 extern struct ath12k_smart_ant_ops *g_sa_ops;
 extern atomic_t ag_sa_init;
+
+/* PPDU notifier block for Smart Antenna */
+static struct notifier_block sa_ppdu_nb;
+static atomic_t sa_ppdu_nb_registered = ATOMIC_INIT(0);
+
+static int sa_core_ppdu_event_notify(struct notifier_block *nb,
+                                     unsigned long action, void *data)
+{
+	struct ath12k_ppdu_event *event = data;
+
+	if (!event || !event->skb)
+		return NOTIFY_DONE;
+
+	switch (action) {
+	case ATH12K_EVENT_PPDU_RX_COMPLETE:
+		/* RX PPDU complete: listeners may parse skb->data as ath12k_ppdu_rx_info */
+		return NOTIFY_DONE;
+	case ATH12K_EVENT_PPDU_TX_COMPLETE:
+		/* TX PPDU complete: listeners may parse skb->data as ath12k_ppdu_tx_info */
+		return NOTIFY_DONE;
+	default:
+		return NOTIFY_DONE;
+	}
+}
+
+static int sa_core_ppdu_notifier_register(u8 en_mask)
+{
+	unsigned long mask = 0;
+	int ret;
+
+	if (atomic_cmpxchg(&sa_ppdu_nb_registered, 0, 1) != 0)
+		return 0;
+
+	sa_ppdu_nb.notifier_call = sa_core_ppdu_event_notify;
+	sa_ppdu_nb.priority = 0;
+
+	if (en_mask & SA_TX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_TX_COMPLETE);
+	if (en_mask & SA_RX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_RX_COMPLETE);
+
+	ret = ath12k_register_ppdu_notifier(&sa_ppdu_nb, mask);
+	if (ret)
+		atomic_set(&sa_ppdu_nb_registered, 0);
+
+	return ret;
+}
+
+static int sa_core_ppdu_notifier_unregister(u8 en_mask)
+{
+	unsigned long mask = 0;
+	int ret;
+
+	if (atomic_read(&sa_ppdu_nb_registered) == 0)
+		return 0;
+
+	if (en_mask & SA_TX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_TX_COMPLETE);
+	if (en_mask & SA_RX_FEEDBACK_MASK)
+		mask |= (1UL << ATH12K_EVENT_PPDU_RX_COMPLETE);
+
+	ret = ath12k_unregister_ppdu_notifier(&sa_ppdu_nb, mask);
+	if (!ret)
+		atomic_set(&sa_ppdu_nb_registered, 0);
+
+	return ret;
+}
 
 static inline int sa_core_get_txdefaultantenna(u8 radio_id, u32 *antenna)
 {
@@ -712,6 +781,10 @@ int sa_core_init(struct ath12k *ar,
 		}
 		if (sa_ar->sa_mode == WMI_SMART_ANT_MODE_PARALLEL)
 			sa_core_wmi_send_parallel_mode_gpio_drive(ar, ar->cfg_tx_chainmask);
+		ret = sa_core_ppdu_notifier_register(sa_ar->enable_mask);
+		if (ret)
+			ath12k_warn(ab, "SA PPDU registration failed:%d\n",
+				    ret);
 	} else {
 		sa_core_wmi_set_rx_antenna(ar, rx_antenna);
 	}
@@ -754,6 +827,10 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 		if (g_sa_ops->sa_algo_deinit)
 			g_sa_ops->sa_algo_deinit(ar->radio_idx);
 
+		ret = sa_core_ppdu_notifier_unregister(sa_ar->enable_mask);
+		if (ret)
+			ath12k_warn(ab, "SA PPDU unregistration failed:%d\n",
+				    ret);
 		sa_ar->enable_mask = 0;
 		ret = sa_core_wmi_send_smart_ant_enable(ar, 0, 0, &gpio_cfg);
 		if (ret)

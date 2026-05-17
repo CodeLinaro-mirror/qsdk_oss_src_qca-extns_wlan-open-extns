@@ -129,6 +129,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	} else {
 		struct ieee80211_sta *pubsta = NULL;
 		struct ath12k_hal *hal = dp_pdev->dp->hal;
+		bool ret;
 
 		/* ieee80211_rx_status object is reset when ever there is a
 		 * peer change or radio change, if so extract radio params from
@@ -145,10 +146,14 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		status->flag |= RX_FLAG_8023;
 		if (unlikely(!ath12k_wifi7_compare_tlv_info(prev_tlv_info,
 							    tlv_info))) {
-			ath12k_wifi7_dp_rx_h_ppdu(dp_pdev,
-						  status,
-						  tlv_info,
-						  HAL_WBM_REL_SRC_MODULE_REO);
+			ret = ath12k_wifi7_dp_rx_h_ppdu(dp_pdev,
+							status,
+							tlv_info,
+							HAL_WBM_REL_SRC_MODULE_REO);
+			if (ret) {
+				dev_kfree_skb_any(msdu);
+				return 1;
+			}
 
 			status->flag |= RX_FLAG_8023 |
 				RX_FLAG_DECRYPTED |

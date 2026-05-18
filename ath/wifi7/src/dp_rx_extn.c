@@ -88,8 +88,10 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			if ((rx_mpdu_info->flow_info.flow_metadata &
 			    ATH12K_RX_FSE_FLOW_MATCH_USE_PPE)) {
 				if (peer->dev->offload_ops->recv(peer->dev,
-								 msdu))
+								 msdu)) {
+					dev_kfree_skb_any(msdu);
 					return 0;
+				}
 			}
 		}
 	}

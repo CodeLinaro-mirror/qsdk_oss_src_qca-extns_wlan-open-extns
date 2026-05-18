@@ -1050,6 +1050,142 @@ void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 	ath12k_reconfig_esp_params_extn(ar);
 }
 
+static bool ath12k_core_nol_extn_auto_enabled(struct ath12k_base *ab)
+{
+	if (!ab || !ab->cfg_ctx)
+		return false;
+
+	return ath12k_cfg_get(ab, ATH12K_CFG_NOL_AUTO_ENABLE);
+}
+
+static bool ath12k_core_extn_is_5g_radio(struct ath12k *ar, u8 radio_idx)
+{
+	if (!ar || !ar->pdev)
+		return false;
+
+	if (!(ar->pdev->cap.supported_bands & BIT(NL80211_BAND_5GHZ))) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_BOOT,
+			   "NOL auto-skip radio_idx=%u (non-5G radio, bands=0x%x)\n",
+			   radio_idx, ar->pdev->cap.supported_bands);
+		return false;
+	}
+
+	return true;
+}
+
+void ath12k_core_nol_extn_auto_dump_all_radios(struct ath12k_base *ab)
+{
+	int i;
+
+	if (!ab || !ath12k_core_nol_extn_auto_enabled(ab))
+		return;
+
+	for (i = 0; i < ab->num_radios; i++) {
+		struct ath12k *ar = ab->pdevs[i].ar;
+		struct wiphy *wiphy;
+
+		if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+			continue;
+
+		wiphy = ar->ah->hw->wiphy;
+		wiphy_lock(wiphy);
+		ath12k_core_nol_extn_auto_dump_radio_locked(ar, ar->radio_idx,
+							     "stop");
+		wiphy_unlock(wiphy);
+	}
+}
+
+void ath12k_core_nol_extn_auto_dump_radio_locked(struct ath12k *ar, u8 radio_idx,
+						  const char *reason)
+{
+	struct wiphy *wiphy;
+	u32 dump_len = 0;
+	int ret;
+
+	if (!ar || !ar->ab || !ath12k_core_nol_extn_auto_enabled(ar->ab))
+		return;
+
+	if (!ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return;
+
+	if (!ath12k_core_extn_is_5g_radio(ar, radio_idx))
+		return;
+
+	wiphy = ar->ah->hw->wiphy;
+	lockdep_assert_wiphy(wiphy);
+
+	ret = ath12k_vendor_nol_dump_to_file_extn(wiphy, radio_idx, NULL,
+						  &dump_len);
+	if (ret) {
+		ath12k_warn(ar->ab,
+			    "NOL auto-dump failed radio_idx=%u ret=%d (%s)\n",
+			    radio_idx, ret, reason ? reason : "n/a");
+		return;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_BOOT,
+		   "NOL auto-dump radio_idx=%u len=%u (%s)\n",
+		   radio_idx, dump_len, reason ? reason : "n/a");
+}
+
+void ath12k_core_nol_extn_auto_restore_radio_locked(struct ath12k *ar, u8 radio_idx)
+{
+	struct wiphy *wiphy;
+	u32 updated = 0;
+	int ret;
+
+	if (!ar || !ar->ab || !ath12k_core_nol_extn_auto_enabled(ar->ab))
+		return;
+
+	if (!ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return;
+
+	if (!ath12k_core_extn_is_5g_radio(ar, radio_idx))
+		return;
+
+	wiphy = ar->ah->hw->wiphy;
+	lockdep_assert_wiphy(wiphy);
+
+	ret = ath12k_vendor_nol_restore_from_file_extn(wiphy, radio_idx, NULL,
+							&updated);
+	if (!ret) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_BOOT,
+			   "NOL auto-restore radio_idx=%u updated=%u\n",
+			   radio_idx, updated);
+		return;
+	}
+
+	if (ret == -ENOENT)
+		ath12k_dbg(ar->ab, ATH12K_DBG_BOOT,
+			   "NOL auto-restore skipped (no dump) radio_idx=%u\n",
+			   radio_idx);
+	else
+		ath12k_warn(ar->ab,
+			    "NOL auto-restore failed radio_idx=%u ret=%d\n",
+			    radio_idx, ret);
+}
+
+void ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab)
+{
+	int i;
+
+	if (!ab || !ath12k_core_nol_extn_auto_enabled(ab))
+		return;
+
+	for (i = 0; i < ab->num_radios; i++) {
+		struct ath12k *ar = ab->pdevs[i].ar;
+		struct wiphy *wiphy;
+
+		if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+			continue;
+
+		wiphy = ar->ah->hw->wiphy;
+		wiphy_lock(wiphy);
+		ath12k_core_nol_extn_auto_restore_radio_locked(ar, ar->radio_idx);
+		wiphy_unlock(wiphy);
+	}
+}
+
 void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 					    struct ieee80211_chanctx_conf *ctx)
 {

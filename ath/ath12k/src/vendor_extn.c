@@ -7313,6 +7313,39 @@ int ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
 	return 0;
 }
 
+int ath12k_vendor_nol_dump_to_file_extn(struct wiphy *wiphy, u8 radio_idx,
+					const char *path, u32 *dump_len)
+{
+	char *resolved_path = NULL;
+	int ret;
+
+	if (!wiphy)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	ret = ath12k_vendor_validate_radio_idx(wiphy, radio_idx);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_resolve_nol_path_extn(path, radio_idx,
+						  &resolved_path);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_dump_nol_to_file_extn(wiphy, radio_idx,
+						  resolved_path, dump_len);
+	kfree(resolved_path);
+	return ret;
+}
+
+int ath12k_vendor_nol_restore_from_file_extn(struct wiphy *wiphy, u8 radio_idx,
+					     const char *path, u32 *num_updated)
+{
+	return ath12k_vendor_set_nol_chan_list_extn(wiphy, radio_idx,
+						     path, num_updated);
+}
+
 /* Find the 'ar' radio instance using the radio index of the wiphy
  * to set params
  */

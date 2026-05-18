@@ -127,7 +127,7 @@ enum ath12k_cbs_status {
 /* Forward declarations */
 struct ath12k;
 struct ath12k_link_vif;
-struct ath12k_cbs_scan_params;
+struct wmi_scan_event;
 
 /**
  * struct ath12k_cbs - CBS Context Structure
@@ -176,9 +176,11 @@ struct ath12k_cbs {
 	spinlock_t lock;
 	struct timer_list timer;
 	struct work_struct work;
+	struct work_struct cbs_scan_work;
 
 	/* Scan parameters */
 	u32 scan_id;
+	struct wmi_scan_event *cbs_scan_event;
 	u32 dwell_time;
 	u32 rest_time;
 	u32 wait_time;
@@ -216,10 +218,9 @@ int ath12k_cbs_init(struct ath12k *ar);
 void ath12k_cbs_deinit(struct ath12k *ar);
 
 /* CBS control */
-int ath12k_cbs_start(struct ath12k *ar,
-		     const struct ath12k_cbs_scan_params *scan_params);
 void ath12k_cbs_stop(struct ath12k *ar);
 void ath12k_cbs_stop_async(struct ath12k *ar);
+int ath12k_cbs_start(struct ath12k *ar);
 int ath12k_cbs_allow_mac80211_scan(struct ath12k *ar);
 void ath12k_cbs_resume_post_mac80211_scan(struct ath12k *ar);
 

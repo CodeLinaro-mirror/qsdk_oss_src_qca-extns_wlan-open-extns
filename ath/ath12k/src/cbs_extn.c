@@ -240,20 +240,15 @@ static bool ath12k_cbs_is_urgent_event(enum ath12k_cbs_event event)
 
 static void ath12k_cbs_cancel(struct ath12k_cbs *cbs)
 {
-	struct ath12k *ar = cbs->ar;
-
 	del_timer_sync(&cbs->timer);
 	cbs->ar = NULL;
+	cbs->arvif = NULL;
 	cbs->scan_id = 0;
 	cbs->chan_list_idx = 0;
 	cbs->dwell_split_cnt = cbs->max_dwell_split_cnt;
 	cbs->pending_event = 0;
 
 	ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
-
-	if (ar)
-		memset(&ar->ar_extn.cbs_params, 0,
-		       sizeof(ar->ar_extn.cbs_params));
 }
 
 static void ath12k_cbs_complete(struct ath12k_cbs *cbs)
@@ -288,6 +283,95 @@ static void ath12k_cbs_work(struct work_struct *work)
 	ath12k_cbs_event_handler(cbs, event);
 }
 
+static void ath12k_cbs_scan_work(struct work_struct *work)
+{
+	struct ath12k_cbs *cbs = container_of(work, struct ath12k_cbs,
+					      cbs_scan_work);
+	struct ath12k *ar = cbs->ar;
+
+	if (!ar)
+		return;
+	if (!cbs->cbs_scan_event)
+		return;
+
+	ath12k_vendor_send_cbs_scan_event(ar, cbs->cbs_scan_event);
+}
+
+bool ath12k_is_cbs_vendor_event(struct ath12k *ar)
+{
+	if (!ar->ar_extn.cbs.cbs_enable)
+		return false;
+
+	return true;
+}
+
+bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
+		struct ath12k *ar,
+		const struct wmi_scan_event *scan_ev)
+{
+	struct ath12k_cbs *cbs;
+	u32 scan_req_id;
+	u32 event_type;
+	u32 reason;
+	bool is_final_scan_offset = 0;
+
+	if (!ar)
+		return false;
+
+	cbs = &ar->ar_extn.cbs;
+
+	event_type = le32_to_cpu(scan_ev->event_type);
+	reason = le32_to_cpu(scan_ev->reason);
+	scan_req_id = le32_to_cpu(scan_ev->scan_req_id);
+
+	spin_lock_bh(&ar->data_lock);
+
+	if (!ath12k_is_cbs_vendor_event(ar)) {
+		spin_unlock_bh(&ar->data_lock);
+		return false;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_WMI,
+		   "ath12k scan state machine for CBS vendor scan event type %d req_id %d vdev_id %d reason %d freq %d\n",
+		   event_type, scan_req_id, le32_to_cpu(scan_ev->vdev_id),
+		   reason, le32_to_cpu(scan_ev->channel_freq));
+
+	if (!(le32_to_cpu(scan_ev->event_type) == WMI_SCAN_EVENT_COMPLETED &&
+	    le32_to_cpu(scan_ev->reason) == WMI_SCAN_REASON_COMPLETED)) {
+		/* No operation required if scan is not successful */
+		spin_unlock_bh(&ar->data_lock);
+		return true;
+	}
+
+	if (!cbs->cbs_scan_event) {
+		cbs->cbs_scan_event = kzalloc(sizeof(*cbs->cbs_scan_event),
+					      GFP_ATOMIC);
+		if (!cbs->cbs_scan_event) {
+			spin_unlock_bh(&ar->data_lock);
+			return true;
+		}
+	}
+
+	memcpy(cbs->cbs_scan_event, scan_ev, sizeof(*cbs->cbs_scan_event));
+
+	is_final_scan_offset = (cbs->scan_offset_idx >=
+				cbs->max_arr_size_used - 1);
+	spin_unlock_bh(&ar->data_lock);
+
+	if (is_final_scan_offset) {
+		ath12k_dbg(NULL, ATH12K_DBG_WMI, "Scheduling workq for CBS to send scan completion to Application\n");
+		schedule_work(&cbs->cbs_scan_work);
+	}
+
+	if (event_type == WMI_SCAN_EVENT_DEQUEUED ||
+	    event_type == WMI_SCAN_EVENT_COMPLETED)
+		ath12k_cbs_scan_event_handler(ar, scan_req_id, event_type);
+
+	return true;
+}
+
+
+
 int ath12k_cbs_init(struct ath12k *ar)
 {
 	struct ath12k_cbs *cbs;
@@ -300,18 +384,10 @@ int ath12k_cbs_init(struct ath12k *ar)
 
 	cbs->ar = ar;
 	cbs->state = ATH12K_CBS_STATE_INIT;
-	cbs->dwell_time = ATH12K_CBS_DEFAULT_DWELL_TIME;
-	cbs->rest_time = ATH12K_CBS_DEFAULT_RESTTIME;
-	cbs->wait_time = ATH12K_CBS_DEFAULT_WAIT_TIME;
-	cbs->dwell_split_time = ATH12K_CBS_DEFAULT_DWELL_SPLIT_TIME;
-	cbs->min_dwell_rest_time = ATH12K_CBS_DEFAULT_DWELL_REST_TIME;
-	cbs->cbs_total_dwell_time = ATH12K_CBS_DEFAULT_TOTAL_DWELL_TIME;
-	cbs->dwell_split_cnt = 0;
-	cbs->max_dwell_split_cnt = ATH12K_CBS_DEFAULT_TOTAL_DWELL_TIME / ATH12K_CBS_DEFAULT_DWELL_SPLIT_TIME;
-
 	spin_lock_init(&cbs->lock);
 	timer_setup(&cbs->timer, ath12k_cbs_timer, 0);
 	INIT_WORK(&cbs->work, ath12k_cbs_work);
+	INIT_WORK(&cbs->cbs_scan_work, ath12k_cbs_scan_work);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "CBS: initialized\n");
 
@@ -330,17 +406,18 @@ void ath12k_cbs_deinit(struct ath12k *ar)
 
 	ath12k_cbs_stop(ar);
 	cancel_work_sync(&cbs->work);
+	cancel_work_sync(&cbs->cbs_scan_work);
 	del_timer_sync(&cbs->timer);
+	kfree(cbs->cbs_scan_event);
+	cbs->cbs_scan_event = NULL;
 }
 EXPORT_SYMBOL_GPL(ath12k_cbs_deinit);
 
-int ath12k_cbs_start(struct ath12k *ar,
-		     const struct ath12k_cbs_scan_params *scan_params)
+int ath12k_cbs_start(struct ath12k *ar)
 {
 	struct ath12k_cbs *cbs;
-	u32 chan_idx;
 
-	if (!ar || !scan_params)
+	if (!ar)
 		return -EINVAL;
 
 	cbs = &ar->ar_extn.cbs;
@@ -351,23 +428,10 @@ int ath12k_cbs_start(struct ath12k *ar,
 	if (!cbs->ar)
 		cbs->ar = ar;
 
-	if (scan_params->arvif)
-		cbs->arvif = scan_params->arvif;
+	cbs->chan_list_idx = 0;
+	cbs->scan_id = ATH12K_CBS_SCAN_ID;
 
-	cbs->cbs_enable = scan_params->enable;
-	cbs->rest_time = scan_params->resttime;
-	cbs->min_dwell_rest_time = scan_params->dwellrest;
-	cbs->wait_time = scan_params->waittime;
-	cbs->dwell_split_time = scan_params->dwellsplit;
-	cbs->cbs_total_dwell_time = scan_params->totaldwell;
-	cbs->nchans = scan_params->num_freqs;
-	cbs->chan_list_idx = scan_params->link_id;
-	if (scan_params->freq_list && scan_params->num_freqs) {
-			for (chan_idx = 0; chan_idx < scan_params->num_freqs && chan_idx < ATH12K_CBS_MAX_CHANNELS; chan_idx++)
-			cbs->chan_list[chan_idx] = scan_params->freq_list[chan_idx];
-	}
-
-	if (!scan_params || !cbs->cbs_enable) {
+	if (!cbs->cbs_enable) {
 		spin_unlock_bh(&cbs->lock);
 		ath12k_cbs_stop(ar);
 		return 0;
@@ -391,6 +455,7 @@ void ath12k_cbs_stop(struct ath12k *ar)
 		return;
 
 	cbs = &ar->ar_extn.cbs;
+	cbs->cbs_enable = 0;
 
 	if (cbs->state != ATH12K_CBS_STATE_INIT) {
 		arg.req_type = WLAN_SCAN_CANCEL_SINGLE;
@@ -398,7 +463,6 @@ void ath12k_cbs_stop(struct ath12k *ar)
 		arg.pdev_id = ar->pdev ? ar->pdev->pdev_id : 0;
 		del_timer_sync(&cbs->timer);
 		spin_lock_bh(&cbs->lock);
-		cbs->cbs_enable = 0;
 		cbs->pending_event = ATH12K_CBS_EVENT_SCAN_CANCEL;
 		spin_unlock_bh(&cbs->lock);
 		ret = ath12k_wmi_send_scan_stop_cmd(ar, &arg);

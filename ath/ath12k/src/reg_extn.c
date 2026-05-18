@@ -851,6 +851,37 @@ free_and_return:
 	return true;
 }
 
+bool ath12k_wmi_handle_afc_continuation_hwbl_extn(struct ath12k_base *ab,
+						  struct sk_buff *skb,
+						  struct ath12k_afc_info *afc_info)
+{
+	struct ath12k_hw_blocklist_update upd = {};
+	bool mid_sequence;
+	u8 phy_id;
+
+	/* AFC continuation frames may leave pdev_id unset; get phy_id from
+	 * HWBL TLVs. No valid HWBL data means this isn't a continuation.
+	 */
+	ath12k_wmi_pull_hw_blocklist_update_extn(ab, skb, &upd);
+	if (!upd.valid)
+		return false;
+
+	phy_id = upd.phy_id;
+	kfree(upd.chans);
+
+	if (phy_id >= ab->num_radios)
+		return false;
+
+	spin_lock_bh(&ab->base_lock);
+	mid_sequence = ab->ath12k_base_extn.hw_bl_afc_info[phy_id] != NULL;
+	spin_unlock_bh(&ab->base_lock);
+
+	if (!mid_sequence)
+		return false;
+
+	return ath12k_wmi_handle_afc_power_info_hwbl_extn(ab, skb, afc_info);
+}
+
 static bool
 ath12k_wmi_handle_reg_chan_list_hwbl_more_extn(struct ath12k_base *ab, u8 phy_id,
 					       bool is_first,

@@ -806,6 +806,14 @@ ath12k_wmi_handle_afc_power_info_hwbl_extn(
 }
 
 static inline bool
+ath12k_wmi_handle_afc_continuation_hwbl_extn(
+		struct ath12k_base *ab, struct sk_buff *skb,
+		struct ath12k_afc_info *afc_info)
+{
+	return false;
+}
+
+static inline bool
 ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
 					  struct ath12k_reg_info **reg_info)
 {
@@ -1199,6 +1207,22 @@ bool ath12k_change_6g_txpow_sta_mode_validate_extn(struct ath12k *ar,
 bool ath12k_wmi_handle_afc_power_info_hwbl_extn(struct ath12k_base *ab,
 						struct sk_buff *skb,
 						struct ath12k_afc_info *afc_info);
+
+/**
+ * ath12k_wmi_handle_afc_continuation_hwbl_extn - Handle AFC continuation HWBL
+ * @ab: ath12k base
+ * @skb: WMI event SKB
+ * @afc_info: parsed AFC info
+ *
+ * FW does not set event_type on continuation frames of a multi-event HWBL
+ * update; they fall to the default arm of the AFC event_type switch. This
+ * handler processes them if a first-fragment afc_info is cached for the pdev.
+ *
+ * Return: true if consumed as HWBL continuation, false otherwise.
+ */
+bool ath12k_wmi_handle_afc_continuation_hwbl_extn(struct ath12k_base *ab,
+						  struct sk_buff *skb,
+						  struct ath12k_afc_info *afc_info);
 
 /**
  * ath12k_debugfs_register_hw_blocklist_extn - Register HW blocklist debugfs entries

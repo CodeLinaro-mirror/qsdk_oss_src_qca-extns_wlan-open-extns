@@ -113,7 +113,8 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	 * (AP -> STA) MCBC frames are handled in NULL Q handler.
 	 */
 	if (!rx_mpdu_info->flow_idx_timeout &&
-	    !rx_mpdu_info->flow_idx_invalid && !peer->is_mmesh_peer) {
+	    !rx_mpdu_info->flow_idx_invalid && !peer->is_mmesh_peer &&
+	    likely(peer->is_authorized)) {
 		if (rx_msdu_info->da_is_mcbc) {
 			stats->sent_to_stack_mcast_fast++;
 			stats->sent_to_stack_mcast_fast_bytes += msdu->len;

@@ -203,6 +203,11 @@ void ath12k_wifi6_dp_mon_rx_monitor_mode_reset(struct ath12k_pdev_dp *dp_pdev);
 int ath12k_wifi6_dp_mon_rx_update_ring_filter(struct ath12k_pdev_dp *pdev_dp);
 void ath12k_wifi6_dp_mon_rx_mon_mode_config_filter(struct ath12k_pdev_dp *dp_pdev);
 void ath12k_wifi6_dp_mon_rx_mon_mode_reset_filter(struct ath12k_pdev_dp *dp_pdev);
+int ath12k_wifi6_dp_ext_mon_validate_request(struct ath12k_pdev_dp *dp_pdev,
+					     const struct ath12k_ext_mon_config *req);
+int ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
+					  const struct ath12k_ext_mon_filter_config *new_config);
+
 /* HTT FP_PHY_ERR_BUF_SRC: bits [14:13] of info2 */
 #define ATH12K_WIFI6_FP_PHY_ERR_BUF_SRC_SW2RXDMA	2
 #define ATH12K_WIFI6_FP_PHY_ERR_BUF_SRC_NONE		3
@@ -215,4 +220,7 @@ void ath12k_wifi6_dp_mon_rx_undecoded_metadata_config_filter(struct ath12k_pdev_
 void ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter(struct ath12k_pdev_dp *dp_pdev);
 void ath12k_wifi6_dp_mon_rx_htt_phy_err_filter_cfg(void *ptr,
 						    struct htt_rx_ring_tlv_filter *tlv_filter);
+void
+ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(struct ath12k_pdev_dp *dp_pdev,
+					      const struct ath12k_ext_mon_filter_config *config);
 

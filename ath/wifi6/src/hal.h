@@ -13,8 +13,10 @@
 #include "hal_rx_desc.h"
 
 extern const struct ath12k_hw_regs qcn9074_regs;
-
 extern const struct ath12k_hw_hal_params ath12k_wifi6_hw_hal_params_qcn9074;
+
+extern const struct ath12k_hw_regs qcn9160_regs;
+extern const struct ath12k_hw_hal_params ath12k_wifi6_hw_hal_params_qcn9160;
 
 extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 
@@ -29,6 +31,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 /* calculate the register address from bar0 of shadow register x */
 #define HAL_SHADOW_BASE_ADDR			0x000008fc
 #define HAL_SHADOW_NUM_REGS			40
+
 #define HAL_HP_OFFSET_IN_REG_START		1
 #define HAL_OFFSET_FROM_HP_TO_TP		4
 
@@ -126,6 +129,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_TCL_RING_HP				0x00002028
 
 #define HAL_TCL_RING_HP_QCN9074			0x00002018
+#define HAL_TCL_RING_HP_QCN9160			0x00002018
 
 #define HAL_TCL1_RING_TP_OFFSET \
 		(HAL_TCL1_RING_TP - HAL_TCL1_RING_HP)
@@ -136,6 +140,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_TCL_STATUS_RING_HP			0x00002048
 
 #define HAL_TCL_STATUS_RING_HP_QCN9074		0x00002030
+#define HAL_TCL_STATUS_RING_HP_QCN9160		0x00002030
 
 /* PPE2TCL1 Ring address */
 #define HAL_TCL_PPE2TCL1_RING_BASE_LSB(hal) \
@@ -210,6 +215,9 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_REO2_RING_HP_QCN9074		0x00003040
 #define HAL_REO1_RING_TP_QCN9074		0x0000303c
 
+#define HAL_REO1_RING_HP_QCN9160		0x00003028
+#define HAL_REO2_RING_HP_QCN9160		0x00003030
+#define HAL_REO1_RING_TP_QCN9160		0x0000302c
 
 #define HAL_REO1_RING_TP_OFFSET			(HAL_REO1_RING_TP - HAL_REO1_RING_HP)
 
@@ -220,6 +228,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 /* REO2SW0 R2 ring pointer (head/tail) address */
 #define HAL_REO_SW0_RING_HP			0x00003088
 #define HAL_REO_SW0_RING_HP_QCN9074		0x00003058
+#define HAL_REO_SW0_RING_HP_QCN9160		0x00003058
 
 /* REO CMD R0 address */
 #define HAL_REO_CMD_RING_BASE_LSB(hal) \
@@ -228,6 +237,9 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 /* REO CMD R2 address */
 #define HAL_REO_CMD_HP				0x00003020
 #define HAL_REO_CMD_HP_QCN9074			0x00003070
+
+#define HAL_REO_CMD_HP_QCN9160			0x00003010
+#define HAL_REO_STATUS_RING_HP_QCN9160  	0x00003070
 
 /* SW2REO R0 address */
 #define	HAL_SW2REO_RING_BASE_LSB(hal) \
@@ -238,6 +250,9 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 /* SW2REO R2 address */
 #define HAL_SW2REO_RING_HP			0x00003028
 #define HAL_SW2REO1_RING_HP			0x00003030
+
+#define HAL_SW2REO_RING_HP_QCN9160		0x00003018
+#define HAL_SW2REO1_RING_HP_QCN9160		0x00003020
 
 /* CE ring R0 address */
 #define HAL_CE_SRC_RING_BASE_LSB                0x00000000
@@ -287,6 +302,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 #define HAL_WBM_IDLE_LINK_RING_HP		0x000030b8
 
 #define HAL_WBM_IDLE_LINK_RING_HP_QCN9074       0x000030b0
+#define HAL_WBM_IDLE_LINK_RING_HP_QCN9160       0x000030b0
 
 /* SW2WBM R0 release address */
 #define HAL_WBM_SW_RELEASE_RING_BASE_LSB(hal) \
@@ -312,6 +328,7 @@ extern const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[];
 
 
 #define HAL_WBM0_RELEASE_RING_HP_QCN9074	0x000030c0
+#define HAL_WBM0_RELEASE_RING_HP_QCN9160	0x000030c0
 
 /* WBM cookie config address and mask */
 #define HAL_WBM_SW_COOKIE_CFG0			0x00000040

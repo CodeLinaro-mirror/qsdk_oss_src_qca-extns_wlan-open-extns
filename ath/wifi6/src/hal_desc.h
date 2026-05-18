@@ -1677,8 +1677,6 @@ struct hal_wbm_release_ring {
 	__le32 info2;
 	struct hal_tx_rate_stats rate_stats;
 	__le32 info3;
-	__le32 info4;
-	__le32 info5;
 } __packed;
 
 /* hal_wbm_release_ring

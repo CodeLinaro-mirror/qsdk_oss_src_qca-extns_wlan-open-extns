@@ -34,6 +34,7 @@ int ath12k_wifi6_dp_rx_link_desc_return(struct ath12k_dp *dp,
 					enum hal_wbm_rel_bm_act action);
 void ath12k_wifi6_dp_rx_process_reo_status(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9074(struct ath12k_base *ab);
+int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9160(struct ath12k_base *ab);
 
 static inline
 void ath12k_wifi6_dp_extract_rx_spd_data(struct ath12k_hal *hal,

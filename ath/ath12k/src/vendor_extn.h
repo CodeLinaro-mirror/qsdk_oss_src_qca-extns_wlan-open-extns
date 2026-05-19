@@ -539,6 +539,17 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 				       int data_len);
 
 /**
+ * ath12k_vendor_send_hw_blocklist_update_event_extn - Send unsolicited vendor
+ * NL event carrying the complete HW blocklist state once the last WMI fragment
+ * is received.
+ * @ab - ath12k_base pointer
+ * @phy_id - pdev index of the radio whose blocklist was updated
+ * Return 0 on success and -ve on failure
+ */
+int ath12k_vendor_send_hw_blocklist_update_event_extn(struct ath12k_base *ab,
+						      u8 phy_id);
+
+/**
  * ath12k_vendor_get_hw_blocked_chans_extn - Get hardware blocked channels command handler
  * @wiphy - WIPHY pointer
  * @wdev - Wireless dev pointer

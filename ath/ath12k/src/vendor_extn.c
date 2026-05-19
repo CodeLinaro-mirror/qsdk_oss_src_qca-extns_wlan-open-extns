@@ -465,7 +465,8 @@ unlock:
 
 static int ath12k_vendor_send_hw_blocked_chans_reply_extn(struct wiphy *wiphy,
 							  struct ath12k *ar,
-							  u8 radio_id)
+							  u8 radio_id,
+							  bool send_event)
 {
 	struct ath12k_hw_blocklist_state snapshot;
 	struct sk_buff *reply_skb;
@@ -492,7 +493,13 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_extn(struct wiphy *wiphy,
 	reply_len += nla_total_size(0); /* radio_list nest header */
 	reply_len += nla_total_size(0); /* radio_info nest header */
 
-	reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_HDRLEN + reply_len);
+	if (send_event)
+		reply_skb = cfg80211_vendor_event_alloc(wiphy, NULL,
+							NLMSG_HDRLEN + reply_len,
+							QCA_NL80211_VENDOR_SUBCMD_HW_BLOCKED_CHANS_EVENT_INDEX,
+							GFP_ATOMIC);
+	else
+		reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_HDRLEN + reply_len);
 	if (!reply_skb) {
 		ret = -ENOMEM;
 		goto free_snapshot;
@@ -522,6 +529,10 @@ static int ath12k_vendor_send_hw_blocked_chans_reply_extn(struct wiphy *wiphy,
 	radio_list = NULL;
 
 	ath12k_reg_hw_blocklist_free_snapshot_extn(&snapshot);
+	if (send_event) {
+		cfg80211_vendor_event(reply_skb, GFP_ATOMIC);
+		return 0;
+	}
 	return cfg80211_vendor_cmd_reply(reply_skb);
 
 fail:
@@ -657,6 +668,32 @@ free_snaps:
 	return ret;
 }
 
+int ath12k_vendor_send_hw_blocklist_update_event_extn(struct ath12k_base *ab,
+						      u8 phy_id)
+{
+	struct ath12k *ar;
+	int hw_idx;
+
+	if (phy_id >= ab->num_radios)
+		return -EINVAL;
+
+	ar = ab->pdevs[phy_id].ar;
+	if (!ar || !ar->ah || !ar->ah->hw)
+		return -EINVAL;
+
+	if (ar->ah->hw->wiphy->n_radio <= 1) {
+		hw_idx = 0;
+	} else {
+		hw_idx = cfg80211_get_hw_idx_by_freq(ar->ah->hw->wiphy,
+						     ar->freq_range.start_freq);
+		if (hw_idx < 0)
+			return -ENODEV;
+	}
+
+	return ath12k_vendor_send_hw_blocked_chans_reply_extn(ar->ah->hw->wiphy, ar,
+							      (u8)hw_idx, true);
+}
+
 int ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
 					    struct wireless_dev *wdev,
 					    const void *data,
@@ -693,7 +730,7 @@ int ath12k_vendor_get_hw_blocked_chans_extn(struct wiphy *wiphy,
 	if (!ar->supports_6ghz)
 		return -EOPNOTSUPP;
 
-	return ath12k_vendor_send_hw_blocked_chans_reply_extn(wiphy, ar, (u8)radio_id);
+	return ath12k_vendor_send_hw_blocked_chans_reply_extn(wiphy, ar, (u8)radio_id, false);
 }
 
 static int ath12k_vendor_resolve_nol_path_from_data_extn(const void *data,

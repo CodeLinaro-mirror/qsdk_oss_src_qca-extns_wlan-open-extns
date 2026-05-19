@@ -111,7 +111,7 @@ void ath12k_dp_ipa_config_free(void)
 
 int ath12k_dp_ipa_attach(struct ath12k_base *ab)
 {
-	ab->ath12k_base_extn.ipa_ctx = kmalloc(sizeof(struct ath12k_wlan_ipa_priv), GFP_KERNEL);
+	ab->ath12k_base_extn.ipa_ctx = kzalloc(sizeof(struct ath12k_wlan_ipa_priv), GFP_KERNEL);
 
 	if (!ab->ath12k_base_extn.ipa_ctx) {
 		ath12k_err(ab, "Failed to allocate IPA_CTX !!");
@@ -460,8 +460,10 @@ static void ath12k_dp_ipa_tx_ipa_uc_detach(struct ath12k_base *ab)
 	kvfree(ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned);
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned = NULL;
 
-	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
-	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
+	if (ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl.sgl)
+		sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_tcl);
+	if (ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm.sgl)
+		sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_rsc.sgtable_wbm);
 }
 
 static int ath12k_dp_ipa_alt_tx_ipa_uc_attach(struct ath12k_base *ab)
@@ -631,8 +633,10 @@ static void ath12k_dp_ipa_alt_tx_ipa_uc_detach(struct ath12k_base *ab)
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned = NULL;
 	ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt = 0;
 
-	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_tcl);
-	sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_wbm);
+	if (ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_tcl.sgl)
+		sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_tcl);
+	if (ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_wbm.sgl)
+		sg_free_table(&ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.sgtable_wbm);
 }
 
 int dp_ipa_uc_attach(struct ath12k_base *ab)
@@ -2759,8 +2763,10 @@ int wlan_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		 * These are allocated via dma_get_sgtable() and must be freed
 		 * here to avoid a memory leak on every detach/SSR cycle.
 		 */
-		sg_free_table(&ipa_ctx->ipa_uc_rx_rsc.sgtable_reo);
-		sg_free_table((struct sg_table *)&ipa_ctx->ipa_uc_rx_rsc.sgtable_refill.sgtable);
+		if (ipa_ctx->ipa_uc_rx_rsc.sgtable_reo.sgl)
+			sg_free_table(&ipa_ctx->ipa_uc_rx_rsc.sgtable_reo);
+		if (ipa_ctx->ipa_uc_rx_rsc.sgtable_refill.sgtable.sgl)
+			sg_free_table((struct sg_table *)&ipa_ctx->ipa_uc_rx_rsc.sgtable_refill.sgtable);
 
 		/* Cleanup IPA pipes and ring doorbell address*/
 		ret = dp_ipa_cleanup(ipa_ctx);

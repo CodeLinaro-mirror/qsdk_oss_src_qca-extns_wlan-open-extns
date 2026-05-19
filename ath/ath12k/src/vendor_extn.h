@@ -12,6 +12,25 @@
 #define ATH12K_VENDOR_NOL_PERSIST_PATH_FALLBACK_FMT  "/tmp/ath12k_nol_radio%u.bin"
 #define ATH12K_VENDOR_NOL_BIN_MAGIC                  "ATHNOL1"
 
+#define ATH12K_VENDOR_BW_80_MHZ 80
+#define ATH12K_VENDOR_BW_160_MHZ 160
+#define ATH12K_VENDOR_CHAN_STEP 4
+#define ATH12K_VENDOR_5G_BW80_SPAN 12
+#define ATH12K_VENDOR_5G_BW80_CENTER_OFFSET 6
+#define ATH12K_VENDOR_5G_BW160_SPAN 28
+#define ATH12K_VENDOR_5G_BW160_CENTER_OFFSET 14
+#define ATH12K_VENDOR_6G_MIN_CHAN 1
+#define ATH12K_VENDOR_6G_MAX_CHAN 233
+#define ATH12K_VENDOR_6G_BW80_BLOCK_SIZE 16
+#define ATH12K_VENDOR_6G_BW80_MAX_START_CHAN 209
+#define ATH12K_VENDOR_6G_BW160_BLOCK_SIZE 32
+#define ATH12K_VENDOR_6G_BW160_MAX_START_CHAN 193
+#define ATH12K_VENDOR_6G_BW320_BLOCK_SIZE 32
+#define ATH12K_VENDOR_6G_BW320_MAX_START_CHAN 161
+#define ATH12K_VENDOR_6G_BW320_SPAN 60
+#define ATH12K_VENDOR_6G_BW320_CENTER_OFFSET 30
+#define ATH12K_VENDOR_CAP_BUF_LEN 192
+
 struct ath12k_vendor_nol_bin_hdr {
 	u8 magic[8];
 	__le16 version;
@@ -28,6 +47,20 @@ struct ath12k_vendor_nol_bin_entry {
 	__le32 bw_mhz;
 	__le32 reserved;
 } __packed;
+
+struct ath12k_vendor_chan_caps {
+	u16 chan_num;
+	u16 center80;
+	u16 center160;
+	u16 center320_1;
+	u16 center320_2;
+	bool has_80;
+	bool has_160;
+	bool has_320;
+	bool ht40_plus;
+	bool ht40_minus;
+	char dir;
+};
 
 extern const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1];

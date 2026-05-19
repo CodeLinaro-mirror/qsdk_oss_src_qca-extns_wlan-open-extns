@@ -7118,6 +7118,460 @@ static int ath12k_vendor_get_sr_radio_params(struct ath12k *ar,
 	return 0;
 }
 
+static const char *ath12k_vendor_band_to_str(enum nl80211_band band)
+{
+	switch (band) {
+	case NL80211_BAND_2GHZ:
+		return "2GHz";
+	case NL80211_BAND_5GHZ:
+		return "5GHz";
+	case NL80211_BAND_6GHZ:
+		return "6GHz";
+	default:
+		return "unknown";
+	}
+}
+
+/**
+ * ath12k_vendor_get_bw_dir - Derive side-band direction for a channel.
+ * @band: NL80211 operating band for the channel.
+ * @chan: Primary channel number.
+ *
+ * Maps a primary channel to the side-band direction marker used by
+ * display-band-channels output. For supported bands, it returns:
+ * 'U' for upper and 'L' for lower side placement.
+ *
+ * Return: 'U'/'L' for supported 5 GHz and 6 GHz channels, space for others.
+ */
+static char ath12k_vendor_get_bw_dir(enum nl80211_band band, u16 chan)
+{
+	if (band == NL80211_BAND_6GHZ) {
+		if (chan <= ATH12K_VENDOR_6G_MIN_CHAN || chan == 2)
+			return 'U';
+
+		return (((chan - ATH12K_VENDOR_6G_MIN_CHAN) /
+			 ATH12K_VENDOR_CHAN_STEP) % 2) ? 'L' : 'U';
+	}
+
+	if (band == NL80211_BAND_5GHZ)
+		return ((chan / ATH12K_VENDOR_CHAN_STEP) % 2) ? 'U' : 'L';
+
+	return ' ';
+}
+
+static void ath12k_vendor_5g_center_freq_idx(u16 chan, u16 bw, u16 *center)
+{
+	static const u8 bw80_starts[] = {36, 52, 100, 116, 132, 149};
+	static const u8 bw160_starts[] = {36, 100, 149};
+	const u8 *starts;
+	int num_starts;
+	u8 span;
+	u16 center_offset;
+	int i;
+
+	if (!center)
+		return;
+
+	*center = 0;
+
+	if (bw == ATH12K_VENDOR_BW_80_MHZ) {
+		starts = bw80_starts;
+		num_starts = ARRAY_SIZE(bw80_starts);
+		span = ATH12K_VENDOR_5G_BW80_SPAN;
+		center_offset = ATH12K_VENDOR_5G_BW80_CENTER_OFFSET;
+	} else if (bw == ATH12K_VENDOR_BW_160_MHZ) {
+		starts = bw160_starts;
+		num_starts = ARRAY_SIZE(bw160_starts);
+		span = ATH12K_VENDOR_5G_BW160_SPAN;
+		center_offset = ATH12K_VENDOR_5G_BW160_CENTER_OFFSET;
+	} else {
+		return;
+	}
+
+	for (i = 0; i < num_starts; i++) {
+		u16 start = starts[i];
+
+		if (chan < start || chan > start + span)
+			continue;
+
+		if ((chan - start) % ATH12K_VENDOR_CHAN_STEP)
+			continue;
+
+		*center = start + center_offset;
+		return;
+	}
+
+	return;
+}
+
+static void ath12k_vendor_6g_center_freq_idx(u16 chan, u16 bw, u16 *center)
+{
+	u16 start_chan;
+	u16 center_chan;
+
+	if (chan == 2 || chan < ATH12K_VENDOR_6G_MIN_CHAN ||
+	    chan > ATH12K_VENDOR_6G_MAX_CHAN ||
+	    ((chan - ATH12K_VENDOR_6G_MIN_CHAN) % ATH12K_VENDOR_CHAN_STEP))
+		return;
+
+	if (bw == ATH12K_VENDOR_BW_80_MHZ) {
+		start_chan = ATH12K_VENDOR_6G_MIN_CHAN +
+			     (((chan - ATH12K_VENDOR_6G_MIN_CHAN) /
+			      ATH12K_VENDOR_6G_BW80_BLOCK_SIZE) *
+			      ATH12K_VENDOR_6G_BW80_BLOCK_SIZE);
+		if (start_chan > ATH12K_VENDOR_6G_BW80_MAX_START_CHAN ||
+		    chan > start_chan + ATH12K_VENDOR_5G_BW80_SPAN)
+			return;
+		center_chan = start_chan + ATH12K_VENDOR_5G_BW80_CENTER_OFFSET;
+	} else if (bw == ATH12K_VENDOR_BW_160_MHZ) {
+		start_chan = ATH12K_VENDOR_6G_MIN_CHAN +
+			     (((chan - ATH12K_VENDOR_6G_MIN_CHAN) /
+			      ATH12K_VENDOR_6G_BW160_BLOCK_SIZE) *
+			      ATH12K_VENDOR_6G_BW160_BLOCK_SIZE);
+		if (start_chan > ATH12K_VENDOR_6G_BW160_MAX_START_CHAN ||
+		    chan > start_chan + ATH12K_VENDOR_5G_BW160_SPAN)
+			return;
+		center_chan = start_chan + ATH12K_VENDOR_5G_BW160_CENTER_OFFSET;
+	} else {
+		return;
+	}
+
+	*center = center_chan;
+	return;
+}
+
+static void ath12k_vendor_6g_320_centers(u16 chan, u16 *center1, u16 *center2)
+{
+	u16 start_chan;
+	u16 count = 0;
+
+	if (!center1 || !center2)
+		return;
+
+	*center1 = 0;
+	*center2 = 0;
+
+	if (chan == 2 || chan < ATH12K_VENDOR_6G_MIN_CHAN ||
+	    chan > ATH12K_VENDOR_6G_MAX_CHAN ||
+	    ((chan - ATH12K_VENDOR_6G_MIN_CHAN) % ATH12K_VENDOR_CHAN_STEP))
+		return;
+
+	for (start_chan = ATH12K_VENDOR_6G_MIN_CHAN;
+	     start_chan <= ATH12K_VENDOR_6G_BW320_MAX_START_CHAN;
+	     start_chan += ATH12K_VENDOR_6G_BW320_BLOCK_SIZE) {
+		if (chan < start_chan ||
+		    chan > start_chan + ATH12K_VENDOR_6G_BW320_SPAN)
+			continue;
+
+		if (count == 0)
+			*center1 = start_chan + ATH12K_VENDOR_6G_BW320_CENTER_OFFSET;
+		else if (count == 1)
+			*center2 = start_chan + ATH12K_VENDOR_6G_BW320_CENTER_OFFSET;
+
+		count++;
+		if (count >= 2)
+			break;
+	}
+
+	return;
+}
+
+static void ath12k_vendor_center_freq_idx(enum nl80211_band band,
+							  u16 chan,
+							  u16 bw,
+							  u16 *center)
+{
+	if (band == NL80211_BAND_5GHZ)
+		ath12k_vendor_5g_center_freq_idx(chan, bw, center);
+
+	if (band == NL80211_BAND_6GHZ)
+		ath12k_vendor_6g_center_freq_idx(chan, bw, center);
+}
+
+static bool ath12k_vendor_is_displayable_chan(const struct ieee80211_channel *chan,
+					      u32 range_start_mhz,
+					      u32 range_end_mhz)
+{
+	if (chan->flags & IEEE80211_CHAN_DISABLED)
+		return false;
+
+	if ((chan->center_freq < range_start_mhz ||
+	     chan->center_freq > range_end_mhz))
+		return false;
+
+	return true;
+}
+
+static void ath12k_vendor_fill_chan_caps(enum nl80211_band band,
+					 const struct ieee80211_channel *chan,
+					 struct ath12k_vendor_chan_caps *caps)
+{
+	caps->chan_num = ieee80211_frequency_to_channel(chan->center_freq);
+	caps->dir = ath12k_vendor_get_bw_dir(band, caps->chan_num);
+	caps->has_80 = (band != NL80211_BAND_2GHZ) &&
+			!(chan->flags & IEEE80211_CHAN_NO_80MHZ);
+	caps->has_160 = (band != NL80211_BAND_2GHZ) &&
+			 !(chan->flags & IEEE80211_CHAN_NO_160MHZ);
+	caps->has_320 = (band == NL80211_BAND_6GHZ) &&
+			 !(chan->flags & IEEE80211_CHAN_NO_320MHZ);
+	caps->ht40_plus = !(chan->flags & IEEE80211_CHAN_NO_HT40PLUS);
+	caps->ht40_minus = !(chan->flags & IEEE80211_CHAN_NO_HT40MINUS);
+	caps->center80 = 0;
+	caps->center160 = 0;
+	caps->center320_1 = 0;
+	caps->center320_2 = 0;
+
+	ath12k_vendor_center_freq_idx(band, caps->chan_num,
+				      ATH12K_VENDOR_BW_80_MHZ,
+				      &caps->center80);
+	ath12k_vendor_center_freq_idx(band, caps->chan_num,
+				      ATH12K_VENDOR_BW_160_MHZ,
+				      &caps->center160);
+
+	if (band == NL80211_BAND_6GHZ)
+		ath12k_vendor_6g_320_centers(caps->chan_num,
+					     &caps->center320_1,
+					     &caps->center320_2);
+}
+
+static int ath12k_vendor_append_ht40_caps(enum nl80211_band band,
+					  const struct ath12k_vendor_chan_caps *caps,
+					  const char *upper,
+					  const char *lower,
+					  char cap[],
+					  int cap_len)
+{
+	if (band == NL80211_BAND_2GHZ) {
+		if (caps->ht40_plus)
+			cap_len += scnprintf(cap + cap_len,
+					     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+					     " %s", upper);
+
+		if (caps->ht40_minus)
+			cap_len += scnprintf(cap + cap_len,
+					     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+					     " %s", lower);
+	} else if (caps->ht40_plus || caps->ht40_minus) {
+		if (caps->dir == 'U')
+			cap_len += scnprintf(cap + cap_len,
+					     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+					     " %s", upper);
+
+		if (caps->dir == 'L')
+			cap_len += scnprintf(cap + cap_len,
+					     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+					     " %s", lower);
+	}
+
+	return cap_len;
+}
+
+static int ath12k_vendor_display_pre_he_chan_caps(enum nl80211_band band,
+						  const struct ath12k_vendor_chan_caps *caps,
+						  char cap[])
+{
+	const char *mode;
+	int cap_len;
+
+	if (band == NL80211_BAND_2GHZ)
+		mode = "11ng";
+	else if (band == NL80211_BAND_5GHZ)
+		mode = "11na";
+	else
+		return 0;
+
+	cap_len = scnprintf(cap, ATH12K_VENDOR_CAP_BUF_LEN, "%s", mode);
+	cap_len += scnprintf(cap + cap_len,
+			     ATH12K_VENDOR_CAP_BUF_LEN - cap_len, " C");
+	cap_len = ath12k_vendor_append_ht40_caps(band, caps, "CU", "CL",
+						 cap, cap_len);
+
+	if (band == NL80211_BAND_5GHZ && caps->has_80) {
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " V V%c", caps->dir);
+
+		if (caps->center80)
+			cap_len += scnprintf(cap + cap_len,
+					     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+					     " V80-%3u", caps->center80);
+	}
+
+	return cap_len;
+}
+
+static int ath12k_vendor_display_he_chan_caps(enum nl80211_band band,
+					      const struct ath12k_vendor_chan_caps *caps,
+					      char cap[],
+					      int cap_len)
+{
+	cap_len += scnprintf(cap + cap_len,
+			     ATH12K_VENDOR_CAP_BUF_LEN - cap_len, " H");
+	cap_len = ath12k_vendor_append_ht40_caps(band, caps, "HU", "HL",
+						 cap, cap_len);
+
+	if (caps->has_80 && caps->center80)
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " H80-%3u", caps->center80);
+
+	if (caps->has_160 && caps->center160)
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " H160-%3u", caps->center160);
+
+	return cap_len;
+}
+
+static int ath12k_vendor_display_eht_chan_caps(enum nl80211_band band,
+					       const struct ath12k_vendor_chan_caps *caps,
+					       char cap[],
+					       int cap_len)
+{
+	cap_len += scnprintf(cap + cap_len,
+			     ATH12K_VENDOR_CAP_BUF_LEN - cap_len, " E");
+	cap_len = ath12k_vendor_append_ht40_caps(band, caps, "EU", "EL",
+						 cap, cap_len);
+
+	if (caps->has_80 && caps->center80)
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " E80-%3u", caps->center80);
+
+	if (caps->has_160 && caps->center160)
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " E160-%3u", caps->center160);
+
+	return cap_len;
+}
+
+static int ath12k_vendor_display_320mhz_caps(enum nl80211_band band,
+					     const struct ath12k_vendor_chan_caps *caps,
+					     bool has_eht,
+					     char cap[],
+					     int cap_len)
+{
+	if (has_eht && caps->has_320 && band == NL80211_BAND_6GHZ &&
+	    caps->center320_1) {
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " E320-%3u", caps->center320_1);
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     ", %3u", caps->center320_2);
+	}
+
+	return cap_len;
+}
+
+static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
+					       struct ieee80211_supported_band *sband,
+					       enum nl80211_band band,
+					       bool has_he,
+					       bool has_eht,
+					       u32 range_start_mhz,
+					       u32 range_end_mhz)
+{
+	struct ath12k_vendor_chan_caps chan_caps;
+	int i;
+
+	for (i = 0; i < sband->n_channels; i++) {
+		const struct ieee80211_channel *chan;
+		char cap[ATH12K_VENDOR_CAP_BUF_LEN];
+		int cap_len;
+
+		chan = &sband->channels[i];
+		if (!ath12k_vendor_is_displayable_chan(chan, range_start_mhz,
+						       range_end_mhz))
+			continue;
+
+		ath12k_vendor_fill_chan_caps(band, chan, &chan_caps);
+		cap_len = ath12k_vendor_display_pre_he_chan_caps(band, &chan_caps, cap);
+
+		if (has_he)
+			cap_len = ath12k_vendor_display_he_chan_caps(band, &chan_caps,
+								     cap, cap_len);
+
+		if (has_eht)
+			cap_len = ath12k_vendor_display_eht_chan_caps(band, &chan_caps,
+								      cap, cap_len);
+
+		cap_len = ath12k_vendor_display_320mhz_caps(band, &chan_caps, has_eht,
+							    cap, cap_len);
+
+		ath12k_info(ar->ab,
+			    "Channel %3u : %u%c%c Mhz %s\n",
+			    chan_caps.chan_num,
+			    chan->center_freq,
+			    (chan->flags & IEEE80211_CHAN_NO_IR) ? '*' : ' ',
+			    (chan->flags & IEEE80211_CHAN_RADAR) ? '~' : ' ',
+			    cap);
+	}
+}
+
+static int ath12k_vendor_display_band_chans(struct ath12k *ar)
+{
+	struct wiphy *wiphy;
+	struct ieee80211_supported_band *sband;
+	enum nl80211_band band;
+	u32 freq;
+	u32 range_start_mhz = 0;
+	u32 range_end_mhz = 0;
+	bool use_freq_range = false;
+	bool has_he;
+	bool has_eht;
+
+	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return -EINVAL;
+
+	freq = ar->chan_info.low_freq;
+	if (!freq) {
+		ath12k_err(NULL,
+			   "display_band_chans: invalid current frequency for radio %u\n",
+			   ar->radio_idx);
+		return -ENODATA;
+	}
+
+	band = ath12k_get_band_based_on_freq(freq);
+	if (band >= NUM_NL80211_BANDS)
+		return -EINVAL;
+
+	wiphy = ar->ah->hw->wiphy;
+	sband = wiphy->bands[band];
+	if (!sband) {
+		ath12k_err(NULL,
+			   "display_band_chans: no band info for radio %u band %s\n",
+			   ar->radio_idx, ath12k_vendor_band_to_str(band));
+		return -ENODATA;
+	}
+
+	has_he = ieee80211_get_he_iftype_cap(sband, NL80211_IFTYPE_AP) ||
+		 ieee80211_get_he_iftype_cap(sband, NL80211_IFTYPE_STATION);
+
+	has_eht = ieee80211_get_eht_iftype_cap(sband, NL80211_IFTYPE_AP) ||
+		  ieee80211_get_eht_iftype_cap(sband, NL80211_IFTYPE_STATION);
+
+	if (ar->freq_range.start_freq && ar->freq_range.end_freq &&
+	    ar->freq_range.end_freq >= ar->freq_range.start_freq) {
+		range_start_mhz = KHZ_TO_MHZ(ar->freq_range.start_freq);
+		range_end_mhz = KHZ_TO_MHZ(ar->freq_range.end_freq);
+		use_freq_range = true;
+	}
+
+	if (!use_freq_range) {
+		ath12k_err(NULL,
+			   "The [start = %u and end = %u] range is not valid. Returning",
+			   range_start_mhz, range_end_mhz);
+		return -1;
+	}
+
+	ath12k_vendor_display_channel_caps(ar, sband, band, has_he, has_eht,
+					   range_start_mhz, range_end_mhz);
+
+	return 0;
+}
+
 /* Get radio level parameters */
 static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 					  u32 param,
@@ -7357,6 +7811,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_DFS_NOL_SUBCHANNEL_MARKING:
 		*value = ar->dfs_sub_channel_marking;
 		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_DISPLAY_BAND_CHANS:
+		ret = ath12k_vendor_display_band_chans(ar);
+		*value = 0;
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RADAR_DETECT_COUNT:
 		*value = ar->radar_detect_count;

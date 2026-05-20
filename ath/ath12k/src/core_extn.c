@@ -52,6 +52,35 @@ void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev)
 {
 	struct ath12k_link_sta *arsta;
+	struct ieee80211_channel *channel;
+	struct cfg80211_inform_bss bss_meta = {};
+	struct cfg80211_bss *cbss;
+	s32 signal_dbm;
+
+	if (ar && ar->ar_extn.cbs_params.enable &&
+	    (ieee80211_is_beacon(hdr->frame_control) ||
+	     ieee80211_is_probe_resp(hdr->frame_control) ||
+	     ieee80211_is_s1g_beacon(hdr->frame_control))) {
+		channel = ieee80211_get_channel(ar->ah->hw->wiphy,
+						rx_ev->chan_freq);
+		if (channel) {
+			bss_meta.chan = channel;
+			bss_meta.boottime_ns = ktime_get_boottime_ns();
+			signal_dbm = (s32)rx_ev->rssi;
+			bss_meta.signal = signal_dbm * 100;
+
+			cbss = cfg80211_inform_bss_frame_data(ar->ah->hw->wiphy,
+							      &bss_meta,
+							      (struct ieee80211_mgmt *)hdr,
+							      rx_ev->buf_len,
+							      GFP_ATOMIC);
+			if (cbss) {
+				cfg80211_put_bss(ar->ah->hw->wiphy, cbss);
+				return;
+			}
+		}
+	}
+
 	if (ieee80211_is_assoc_req(hdr->frame_control)) {
 		spin_lock_bh(&ar->arsta_lock);
 		arsta = ath12k_link_sta_find_by_addr(ar, hdr->addr2);

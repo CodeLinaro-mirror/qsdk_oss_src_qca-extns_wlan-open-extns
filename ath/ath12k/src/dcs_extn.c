@@ -467,7 +467,7 @@ ath12k_wlan_intf_update_stats_extn(struct ath12k *ar,
 					ar->ar_extn.wlan_intf.curr_stats;
 
 	/* Store new current stats */
-	ar->ar_extn.wlan_intf.curr_stats = (void *)stats;
+	ar->ar_extn.wlan_intf.curr_stats = *stats;
 	ar->ar_extn.wlan_intf.curr_valid = true;
 	spin_unlock_bh(&ar->data_lock);
 }
@@ -528,8 +528,8 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	    !ar->ar_extn.wlan_intf.curr_valid)
 		goto exit;
 
-	prev = ar->ar_extn.wlan_intf.prev_stats;
-	curr = ar->ar_extn.wlan_intf.curr_stats;
+	prev = &ar->ar_extn.wlan_intf.prev_stats;
+	curr = &ar->ar_extn.wlan_intf.curr_stats;
 
 	/* Basic sanity: counters wrap or TSF non-increment */
 	if (curr->listen_time <= 0 ||

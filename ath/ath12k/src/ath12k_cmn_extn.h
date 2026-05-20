@@ -26,7 +26,6 @@ struct ath12k_link_vif;
 struct wmi_chan_info_event;
 struct ath12k_wmi_scan_req_arg;
 enum wmi_tlv_event_id;
-struct wmi_dcs_wlan_interference_stats;
 struct wmi_start_scan_cmd;
 struct ath12k_wmi_vdev_create_arg;
 struct ath12k_wmi_peer_assoc_arg;
@@ -260,6 +259,23 @@ struct ath12k_link_sta_extn {
 	struct sa_sta_extn sa_sta;
 };
 
+struct wmi_dcs_wlan_interference_stats {
+	u32 reg_tsf32;
+	u32 last_ack_rssi;
+	u32 tx_waste_time;
+	u32 rx_time;
+	u32 phyerr_cnt;
+	u32 listen_time;
+	u32 reg_tx_frame_cnt;
+	u32 reg_rx_frame_cnt;
+	u32 reg_rxclr_cnt;
+	u32 reg_cycle_cnt;
+	u32 reg_rxclr_ext_cnt;
+	u32 reg_ofdm_phyerr_cnt;
+	u32 reg_cck_phyerr_cnt;
+	s32 chan_nf;
+	u32 my_bss_rx_cycle_count;
+};
 /* DCS user-configured thresholds (from hostapd_cli),
  * fallback to macros in dcs_extn.h when not set.
  */
@@ -275,8 +291,8 @@ struct dcs_wlan_intr_user_cfg {
 };
 
 struct wlan_intf_extn {
-	void *prev_stats;
-	void *curr_stats;
+	struct wmi_dcs_wlan_interference_stats prev_stats;
+	struct wmi_dcs_wlan_interference_stats curr_stats;
 	bool prev_valid;
 	bool curr_valid;
 	struct dcs_wlan_intr_user_cfg dcs_cfg;

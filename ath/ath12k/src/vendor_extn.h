@@ -72,6 +72,17 @@ struct ath12k_vendor_chan_caps {
 	char dir;
 };
 
+enum qca_vendor_supported_bands {
+	QCA_WLAN_VENDOR_SUPPORTED_BAND_2GHZ = 0x1,
+	QCA_WLAN_VENDOR_SUPPORTED_BAND_5GHZ = 0x2,
+	QCA_WLAN_VENDOR_SUPPORTED_BAND_6GHZ = 0x4,
+};
+
+struct ath12k_band_desc {
+	u32 mask;
+	const char *token;
+};
+
 extern const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1];
 

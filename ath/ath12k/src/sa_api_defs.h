@@ -210,7 +210,7 @@ struct ath12k_sa_rx_feedback {
  * @radio_id: Radio ID
  * @param_type: 0 - radio config param; 1 - node config param
  * @param_id: custom configuared parameter id
- * @param_value: custom configuared parameter value
+ * @param_value: custom configured parameter value
  * @ccp: node specific configuration, for radio config params set to NULL
  */
 struct ath12k_sa_config_params {
@@ -244,7 +244,7 @@ struct ath12k_smart_ant_ops {
 	int (*sa_algo_init)(struct ath12k_sa_config *sa_config, int new_init);
 	int (*sa_algo_deinit)(u8 radio_id);
 	int (*sa_peer_connect)(void **ccp, struct ath12k_sa_node_info *node_info);
-	int (*sa_peer_disconnect)(void *ccp);
+	int (*sa_peer_disconnect)(void **ccp);
 	int (*sa_update_txfeedback)(void *ccp, struct ath12k_sa_tx_feedback *fb, u8 *status);
 	int (*sa_update_rxfeedback)(void *ccp, struct ath12k_sa_rx_feedback *fb, u8 *status);
 	int (*sa_get_txantenna)(void *ccp, u32 *antenna_array);

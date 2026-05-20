@@ -581,6 +581,18 @@ ath12k_wmi_parse_hw_blocklist_chan_data_extn(struct ath12k_base *ab,
 	return 0;
 }
 
+static int ath12k_wmi_hw_blocklist_chan_data_iter_extn(struct ath12k_base *ab,
+						      u16 tag, u16 len,
+						      const void *ptr, void *data)
+{
+	struct ath12k_hw_blocklist_update *upd = data;
+
+	if (tag == WMI_TAG_HW_BLACKLIST_CHAN_DATA)
+		return ath12k_wmi_parse_hw_blocklist_chan_data_extn(ab, ptr, len, upd);
+
+	return 0;
+}
+
 static int ath12k_wmi_hw_blocklist_elem_parse_extn(struct ath12k_base *ab, u16 tag,
 						   u16 len, const void *ptr,
 						   void *data)
@@ -593,6 +605,12 @@ static int ath12k_wmi_hw_blocklist_elem_parse_extn(struct ath12k_base *ab, u16 t
 		break;
 	case WMI_TAG_HW_BLACKLIST_CHAN_DATA:
 		return ath12k_wmi_parse_hw_blocklist_chan_data_extn(ab, ptr, len, upd);
+	case WMI_TAG_ARRAY_STRUCT:
+		if (len == 0)
+			return 0;
+		return ath12k_wmi_tlv_iter(ab, ptr, len,
+					   ath12k_wmi_hw_blocklist_chan_data_iter_extn,
+					   data);
 	default:
 		break;
 	}
@@ -985,11 +1003,18 @@ bool ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
 int ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
 					    struct sk_buff *skb)
 {
-	struct ath12k_hw_blocklist_update hw_blocklist;
+	struct ath12k_hw_blocklist_update hw_blocklist = {};
 	int ret;
 	u8 phy_id;
 
-	ath12k_wmi_pull_hw_blocklist_update_extn(ab, skb, &hw_blocklist);
+	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
+				  ath12k_wmi_hw_blocklist_elem_parse_extn,
+				  &hw_blocklist);
+	if (ret) {
+		ath12k_warn(ab, "Failed to parse HW blocklist event\n");
+		return ret;
+	}
+
 	if (!hw_blocklist.valid) {
 		ath12k_warn(ab, "Invalid HW blocklist");
 		return -EINVAL;

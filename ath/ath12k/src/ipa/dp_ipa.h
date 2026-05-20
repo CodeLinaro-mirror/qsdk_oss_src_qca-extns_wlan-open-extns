@@ -45,14 +45,14 @@ struct ipa_header {
 
 #define IPA_TCL_SW_RING 0
 
-#define MAX_IPA_IFACE                       7
+#define MAX_IPA_IFACE                       16
 #define WLAN_IPA_WLAN_HDR_DES_MAC_OFFSET    0
 #define WLAN_IPA_UC_WLAN_HDR_DES_MAC_OFFSET \
 	(sizeof(struct frag_header) + sizeof(struct ipa_header))
 #define WLAN_IPA_MAX_IFACE                  MAX_IPA_IFACE
 #define WLAN_IPA_MAX_SYSBAM_PIPE            4
 
-#define WLAN_IPA_MAX_SESSION                MAX_IPA_IFACE //7
+#define WLAN_IPA_MAX_SESSION                MAX_IPA_IFACE
 
 #ifdef WLAN_MAX_CLIENTS_ALLOWED
 #define WLAN_IPA_MAX_STA_COUNT              WLAN_MAX_CLIENTS_ALLOWED

@@ -63,3 +63,27 @@ void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 
 
 
+/*
+ * ieee80211_set_allow_scan_on_dfs_chan_extn - Enable or disable scanning on DFS channels
+ * @local: mac80211 local state
+ * @enable: true to enable the fix, false to disable
+ *
+ * When enabled, AP interfaces are allowed to leave a DFS channel for an
+ * ACS-triggered scan even when radar detection is required (i.e. when DCS
+ * WLAN-interference mode is active).  This prevents the channel-switch from
+ * being blocked by the pre-CAC check in __ieee80211_can_leave_ch().
+ *
+ * The off-channel scan and off-channel management-frame checks in nl80211
+ * are also relaxed so that the ACS scan request and any associated action
+ * frames are not rejected with -EBUSY/-EINVAL.
+ */
+void ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool enable)
+{
+	if (!local)
+		return;
+
+	local->hw.wiphy->allow_scan_on_dfs_chan = enable;
+	wiphy_dbg(local->hw.wiphy, "ALLOW SCAN ON DFS CHAN %s\n",
+		  enable ? "enabled" : "disabled");
+}
+EXPORT_SYMBOL(ieee80211_set_allow_scan_on_dfs_chan_extn);

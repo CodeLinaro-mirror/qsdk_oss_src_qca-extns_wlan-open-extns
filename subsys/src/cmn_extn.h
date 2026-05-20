@@ -322,6 +322,12 @@ ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 	return;
 }
 
+static inline void
+ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool enable)
+{
+	return;
+}
+
 #else
 
 u8 *
@@ -385,6 +391,8 @@ void ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 
 void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 				       u32 *hw_reconf_flags);
+
+void ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool enable);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);

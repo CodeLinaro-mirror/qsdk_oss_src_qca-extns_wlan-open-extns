@@ -6393,6 +6393,18 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 #endif
 	case QCA_NL80211_VENDOR_SUBCMD_HE_MCS_12_13_SUPP:
 		return ath12k_vendor_set_he_mcs_12_13_peer_cap(wiphy, wifi_params);
+	case QCA_WLAN_VENDOR_WIFI_PARAM_ALLOW_SCAN_ON_DFS_CHAN:
+		struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+		struct ieee80211_local *local = hw_to_local(hw);
+		bool enable;
+
+		if (!wifi_params->data || wifi_params->data_len < sizeof(u8)) {
+			ath12k_err(NULL, "ALLOW_SCAN_ON_DFS_CHAN: missing data\n");
+			return -EINVAL;
+		}
+		enable = !!*(u8 *)wifi_params->data;
+		ieee80211_set_allow_scan_on_dfs_chan_extn(local, enable);
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
 		return -EOPNOTSUPP;

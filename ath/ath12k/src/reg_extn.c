@@ -18,6 +18,7 @@
 #include "../mac.h"
 #include "../net/mac80211/ieee80211_i.h"
 #include "reg_extn.h"
+#include "vendor_extn.h"
 
 int ath12k_reg_chan_list_cc_ext_parse_extn(struct ath12k_base *ab,
 					   const void *next_tlv,
@@ -1035,6 +1036,14 @@ int ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
 	}
 
 	kfree(hw_blocklist.chans);
+
+	if (!hw_blocklist.more) {
+		ret = ath12k_vendor_send_hw_blocklist_update_event_extn(ab, phy_id);
+		if (ret)
+			ath12k_warn(ab, "Failed to send HW blocklist vendor event: %d\n",
+				    ret);
+	}
+
 	return 0;
 }
 

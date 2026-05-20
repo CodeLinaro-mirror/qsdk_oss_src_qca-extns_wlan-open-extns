@@ -7572,7 +7572,179 @@ static int ath12k_vendor_display_band_chans(struct ath12k *ar)
 	return 0;
 }
 
+static struct ieee80211_supported_band *ath12k_get_6g_band(struct ath12k *ar)
+{
+	struct ieee80211_supported_band *band_6g;
+
+	band_6g = &ar->mac.sbands[NL80211_BAND_6GHZ];
+	if (!band_6g || !band_6g->channels || !band_6g->n_channels)
+		return NULL;
+
+	return band_6g;
+}
+
+static u8 ath12k_super_chan_state(u32 channel_flags)
+{
+	if (channel_flags & IEEE80211_CHAN_DISABLED)
+		return ATH12K_SUPER_CHAN_STATE_DISABLED;
+
+	if (channel_flags & IEEE80211_CHAN_RADAR)
+		return ATH12K_SUPER_CHAN_STATE_RADAR;
+
+	if (channel_flags & IEEE80211_CHAN_NO_IR)
+		return ATH12K_SUPER_CHAN_STATE_NO_IR;
+
+	return ATH12K_SUPER_CHAN_STATE_ENABLED;
+}
+
+static u16 ath12k_super_chan_min_bw(u32 channel_flags)
+{
+	if (channel_flags & IEEE80211_CHAN_NO_20MHZ)
+		return (channel_flags & IEEE80211_CHAN_NO_10MHZ) ? 40 : 10;
+
+	return 20;
+}
+
+static u16 ath12k_super_chan_max_bw(u32 channel_flags)
+{
+	u16 max_bw = 320;
+
+	if (channel_flags & IEEE80211_CHAN_NO_320MHZ)
+		max_bw = 160;
+	if (channel_flags & IEEE80211_CHAN_NO_160MHZ)
+		max_bw = 80;
+	if (channel_flags & IEEE80211_CHAN_NO_80MHZ)
+		max_bw = 40;
+	if (channel_flags & IEEE80211_CHAN_NO_HT40)
+		max_bw = 20;
+	if (channel_flags & IEEE80211_CHAN_NO_20MHZ)
+		max_bw = (channel_flags & IEEE80211_CHAN_NO_10MHZ) ? 40 : 10;
+
+	return max_bw;
+}
+
+static void ath12k_super_chan_power_caps(u32 channel_flags,
+					 u16 *power_types,
+					 u8 *best_power_mode)
+{
+	*power_types = 0;
+	*best_power_mode = ATH12K_SUPER_CHAN_POWER_MODE_NONE;
+
+	if (channel_flags & IEEE80211_CHAN_DISABLED)
+		return;
+
+	*power_types |= BIT(1);
+	*best_power_mode = ATH12K_SUPER_CHAN_POWER_MODE_LPI;
+
+	if (!(channel_flags & IEEE80211_CHAN_NO_6GHZ_AFC_CLIENT)) {
+		*power_types |= BIT(2);
+		*best_power_mode = ATH12K_SUPER_CHAN_POWER_MODE_STANDARD;
+	}
+
+	if (!(channel_flags & IEEE80211_CHAN_NO_6GHZ_VLP_CLIENT))
+		*power_types |= BIT(3);
+}
+
+static bool ath12k_super_chan_mode_supported(u32 channel_flags, u8 power_mode)
+{
+	bool mode_supported;
+
+	mode_supported = !(channel_flags & IEEE80211_CHAN_DISABLED);
+
+	if (power_mode == ATH12K_SUPER_CHAN_POWER_MODE_STANDARD)
+		mode_supported = mode_supported &&
+			!(channel_flags & IEEE80211_CHAN_NO_6GHZ_AFC_CLIENT);
+
+	if (power_mode == ATH12K_SUPER_CHAN_POWER_MODE_VLP)
+		mode_supported = mode_supported &&
+			!(channel_flags & IEEE80211_CHAN_NO_6GHZ_VLP_CLIENT);
+
+	return mode_supported;
+}
+
+static void ath12k_super_chan_dump(struct ath12k *ar,
+				   const struct ieee80211_channel *channel,
+				   u32 channel_flags,
+				   u8 channel_state,
+				   u16 min_bw,
+				   u16 max_bw,
+				   bool psd_flag,
+				   bool afc_not_done,
+				   u16 power_types,
+				   u8 best_power_mode)
+{
+	u8 power_mode;
+
+	ath12k_info(ar->ab,
+		   "Freq = %d\tPower types = 0x%x\tBest power mode = 0x%x\n",
+		   channel->center_freq, power_types, best_power_mode);
+
+	for (power_mode = ATH12K_SUPER_CHAN_POWER_MODE_LPI;
+	     power_mode <= ATH12K_SUPER_CHAN_POWER_MODE_VLP;
+	     power_mode++) {
+		bool mode_supported;
+
+		mode_supported = ath12k_super_chan_mode_supported(channel_flags,
+							 power_mode);
+
+		ath12k_info(ar->ab,
+		   "Power mode = %d\tPSD flag = %d\tPSD power = %d\tEIRP power = %d\tChan flags = 0x%x\tChannel state = %d\tMin bw = %d\tMax bw = %d\tAFC_NOT_DONE = %d\n",
+		   power_mode, mode_supported ? psd_flag : 0,
+		   mode_supported ? channel->psd : 0,
+		   mode_supported ? channel->max_reg_power : 0,
+		   mode_supported ? channel_flags : IEEE80211_CHAN_DISABLED,
+		   mode_supported ? channel_state : ATH12K_SUPER_CHAN_STATE_DISABLED,
+		   mode_supported ? min_bw : 0,
+		   mode_supported ? max_bw : 0,
+		   (power_mode == ATH12K_SUPER_CHAN_POWER_MODE_STANDARD) ?
+		   afc_not_done : 0);
+	}
+}
+
 /* Get radio level parameters */
+static int ath12k_vendor_display_super_chan_list(struct ath12k *ar, u32 *value)
+{
+	struct ieee80211_supported_band *band_6g;
+	unsigned int i;
+
+	band_6g = ath12k_get_6g_band(ar);
+	if (!band_6g || !band_6g->channels || !band_6g->n_channels) {
+		ath12k_err(ar->ab,
+			   "display_super_chan_list is valid only for 6 GHz radio\n");
+		return -EOPNOTSUPP;
+	}
+
+	for (i = 0; i < band_6g->n_channels; i++) {
+		const struct ieee80211_channel *channel;
+		u32 channel_flags;
+		u8 channel_state;
+		u16 min_bw;
+		u16 max_bw;
+		bool psd_flag;
+		bool afc_not_done;
+		u16 power_types;
+		u8 best_power_mode;
+
+		channel = &band_6g->channels[i];
+		channel_flags = channel->flags;
+		psd_flag = !!(channel_flags & IEEE80211_CHAN_PSD);
+		afc_not_done = !!(channel_flags & IEEE80211_CHAN_NO_6GHZ_AFC_CLIENT);
+		channel_state = ath12k_super_chan_state(channel_flags);
+		min_bw = ath12k_super_chan_min_bw(channel_flags);
+		max_bw = ath12k_super_chan_max_bw(channel_flags);
+		ath12k_super_chan_power_caps(channel_flags, &power_types,
+					     &best_power_mode);
+
+		ath12k_super_chan_dump(ar, channel, channel_flags, channel_state,
+				       min_bw, max_bw, psd_flag, afc_not_done,
+				       power_types, best_power_mode);
+	}
+
+	*value = 0;
+
+	return 0;
+}
+
 static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 					  u32 param,
 					  struct ath12k_wifi_generic_params *params,
@@ -7815,6 +7987,9 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_DISPLAY_BAND_CHANS:
 		ret = ath12k_vendor_display_band_chans(ar);
 		*value = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_DISPLAY_SUPER_CHANNEL_LIST:
+		ret = ath12k_vendor_display_super_chan_list(ar, value);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RADAR_DETECT_COUNT:
 		*value = ar->radar_detect_count;

@@ -373,6 +373,113 @@ static int ath12k_vendor_set_country_id(struct ath12k *ar, u32 country_id)
 
 	return ret;
 }
+
+static int ath12k_vendor_set_regdomain(struct wiphy *wiphy,
+				       struct ath12k *ar,
+				       u32 regdomain)
+{
+	struct ath12k_wmi_init_country_arg arg = {0};
+	struct ath12k_hw *ah;
+	struct ath12k *tmp_ar;
+	u32 input_regdomain;
+	u32 *old_regdomain;
+	bool *old_regdom_set_by_user;
+	bool *cache_valid;
+	u16 reg_2g_5g_pair_id;
+	u16 sixg_superdmn_id;
+	int i;
+	int ret = 0;
+	bool radio_seen = false;
+
+	if (!ar || !ar->ah)
+		return -EINVAL;
+
+	ah = ar->ah;
+	if (!ah->num_radio)
+		return -ENODATA;
+
+	old_regdomain = kcalloc(ah->num_radio, sizeof(*old_regdomain), GFP_KERNEL);
+	if (!old_regdomain)
+		return -ENOMEM;
+
+	old_regdom_set_by_user = kcalloc(ah->num_radio,
+					 sizeof(*old_regdom_set_by_user),
+					 GFP_KERNEL);
+	if (!old_regdom_set_by_user) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	cache_valid = kcalloc(ah->num_radio, sizeof(*cache_valid), GFP_KERNEL);
+	if (!cache_valid) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	input_regdomain = regdomain;
+	reg_2g_5g_pair_id = input_regdomain & 0xFFFF;
+	sixg_superdmn_id = (input_regdomain >> 16) & 0xFFFF;
+
+	regdomain = ((u32)sixg_superdmn_id << 16) | reg_2g_5g_pair_id;
+
+	arg.flags = REGDMN_IS_SET;
+	arg.cc_info.regdom_id = regdomain;
+
+	ah->regd_updated = false;
+	for_each_ar(ah, tmp_ar, i) {
+		if (i >= ah->num_radio)
+			continue;
+
+		cache_valid[i] = true;
+		old_regdomain[i] = tmp_ar->radio_cfg.regdomain;
+		old_regdom_set_by_user[i] = tmp_ar->regdom_set_by_user;
+
+		ret = ath12k_wmi_send_init_country_cmd(tmp_ar, &arg);
+		if (ret) {
+			ath12k_err(NULL,
+				   "Failed to send WMI_SET_INIT_COUNTRY_CMDID for regdomain on radio %d\n",
+				   i);
+			goto rollback;
+		}
+
+		radio_seen = true;
+		ath12k_mac_11d_scan_stop(tmp_ar);
+		tmp_ar->regdom_set_by_user = true;
+		tmp_ar->radio_cfg.regdomain = regdomain;
+	}
+
+	if (!radio_seen) {
+		ret = -ENODATA;
+		goto out;
+	}
+
+	ret = ath12k_vendor_wait_for_regdom_update(ah);
+	if (ret) {
+		ath12k_err(NULL,
+			   "Timed out waiting for regdom update for regdomain %u: %d\n",
+			   input_regdomain, ret);
+		goto rollback;
+	}
+
+	goto out;
+
+rollback:
+	for_each_ar(ah, tmp_ar, i) {
+		if (i >= ah->num_radio || !cache_valid[i])
+			continue;
+
+		tmp_ar->radio_cfg.regdomain = old_regdomain[i];
+		tmp_ar->regdom_set_by_user = old_regdom_set_by_user[i];
+	}
+
+out:
+	kfree(cache_valid);
+	kfree(old_regdom_set_by_user);
+	kfree(old_regdomain);
+
+	return ret;
+}
+
 const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_240MHZ_BEAMFORMEE_SS] = { .type = NLA_U8 },
@@ -6794,7 +6901,8 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
         ah = hw->priv;
 
 	if ((param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2 ||
-	     param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID) &&
+	     param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID ||
+	     param == QCA_WLAN_VENDOR_RADIO_PARAM_REGDOMAIN) &&
 	    radio_idx == INVALID_RADIO_INDEX)
 		radio_idx = 0;
 
@@ -6839,6 +6947,16 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
 		memcpy(&value, params->data, sizeof(value));
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_REGDOMAIN:
+		if (params->data_len < sizeof(u32)) {
+			ath12k_err(NULL, "Invalid regdomain data len: %u\n",
+				   params->data_len);
+			return -EINVAL;
+		}
+
+		memcpy(&value, params->data, sizeof(value));
+		ret = ath12k_vendor_set_regdomain(wiphy, ar, value);
+		return ret;
 	default:
 		if (params->data_len < sizeof(u32)) {
 			ath12k_err(NULL, "Invalid data len: %u for radio param: %d\n",
@@ -8450,6 +8568,29 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		}
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_REGDOMAIN:
+		u32 source_regdomain;
+		u32 regdomain;
+		u32 low_5g;
+		u32 high_5g;
+
+		if (ar->radio_cfg.regdomain) {
+			source_regdomain = ar->radio_cfg.regdomain;
+		} else {
+			source_regdomain = (u32)(ar->ab->hal_reg_cap[ar->pdev_idx].eeprom_reg_domain & 0xFFFF);
+			source_regdomain |= ((u32)(ar->ab->hal_reg_cap[ar->pdev_idx].eeprom_reg_domain_ext & 0xFFFF) << 16);
+		}
+
+		regdomain = source_regdomain & 0xFFFF;
+		low_5g = ar->ab->hal_reg_cap[ar->pdev_idx].low_5ghz_chan;
+		high_5g = ar->ab->hal_reg_cap[ar->pdev_idx].high_5ghz_chan;
+
+		if (low_5g <= ATH12K_MAX_6GHZ_FREQ && high_5g >= ATH12K_MIN_6GHZ_FREQ)
+			regdomain |= (source_regdomain & 0xFFFF0000);
+
+		*value = regdomain;
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -8522,7 +8663,8 @@ int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
         int ret = -1;
 
 	if ((param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2 ||
-	     param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID) &&
+	     param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID ||
+	     param == QCA_WLAN_VENDOR_RADIO_PARAM_REGDOMAIN) &&
 	    radio_idx == INVALID_RADIO_INDEX)
 		radio_idx = 0;
 

@@ -1808,17 +1808,55 @@ static int ath12k_vendor_set_ctlpwrscale(struct ath12k *ar, u32 value)
  * @arvif: pointer to ath12k_link_vif structure
  * @value: pointer to store the retrieved tx power in 0.5 dBm units
  *
- * Uses ieee80211_bss_conf.txpower which is the operating TX power
- * computed by mac80211 (minimum of regulatory, HW capability, and user-set
- * limits).
+ * Requests FW pdev stats via WMI and reads chan_tx_power directly in its
+ * native 0.5 dBm units as reported by firmware, without any integer division.
+ * Falls back to ieee80211_bss_conf.txpower (mac80211 regulatory cap, 1 dBm
+ * resolution) scaled to 0.5 dBm units if FW stats are unavailable.
  *
  * Returns: 0 on success, negative error code on failure
  */
 static int ath12k_vendor_get_txpower_resolution(struct ath12k_link_vif *arvif, u64 *value)
 {
+	struct ath12k_fw_stats_req_params params = {};
+	struct ath12k_fw_stats_pdev *pdev;
 	struct ieee80211_bss_conf *bss_conf;
+	struct ath12k *ar;
 	s32 svalue;
+	int ret;
 
+	if (!arvif || !arvif->ar)
+		return -EINVAL;
+
+	ar = arvif->ar;
+	params.pdev_id = ar->pdev->pdev_id;
+	params.vdev_id = arvif->vdev_id;
+	params.stats_id = WMI_REQUEST_PDEV_STAT;
+	ret = ath12k_mac_get_fw_stats(ar, &params);
+	if (ret) {
+		ath12k_warn(ar->ab, "failed to request fw pdev stats: %d\n", ret);
+		goto err_fallback;
+	}
+
+	spin_lock_bh(&ar->data_lock);
+	pdev = list_first_entry_or_null(&ar->fw_stats.pdevs,
+					struct ath12k_fw_stats_pdev, list);
+	if (!pdev) {
+		spin_unlock_bh(&ar->data_lock);
+		goto err_fallback;
+	}
+
+	svalue = (s32)pdev->chan_tx_power;
+	spin_unlock_bh(&ar->data_lock);
+
+	if (svalue < S8_MIN || svalue > S8_MAX)
+		return -ERANGE;
+
+	*value = (u64)(s8)svalue;
+	ath12k_info(ar->ab, "txpower from FW pdev stats %d.%02d dBm\n",
+		    svalue / 2, abs(svalue % 2) * 50);
+	return 0;
+
+err_fallback:
 	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
 	if (!bss_conf)
 		return -EINVAL;
@@ -1827,12 +1865,11 @@ static int ath12k_vendor_get_txpower_resolution(struct ath12k_link_vif *arvif, u
 		return -ENOTCONN;
 
 	svalue = (s32)bss_conf->txpower * 2;
-	if(svalue < S8_MIN || svalue > S8_MAX)
+	if (svalue < S8_MIN || svalue > S8_MAX)
 		return -ERANGE;
 
-	*value = (s8)bss_conf->txpower * 2;
-
-	ath12k_info(NULL, "txpower in 1 dBm scale %d.%02d dBm",
+	*value = (u64)(s8)svalue;
+	ath12k_info(ar->ab, "txpower fallback from bss_conf %d.%02d dBm\n",
 		    svalue / 2, abs(svalue % 2) * 50);
 	return 0;
 }

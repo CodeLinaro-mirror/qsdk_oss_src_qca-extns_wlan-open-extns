@@ -38,6 +38,8 @@ struct ipa_header {
 
 #define DEBRUIJIN_MAGIC_IDX 0x077CB531U
 #define DEBRUIJIN_MAGIC_SHIFT 27
+#define DP_IPA_BOARD_ID_FIRST	4099
+#define DP_IPA_BOARD_ID_SECOND	4
 
 #define NL80211_BAND_UNSPECIFIED ((enum nl80211_band)-1)
 
@@ -89,8 +91,11 @@ struct ipa_header {
 /* IPA RING defines */
 #define IPA_TCL_RING            3
 #define IPA_TX_COMP_RING        IPA_TCL_RING
+#define IPA_TCL_ALT_RING	2
+#define IPA_TX_COMP_ALT_RING	IPA_TCL_ALT_RING
 #define IPA_REO_DST_RING        3
 #define IPA_RX_REFILL_RING      IPA_REO_DST_RING
+#define IPA_ALT_REO_DEST_RING	2
 
 /* IPA buffer defines */
 #define IPA_TX_BUF_CNT          8192
@@ -108,8 +113,10 @@ struct ipa_header {
 
 #define WLAN_IPA_AST_META_DATA_MASK htonl(0x0000001F)
 #define DP_IPA_UC_WLAN_HDR_DES_MAC_OFFSET	0
+#define WLAN_IPA_SESSION_ID_SHIFT 1
+#define DP_IPA_PDEV_ID_2G	1
 
-
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
 int ath12k_ipa_plugin_register_ops(struct ath12k_base *ab);
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab);
 
@@ -713,6 +720,7 @@ struct dp_ipa_uc_rx_hdr {
 #define DP_IPA_UC_WLAN_TX_VLAN_HDR_LEN sizeof(struct dp_ipa_uc_tx_vlan_hdr)
 #define DP_IPA_UC_WLAN_RX_HDR_LEN      sizeof(struct dp_ipa_uc_rx_hdr)
 
+extern bool g_ipa_is_ready;
 
 int dp_ipa_setup(struct ath12k_wlan_ipa_priv *ipa_ctx);
 int wlan_ipa_init_perf_level(struct ath12k_wlan_ipa_priv *ipa_ctx);
@@ -793,6 +801,8 @@ bool ath12k_wlan_ipa_is_sta_only_offload_enabled(void);
 
 bool ath12k_ipa_config_is_enabled(void);
 
+bool ath12k_ipa_is_vlan_enabled(void);
+
 void ath12k_wlan_ipa_intrabss_enable_disable(struct ath12k_wlan_ipa_priv *ipa_ctx,
 					     u32 vdev_id, bool enable);
 
@@ -849,6 +859,8 @@ void ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 pe
 
 void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
 
+bool ipa_config_is_vlan_enabled(void);
+
 #ifndef ETH_P_WAPI
 #define ETH_P_WAPI 0x88B4
 #endif
@@ -860,11 +872,13 @@ void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
  */
 #define DP_IPA_SKB_CB_VDEV_ID		0
 #define DP_IPA_SKB_CB_DA_BCMC		1
-#define DP_IPA_SKB_CB_PEER_ID		5
+#define DP_IPA_SKB_CB_PEER_ID_LO	5
+#define DP_IPA_SKB_CB_PEER_ID_HI	6
 #define DP_IPA_SKB_CB_DEST_CHIP_ID	7
 #define DP_IPA_SKB_CB_DEST_CHIP_PMAC	8
 #define DP_IPA_SKB_CB_BCMC_MASK			0x2
 #define DP_IPA_SKB_CB_VDEV_ID_MASK	0x1F
+#define DP_IPA_SKB_CB_PEER_ID_HI_MASK	0x3F
 
 /**
  * ath12k_dp_ipa_skb_get_vdev_id() - Get vdev ID from skb control buffer
@@ -884,12 +898,17 @@ static inline u8 ath12k_dp_ipa_skb_get_vdev_id(struct sk_buff *skb)
  * @skb: socket buffer
  *
  * Extracts the peer ID stored in the skb control buffer by IPA component.
+ * Peer ID is 14 bits and stored in cb as follows -
+ *	Lower 8 bits at offset DP_IPA_SKB_CB_PEER_ID_LO
+ *	Higher 6 bits at offset DP_IPA_SKB_CB_PEER_ID_HI
  *
  * Return: peer ID as u16
  */
 static inline u16 ath12k_dp_ipa_skb_get_peer_id(struct sk_buff *skb)
 {
-	return (u16)skb->cb[DP_IPA_SKB_CB_PEER_ID];
+	u16 peer_id = *(u16 *)(skb->cb + DP_IPA_SKB_CB_PEER_ID_LO);
+
+	return peer_id & 0x3FFF;
 }
 
 /**

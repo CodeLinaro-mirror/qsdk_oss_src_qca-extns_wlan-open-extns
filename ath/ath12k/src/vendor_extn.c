@@ -605,6 +605,9 @@ ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_DISABLE] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CHAN_LIST] = { .type = NLA_NESTED },
 };
 
 #define ATH12K_HWBL_NL_CHAN_WIDTH_INVALID ((u32)-1)
@@ -1901,7 +1904,8 @@ ath12k_vendor_get_radio_chan144(struct wiphy *wiphy, struct ath12k *ar)
 	return chan;
 }
 
-static void ath12k_vendor_chan144_notify_reg_change(struct wiphy *wiphy)
+static void ath12k_vendor_notify_reg_change_extn(struct wiphy *wiphy,
+						 const char *reason)
 {
 	const struct ieee80211_regdomain *regd;
 	int ret;
@@ -1912,8 +1916,14 @@ static void ath12k_vendor_chan144_notify_reg_change(struct wiphy *wiphy)
 
 	ret = regulatory_set_wiphy_regd(wiphy, (struct ieee80211_regdomain *)regd);
 	if (ret)
-		ath12k_err(NULL, "CHAN144: failed to notify userspace reg change, ret=%d\n",
-			   ret);
+		ath12k_err(NULL,
+			   "%s: failed to notify userspace reg change, ret=%d\n",
+			   reason ? reason : "REG", ret);
+}
+
+static void ath12k_vendor_chan144_notify_reg_change(struct wiphy *wiphy)
+{
+	ath12k_vendor_notify_reg_change_extn(wiphy, "CHAN144");
 }
 
 static int ath12k_vendor_chan144_apply(struct ath12k *ar, u8 enable)
@@ -12135,7 +12145,277 @@ exit:
 	return -1;
 }
 
+/**
+ * ath12k_vendor_is_valid_opclass_chan_extn - Validate channel for an opclass
+ * @opclass: Operating class to validate against
+ * @chan: Channel number to validate
+ * @num_opclasses: Number of entries in @opclass_lst
+ * @opclass_lst: List of operating classes
+ * @chansize_lst: Number of channels per operating class in @channel_lists
+ * @channel_lists: Per-opclass channel lists aligned with @opclass_lst
+ *
+ * Return: true if @chan belongs to @opclass, otherwise false.
+ */
+static bool
+ath12k_vendor_is_valid_opclass_chan_extn(u8 opclass, u8 chan,
+					 u8 num_opclasses,
+					 u8 *opclass_lst,
+					 u8 *chansize_lst,
+					 u8 **channel_lists)
+{
+	int i;
+
+	for (i = 0; i < num_opclasses; i++) {
+		int j;
+
+		if (opclass != opclass_lst[i])
+			continue;
+
+		for (j = 0; j < chansize_lst[i]; j++) {
+			if (chan == channel_lists[i][j])
+				return true;
+		}
+		return false;
+	}
+
+	return false;
+}
+
+static int
+ath12k_vendor_parse_reg_params_chan_list_extn(struct nlattr *chan_list_attr,
+					      u8 *chan_list,
+					      size_t max_chan,
+					      size_t *num_chan)
+{
+	struct nlattr *nl;
+	int rem;
+	size_t i = 0;
+
+	if (!chan_list_attr || !chan_list || !num_chan || !max_chan)
+		return -EINVAL;
+
+	nla_for_each_nested(nl, chan_list_attr, rem) {
+		if (i >= max_chan)
+			return -E2BIG;
+
+		if (nla_len(nl) < sizeof(u8))
+			return -EINVAL;
+
+		chan_list[i++] = nla_get_u8(nl);
+	}
+
+	if (!i)
+		return -EINVAL;
+
+	*num_chan = i;
+	return 0;
+}
+
+static void ath12k_vendor_set_chan_disable_state_extn(
+	struct ieee80211_channel *chan, bool is_disable)
+{
+	if (!chan)
+		return;
+
+	if (is_disable) {
+		chan->flags |= IEEE80211_CHAN_DISABLED;
+		chan->orig_flags |= IEEE80211_CHAN_DISABLED;
+	} else {
+		chan->flags &= ~IEEE80211_CHAN_DISABLED;
+		chan->orig_flags &= ~IEEE80211_CHAN_DISABLED;
+	}
+}
+
+static void ath12k_vendor_set_6ghz_chan_disable_state_extn(struct wiphy *wiphy,
+							   int freq,
+							   bool is_disable)
+{
+	struct ieee80211_supported_band *sband;
+	struct ieee80211_6ghz_channel *chan_6g;
+	int i, pwr_mode;
+
+	if (!wiphy || !freq)
+		return;
+
+	sband = wiphy->bands[NL80211_BAND_6GHZ];
+	if (!sband)
+		return;
+
+	for (pwr_mode = 0; pwr_mode < NL80211_REG_NUM_POWER_MODES; pwr_mode++) {
+		chan_6g = sband->chan_6g[pwr_mode];
+		if (!chan_6g || !chan_6g->channels || !chan_6g->n_channels)
+			continue;
+
+		for (i = 0; i < chan_6g->n_channels; i++) {
+			struct ieee80211_channel *mode_chan;
+
+			mode_chan = &chan_6g->channels[i];
+			if (mode_chan->center_freq != freq)
+				continue;
+
+			ath12k_vendor_set_chan_disable_state_extn(mode_chan,
+								  is_disable);
+		}
+	}
+}
+
+static int
+ath12k_vendor_is_chan_disabled_extn(struct wiphy *wiphy,
+				    enum nl80211_band band,
+				    u8 chan_num)
+{
+	struct ieee80211_channel *chan;
+	int freq;
+
+	if (!wiphy || !chan_num)
+		return 1;
+
+	freq = ieee80211_channel_to_frequency(chan_num, band);
+	if (!freq)
+		return 1;
+
+	chan = ieee80211_get_channel(wiphy, freq);
+	if (!chan)
+		return 1;
+
+	return !!(chan->flags & IEEE80211_CHAN_DISABLED);
+}
+
+static int
+ath12k_vendor_apply_disable_opclass_chan_extn(struct wiphy *wiphy,
+					      enum nl80211_band band,
+					      u8 chan_num,
+					      bool is_disable)
+{
+	struct ieee80211_channel *chan;
+	const struct ieee80211_reg_rule *reg_rule;
+	int freq;
+
+	if (!wiphy || !chan_num)
+		return -EINVAL;
+
+	freq = ieee80211_channel_to_frequency(chan_num, band);
+	if (!freq)
+		return -EINVAL;
+
+	chan = ieee80211_get_channel(wiphy, freq);
+	if (!chan)
+		return -EINVAL;
+
+	if (is_disable) {
+		/* Keep user-disable state across regulatory reapply flows by
+		 * updating both runtime and baseline flags.
+		 */
+		ath12k_vendor_set_chan_disable_state_extn(chan, is_disable);
+		if (band == NL80211_BAND_6GHZ)
+			ath12k_vendor_set_6ghz_chan_disable_state_extn(wiphy, freq,
+								       is_disable);
+		return 0;
+	}
+
+	if (!(chan->flags & IEEE80211_CHAN_DISABLED))
+		return 0;
+
+	reg_rule = freq_reg_info(wiphy, MHZ_TO_KHZ(freq));
+	if (IS_ERR_OR_NULL(reg_rule))
+		return 0;
+
+	ath12k_vendor_set_chan_disable_state_extn(chan, is_disable);
+	if (band == NL80211_BAND_6GHZ)
+		ath12k_vendor_set_6ghz_chan_disable_state_extn(wiphy, freq,
+							       is_disable);
+	return 0;
+}
+
+/**
+ * ath12k_vendor_disable_opclass_chans_handler_extn - Handle disable_opclass_chans
+ * @wiphy: wiphy pointer
+ * @band: band used to resolve channel-to-frequency mapping
+ * @tb: parsed REG_PARAMS vendor attributes
+ * @opclass: operating class from vendor attributes
+ *
+ * Validates input attributes, verifies requested channels belong to @opclass,
+ * applies disable/enable state per channel, and notifies regulatory change.
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+static int
+ath12k_vendor_disable_opclass_chans_handler_extn(struct wiphy *wiphy,
+						 enum nl80211_band band,
+						 struct nlattr **tb,
+						 u8 opclass)
+{
+	u8 num_op = 0;
+	u8 *op_lst = NULL, *chansize = NULL, **chan_lst = NULL;
+	u8 disable = 0;
+	u8 user_chan_list[256];
+	size_t user_chan_count = 0, i;
+	int ret_val;
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_DISABLE] || !opclass ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CHAN_LIST])
+		return -EINVAL;
+
+	disable = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_DISABLE]);
+	if (disable != 0 && disable != 1)
+		return -EINVAL;
+
+	ret_val = ath12k_vendor_parse_reg_params_chan_list_extn(
+		tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CHAN_LIST],
+		user_chan_list, ARRAY_SIZE(user_chan_list), &user_chan_count);
+	if (ret_val)
+		return ret_val;
+
+	ret_val = ath12k_get_opclasses_and_channels(NULL,
+						    &num_op,
+						    &op_lst,
+						    &chansize,
+						    &chan_lst,
+						    band);
+	if (ret_val) {
+		ath12k_err(NULL,
+			   "Failed to retrieve opclass list and channel\n");
+		return ret_val;
+	}
+
+	for (i = 0; i < user_chan_count; i++) {
+		ret_val = ath12k_vendor_is_valid_opclass_chan_extn(opclass,
+								   user_chan_list[i],
+								   num_op,
+								   op_lst,
+								   chansize, chan_lst);
+		if (!ret_val) {
+			ath12k_err(NULL,
+				   "Invalid channel %u for opclass %u\n",
+				   user_chan_list[i], opclass);
+			ret_val = -EINVAL;
+			goto clean;
+		}
+
+		ret_val = ath12k_vendor_apply_disable_opclass_chan_extn(wiphy, band,
+									user_chan_list[i],
+									disable);
+		if (ret_val)
+			goto clean;
+	}
+
+	ath12k_dbg(NULL, ATH12K_DBG_REG,
+		   "opclass %u channels updated count=%zu disable=%u",
+		   opclass, user_chan_count, disable);
+	/* Re-notify current regulatory state so userspace refreshes
+	 * channel list caches through normal REG_CHANGE handling.
+	 */
+	ath12k_vendor_notify_reg_change_extn(wiphy, "REG_PARAMS");
+	ret_val = 0;
+
+clean:
+	ath12k_free_opclasses_and_channels(num_op, op_lst,
+					   chansize, chan_lst);
+	return ret_val;
+}
+
 static int ath12k_vendor_send_reg_params_update(struct wiphy *wiphy,
+						enum nl80211_band band,
 						u8 cmd, u8 opclass,
 						u16 hw_value,
 						int max_reg_power,
@@ -12195,6 +12475,8 @@ static int ath12k_vendor_send_reg_params_update(struct wiphy *wiphy,
 	}
 
 	if (opclass) {
+		int out_idx = 0;
+
 		for (i = 0; i < num_opclasses; i++) {
 			if (opclass == opclass_lst[i]) {
 				j = i;
@@ -12211,12 +12493,18 @@ static int ath12k_vendor_send_reg_params_update(struct wiphy *wiphy,
 			goto fail;
 
 		for (i = 0; i < chansize_lst[j]; i++) {
-			if (nla_put_u8(skb, i, channel_lists[j][i]))
+			u8 chan = channel_lists[j][i];
+
+			if (ath12k_vendor_is_chan_disabled_extn(wiphy, band, chan))
+				continue;
+
+			if (nla_put_u8(skb, out_idx, chan))
 				goto fail;
-			else
-				ath12k_dbg(NULL, ATH12K_DBG_REG,
-					   "channellist[%d] is %d",
-					   i, channel_lists[j][i]);
+
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "channellist[%d] is %d",
+				   out_idx, chan);
+			out_idx++;
 		}
 		nla_nest_end(skb, nla_attr);
 	}
@@ -12288,23 +12576,22 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 	bool need_clean = false;
 
 	if (!wdev || !data || !data_len) {
-		ath12k_err(NULL, "Invalid input to REG PARAMS handler");
+		ath12k_err(NULL, "Invalid input to REG PARAMS handler\n");
 		return -EINVAL;
 	}
 
 	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX, data,
 		      data_len, ath12k_reg_params_policy, NULL)) {
-		ath12k_err(NULL, "Failed to parse REG PARAMS vendor attributes");
+		ath12k_err(NULL, "Failed to parse REG PARAMS vendor attributes\n");
 		return -EINVAL;
 	}
 
 	if (!tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID]) {
-		ath12k_err(NULL, "Missing mandatory Link_id attributes");
+		ath12k_err(NULL, "Missing mandatory Link_id attributes\n");
 		return -EINVAL;
 	}
 
 	link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_LINKID]);
-
 	if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
 		return -EINVAL;
 
@@ -12319,8 +12606,16 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD])
 		cmd = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CMD]);
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN])
+	if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS])
+		opclass = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS]);
+	else if (tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN])
 		opclass = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS_CHAN]);
+
+	if (cmd == QCA_WLAN_VENDOR_REG_PARAMS_DISABLE_OPCLASS_CHANS) {
+		ret_val = ath12k_vendor_disable_opclass_chans_handler_extn(
+			wiphy, band, tb, opclass);
+		return ret_val;
+	}
 
 	if ((cmd >= QCA_WLAN_VENDOR_REG_PARAMS_NUM_OPCLASS &&
 	     cmd <= QCA_WLAN_VENDOR_REG_PARAMS_OPCLASS_LIST) || opclass) {
@@ -12344,13 +12639,13 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 			need_clean = true;
 			if (ret_val) {
 				ath12k_err(NULL,
-					   "Failed to retrieve opclass list and channel");
+					   "Failed to retrieve opclass list and channel\n");
 				goto clean;
 			}
 		}
 
-		ret_val = ath12k_vendor_send_reg_params_update(wiphy, cmd, opclass,
-							       hw_value,
+		ret_val = ath12k_vendor_send_reg_params_update(wiphy, band, cmd,
+							       opclass, hw_value,
 							       max_reg_power,
 							       num_op, op_lst,
 							       chansize,

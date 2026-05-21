@@ -63,6 +63,8 @@ ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] =
 	} while (0)
 #endif
 
+static int ath12k_vendor_display_band_chans(struct ath12k *ar);
+
 #define LOW_BAND_MIN_FIVEG_FREQ   5180
 #define LOW_BAND_MAX_FIVEG_FREQ   5320
 #define MAX_FREQ_IN_TWOG          2484
@@ -7442,6 +7444,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_DIS_LPI_ANT_OPTIMIZE:
 		*value = arvif->vap_cfg.dis_lpi_ant_optimize;
 		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_LIST_CHAN:
+		ret = ath12k_vendor_display_band_chans(ar);
+		*value = 0;
 		break;
        default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,

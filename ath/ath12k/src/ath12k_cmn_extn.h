@@ -485,7 +485,20 @@ struct ath12k_mgmt_wifi8_extn {
 	struct mgmt_srng_extn reo_dst_highpri_rx_ring;
 };
 
+
+int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
+					      u8 catagory,
+					      const u8 *pos,
+					      const u8 *end);
 #ifndef CPTCFG_QCN_EXTN
+static inline void
+int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
+					      u8 catagory,
+					      const u8 *pos,
+					      const u8 *end)
+{
+	return 0;
+}
 
 static inline void
 ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,

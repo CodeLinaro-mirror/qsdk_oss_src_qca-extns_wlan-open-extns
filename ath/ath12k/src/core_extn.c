@@ -1205,3 +1205,51 @@ struct sk_buff *ath12k_dp_alloc_skb(int size)
 }
 #endif
 EXPORT_SYMBOL(ath12k_dp_alloc_skb);
+
+#define ATH12K_RCSA_QCOM_OUI_0		0x00
+#define ATH12K_RCSA_QCOM_OUI_1		0x03
+#define ATH12K_RCSA_QCOM_OUI_2		0x7f
+#define ATH12K_RCSA_QCOM_OUI_LEN	3
+#define ATH12K_RCSA_CSA_IE_MIN_LEN	3
+
+int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
+					      u8 catagory,
+					      const u8 *pos,
+					      const u8 *end)
+{
+	if (catagory != WLAN_CATEGORY_VENDOR_SPECIFIC)
+		return 0;
+
+	if (pos > end)
+		return 0;
+
+	if (pos + ATH12K_RCSA_QCOM_OUI_LEN > end)
+		return 0;
+
+	ath12k_dbg_level(ar->ab, ATH12K_DBG_MAC, ATH12K_DBG_L1,
+			 "rcsa_ml_info: vendor action oui=%02x:%02x:%02x\n",
+			 pos[0], pos[1], pos[2]);
+
+	/*
+	 * RCSA is sent by supplicant as a Qualcomm vendor action frame:
+	 *   Category: WLAN_CATEGORY_VENDOR_SPECIFIC
+	 *   OUI     : 00:03:7f
+	 *   Payload : CSA IE followed by optional IEs, including ML Link Info IE.
+	 */
+	if (pos[0] != ATH12K_RCSA_QCOM_OUI_0 ||
+	    pos[1] != ATH12K_RCSA_QCOM_OUI_1 ||
+	    pos[2] != ATH12K_RCSA_QCOM_OUI_2)
+		return 0;
+
+	pos += ATH12K_RCSA_QCOM_OUI_LEN;
+
+	if (pos + 2 > end || pos[0] != WLAN_EID_CHANNEL_SWITCH ||
+	    pos[1] < ATH12K_RCSA_CSA_IE_MIN_LEN ||
+	    pos + 2 + pos[1] > end)
+		return 0;
+
+	pos += 2 + pos[1];
+
+	return cfg80211_find_ext_elem(WLAN_EID_EXT_MLO_LINK_INFO,
+				      pos, end - pos) ? 1 : 0;
+}

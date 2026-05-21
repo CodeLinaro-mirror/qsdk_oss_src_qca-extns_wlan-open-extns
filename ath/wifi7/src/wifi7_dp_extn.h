@@ -30,6 +30,7 @@ bool ath12k_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 				  struct ath12k_dp_skb_ctrl *skb_ctrl,
 				  u32 qos_nw_delay)
 {
+	struct ath12k_vif *ahvif = container_of(dp_vif, struct ath12k_vif, dp_vif);
 	bool is_recycler = false;
 	u8 link_id;
 
@@ -45,6 +46,14 @@ bool ath12k_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 			skb_ctrl->flags |= DP_SKB_RECYCLED;
 		ath12k_wifi7_ucast_handler(dp_vif, link_id, NULL, skb, skb_ctrl,
 					   qos_nw_delay, false);
+		return true;
+	} else if (skb->fast_xmit) {
+		ath12k_err(NULL,
+			   "drop fast_xmit skb: missing MLO assist tag (mark 0x%x)\n",
+			   skb->mark);
+		ath12k_mac_ieee80211_free_txskb(ahvif->ah->hw, skb, NULL, NULL, dp_vif,
+						DP_TX_ENQ_DROP_INV_ENCAP_FAST,
+						0, false);
 		return true;
 	}
 

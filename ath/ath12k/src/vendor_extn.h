@@ -416,7 +416,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy,
 					   struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
 {
-    return -1;
+	return -1;
 }
 
 /**
@@ -480,6 +480,20 @@ void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 						 struct sk_buff *skb)
 {
 }
+
+/* CAC timeout override is unavailable when QCN extensions are disabled. */
+static inline void ath12k_set_current_cac_timeout(struct ath12k *ar,
+						  s32 cac_timeout_ms)
+{
+}
+
+/* No regulatory CAC timeout adjustment is needed without QCN extensions. */
+static inline void
+ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
+				   struct ieee80211_regdomain *regd)
+{
+}
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -709,6 +723,26 @@ void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
 void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 						 struct nlattr **tb,
 						 struct sk_buff *skb);
+
+/**
+ * ath12k_set_current_cac_timeout - Save the radio CAC timeout override
+ * @ar: ath12k radio instance
+ * @cac_timeout_ms: CAC timeout override in milliseconds, or NO_CAC_OVERRIDE
+ */
+void ath12k_set_current_cac_timeout(struct ath12k *ar, s32 cac_timeout_ms);
+
+/**
+ * ath12k_update_regd_cac_timeout_ext - Apply CAC timeout override to regdomain
+ * @ar: ath12k radio instance
+ * @regd: regulatory domain copy to update
+ *
+ * Update dfs_cac_ms for each DFS regulatory rule (NL80211_RRF_DFS) whose
+ * frequency range overlaps the radio's configured frequency range.
+ *
+ */
+void
+ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
+				   struct ieee80211_regdomain *regd);
 
 enum ath12k_chan_144_state {
 	CHAN_144_DIS = 0,

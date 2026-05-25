@@ -282,12 +282,20 @@ struct wlan_intf_extn {
 	struct dcs_wlan_intr_user_cfg dcs_cfg;
 };
 
+#define ATH12K_MSEC_PER_SEC		1000
+#define ATH12K_MAX_CAC_TIMEOUT_MS	(24 * 60 * 60 * ATH12K_MSEC_PER_SEC)
+#define ATH12K_MAX_CAC_TIMEOUT_SEC	(ATH12K_MAX_CAC_TIMEOUT_MS / ATH12K_MSEC_PER_SEC)
+#define NO_CAC_OVERRIDE		-1
+
 /**
  * struct ath12k_extn - ath12k driver private extensions
  * @esp:  esp extensions structure
  * @raw_pkt_ctx:   raw packet home/off-channel context.
  * @radio_kobj:    pointer to radio kernel object.
  * @vifs_kobj:     Pointer to vifs kernel object.
+ * @cac_timeout_override_ms: Custom CAC timeout override in ms.
+ *	NO_CAC_OVERRIDE = no override set (use regulatory domain CAC timeout).
+ *	Any positive value = override in ms.
  * @vif_entries:   Pointer to 17 sysfs vif entries.
  * @dcs_config_bitmap: Bitmap of DCS enablement mode.
  * @rtplinst:      Representative tx power list instances for ATH12K_NUM_CHANS
@@ -309,6 +317,7 @@ struct ath12k_extn {
 	/* sysfs entries under ieee80211: radioX */
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
+	s32 cac_timeout_override_ms;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;
 	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];

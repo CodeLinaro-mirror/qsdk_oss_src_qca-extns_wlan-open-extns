@@ -321,7 +321,7 @@
 	ATH12K_CFG(ATH12K_CFG_DP_MON_NUM_PPDU_DESC) \
 
 #define ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE \
-	ATH12K_CFG_INI_BOOL("reg_6ghz_low_power_hw_blocklist_enable", false, \
+	ATH12K_CFG_INI_BOOL("reg_6ghz_low_power_hw_blocklist_enable", true, \
 	"Enable Host support for 6GHz low power hardware blocklist")
 
 #define ATH12K_CFG_MAX_DESC \

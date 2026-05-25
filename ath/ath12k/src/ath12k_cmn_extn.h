@@ -462,6 +462,8 @@ struct ath12k_dp_rx_scan_radio_stats {
 
 struct ath12k_pdev_mon_dp_extn {
 	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
+	struct ath12k_dp_mon_tlv_logger *rx_tlv_log;
+	struct ath12k_dp_mon_tlv_logger *tx_tlv_log;
 };
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);

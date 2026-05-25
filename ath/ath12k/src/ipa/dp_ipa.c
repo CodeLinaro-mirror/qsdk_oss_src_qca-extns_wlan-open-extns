@@ -1889,13 +1889,39 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id,
 			 bool mld_enabled, u8 link_id, struct ath12k_ipa *ipa_ctx)
 {
 	int ret;
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ENTER ifname=%s session_id=%u"
+	       " mld_enabled=%d link_id=%u\n",
+	       __func__, ifname, session_id, mld_enabled, link_id);
+
 	ret = ipa_wdi_dereg_intf_per_inst_mlo(ifname, hdl, session_id, mld_enabled);
 	if (ret) {
 		ath12k_err(NULL, "ipa_wdi_dereg_intf: IPA pipe deregistration failed: ret=%d \n", ret);
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_wdi_dereg_intf_per_inst_mlo"
+		       " FAILED ret=%d ifname=%s session_id=%u -- VP cleanup"
+		       " arch-op will NOT be called\n",
+		       __func__, ret, ifname, session_id);
 		return -EPERM;
 	}
 
-	ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx, ifname, link_id);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_wdi_dereg_intf_per_inst_mlo OK,"
+	       " calling ipa_iface_cleanup_vp_num ifname=%s link_id=%u"
+	       " session_id(as ahvif_id)=%u ipa_ctx->ab=%p\n",
+	       __func__, ifname, link_id, session_id, ipa_ctx->ab);
+
+	/*
+	 * Pass session_id (== ahvif_id for this call chain) and ipa_ctx->ab
+	 * down by value instead of letting the arch-op re-derive them from
+	 * ifname via dev_get_by_name(): confirmed empirically that lookup
+	 * can fail for AP_VLAN teardown once the netdev is already
+	 * unregistered, leaking the dev_hold() reference taken at connect
+	 * time and permanently blocking unregister_netdevice().
+	 */
+	ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx, ifname, link_id,
+						       (u8)session_id, ipa_ctx->ab);
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: EXIT ifname=%s session_id=%u\n",
+	       __func__, ifname, session_id);
 
 	return 0;
 }
@@ -1952,7 +1978,16 @@ static int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 	dp_ipa_setup_iface_session_id(&in, session_id, is_tx1_used);
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: calling"
+	       " ipa_iface_setup_set_vp_num (arch-op -> alloc_vp_num)"
+	       " ifname=%s session_id=%u link_id=%u in.vpnum(before)=%u\n",
+	       __func__, ifname, session_id, link_id, in.vpnum);
 	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(ipa_ctx, link_id, &in);
+	printk(KERN_ERR "WDS_IPA_DBG: %s:"
+	       " ipa_iface_setup_set_vp_num RETURNED ifname=%s session_id=%u"
+	       " in.vpnum(after)=%u %s\n",
+	       __func__, ifname, session_id, in.vpnum,
+	       in.vpnum ? "-- VP WAS SET" : "-- VP STILL 0, alloc likely FAILED/skipped");
 	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(ipa_ctx, &in, intf_idx);
 
 	/* IPV6 header */
@@ -1966,11 +2001,36 @@ static int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 	in.mld_enabled = is_mlo;
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: calling ipa_wdi_reg_intf_per_inst"
+	       " netdev=%s ifindex=%d mac=%pM"
+	       " session_id=%u vp_num=%u intf_idx=%u"
+	       " prod_client=%d cons_client=%d"
+	       " is_mlo=%d link_id=%u is_ipv6=%d"
+	       " [%s]\n",
+	       __func__,
+	       in.netdev_name ? in.netdev_name : "NULL",
+	       intf_idx, mac_addr,
+	       session_id, in.vpnum, in.intf_idx,
+	       prod_client, cons_client,
+	       is_mlo, link_id, is_ipv6_enabled,
+	       in.vpnum ? "WDS-STA-or-AP" : "no-VP-yet");
+
 	ret = ipa_wdi_reg_intf_per_inst(&in);
 	if (ret) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_wdi_reg_intf_per_inst FAILED"
+		       " ret=%d netdev=%s session_id=%u vp_num=%u\n",
+		       __func__, ret,
+		       in.netdev_name ? in.netdev_name : "NULL",
+		       session_id, in.vpnum);
 		ath12k_err(NULL, "ipa_wdi_reg_intf: register IPA interface failed: ret = %d",ret);
 		return -EPERM;
 	}
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_wdi_reg_intf_per_inst SUCCESS"
+	       " netdev=%s session_id=%u vp_num=%u\n",
+	       __func__,
+	       in.netdev_name ? in.netdev_name : "NULL",
+	       session_id, in.vpnum);
 
 	return 0;
 }
@@ -2461,13 +2521,37 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		break;
 
 	case WLAN_AP_DISCONNECT:
+		printk(KERN_ERR "WDS_IPA_DBG: %s: WLAN_AP_DISCONNECT ENTER"
+		       " session_id=%u link_id=%u is_mlo=%d dev=%s"
+		       " session_link_mask_ptr=%p\n",
+		       __func__, session_id, link_id, (int)is_mlo, dev->name,
+		       ipa_ctx->session_link_mask);
 		mutex_lock(&ipa_ctx->event_lock);
 		if (is_mlo && ipa_ctx->session_link_mask && link_id < BITS_PER_BYTE) {
+			u8 mask_before = ipa_ctx->session_link_mask[session_id];
+
 			ipa_ctx->session_link_mask[session_id] &= ~BIT(link_id);
+
+			printk(KERN_ERR "WDS_IPA_DBG: %s: session_id=%u"
+			       " link_id=%u session_link_mask %#x -> %#x\n",
+			       __func__, session_id, link_id, mask_before,
+			       ipa_ctx->session_link_mask[session_id]);
+
 			if (ipa_ctx->session_link_mask[session_id] != 0) {
+				printk(KERN_ERR "WDS_IPA_DBG: %s: session_id=%u"
+				       " mask still non-zero (%#x) -- OTHER LINKS"
+				       " still pending, real cleanup SKIPPED for"
+				       " this link_id=%u, returning early\n",
+				       __func__, session_id,
+				       ipa_ctx->session_link_mask[session_id],
+				       link_id);
 				mutex_unlock(&ipa_ctx->event_lock);
 				return 0;
 			}
+			printk(KERN_ERR "WDS_IPA_DBG: %s: session_id=%u mask"
+			       " reached ZERO on link_id=%u -- proceeding to"
+			       " REAL cleanup now\n",
+			       __func__, session_id, link_id);
 		}
 		if (ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
 			mutex_unlock(&ipa_ctx->event_lock);
@@ -2483,15 +2567,36 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			if (wlan_ipa_check_iface_netdev_sessid(iface_ctx,
 							       dev, session_id)) {
 				ath12k_info(ab, "Found matching AP iface\n");
+				printk(KERN_ERR "WDS_IPA_DBG: %s: session_id=%u"
+				       " MATCHED iface_context[%d] (mac=%pM"
+				       " iface_session_id=%u) -- calling"
+				       " wlan_ipa_cleanup_iface\n",
+				       __func__, session_id, i,
+				       iface_ctx->net_dev.dev_addr,
+				       iface_ctx->session_id);
 				wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
 						       session_id, is_mlo, link_id);
+				printk(KERN_ERR "WDS_IPA_DBG: %s: session_id=%u"
+				       " wlan_ipa_cleanup_iface(iface_context[%d])"
+				       " RETURNED\n", __func__, session_id, i);
 				break;
 			}
 		}
+		if (i == ipa_ctx->max_iface)
+			printk(KERN_ERR "WDS_IPA_DBG: %s: session_id=%u"
+			       " link_id=%u dev=%s -- NO MATCHING iface_context"
+			       " found among %u entries -- wlan_ipa_cleanup_iface"
+			       " NOT called, VP number/register will NOT be"
+			       " cleared by this event\n",
+			       __func__, session_id, link_id, dev->name,
+			       ipa_ctx->max_iface);
 		ath12k_info(ab, "AP disconnected, vdev_to_iface[%u] = %u\n",
 			    session_id, ipa_ctx->vdev_to_iface[session_id]);
 		/* Always reset so the next AP_CONNECT can re-register. */
 		ipa_ctx->vdev_to_iface[session_id] = ipa_ctx->max_iface;
+		printk(KERN_ERR "WDS_IPA_DBG: %s: WLAN_AP_DISCONNECT EXIT"
+		       " session_id=%u vdev_to_iface[%u] reset to max_iface=%u\n",
+		       __func__, session_id, session_id, ipa_ctx->max_iface);
 		mutex_unlock(&ipa_ctx->event_lock);
 		break;
 
@@ -2652,6 +2757,9 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 
 	dp_hw_grp = ctx->dp_hw_grp;
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: WOKEN UP, work=%p ctx=%p\n",
+	       __func__, work, ctx);
+
 	do {
 		INIT_LIST_HEAD(&ipa_evt_list);
 
@@ -2664,11 +2772,23 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 
 			list_del_init(&curr_evt->list_elem);
 
+			printk(KERN_ERR "WDS_IPA_DBG: %s: DEQUEUED curr_evt=%p"
+			       " event=%d session_id=%u device_id=%u"
+			       " dev_name=%s link_id=%u\n",
+			       __func__, curr_evt, curr_evt->event,
+			       curr_evt->session_id, curr_evt->device_id,
+			       curr_evt->dev.name, curr_evt->link_id);
+
 			struct ath12k_base *ab = dp_hw_grp->dp[curr_evt->device_id]->ab;
 			struct ath12k_ipa *ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
 
 			if (!ipa_ctx) {
 				ath12k_err(ab, "IPA context not initialized\n");
+				printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_ctx NULL"
+				       " for device_id=%u -- event event=%d"
+				       " session_id=%u DROPPED\n",
+				       __func__, curr_evt->device_id,
+				       curr_evt->event, curr_evt->session_id);
 				goto err_free;
 			}
 
@@ -2741,7 +2861,12 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 				break;
 			}
 
-			ath12k_ipa_wlan_evt(ipa_ctx,
+			printk(KERN_ERR "WDS_IPA_DBG: %s: DISPATCHING to"
+			       " ath12k_ipa_wlan_evt event=%d session_id=%u"
+			       " dev_name=%s link_id=%u\n",
+			       __func__, curr_evt->event, curr_evt->session_id,
+			       curr_evt->dev.name, curr_evt->link_id);
+			ret = ath12k_ipa_wlan_evt(ipa_ctx,
 					    curr_evt->event,
 					    curr_evt->session_id,
 					    curr_evt->pdev_idx,
@@ -2751,6 +2876,11 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 					    curr_evt->band,
 					    curr_evt->is_mlo,
 					    curr_evt->link_id);
+			printk(KERN_ERR "WDS_IPA_DBG: %s: ath12k_ipa_wlan_evt"
+			       " RETURNED ret=%d event=%d session_id=%u"
+			       " dev_name=%s\n",
+			       __func__, ret, curr_evt->event,
+			       curr_evt->session_id, curr_evt->dev.name);
 			kfree(curr_evt);
 			continue;
 
@@ -2826,6 +2956,286 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	queue_work(system_unbound_wq, &ipa_global_ctx->work);
 }
 EXPORT_SYMBOL(ath12k_ipa_enqueue_evt);
+
+/**
+ * ath12k_ipa_enqueue_evt_apvlan() - Enqueue IPA event for AP_VLAN (WDS-EXT) interface
+ * @event:        IPA event (WLAN_AP_CONNECT / WLAN_AP_DISCONNECT)
+ * @apvlan_ahvif: AP_VLAN's ath12k_vif — provides the AP_VLAN netdev
+ * @parent_arvif: Parent AP's link_vif — provides ar/ab/chanctx/vdev_id
+ * @mac:          AP_VLAN MAC address
+ * @is_mlo:       MLO flag
+ *
+ * AP_VLAN has no vdev of its own and no chanctx. This function uses the
+ * parent AP's arvif for radio/channel context while registering the
+ * AP_VLAN's netdev with IPA. The event is processed by
+ * ath12k_wlan_ipa_evt_handler() in process context, ensuring
+ * ipa_wdi_reg_intf_per_inst() is called from a sleepable context.
+ *
+ * The mandatory WDS-EXT fields are sourced as follows:
+ *   iface_name  — AP_VLAN's netdev name  (ev->dev.name)
+ *   intf_idx    — AP_VLAN's netdev index (ev->dev.ifindex)
+ *   vdev_id     — parent AP's vdev_id   (shared in firmware)
+ *   band        — parent AP's chanctx band
+ */
+static void ath12k_ipa_enqueue_evt_apvlan(enum ipa_wlan_event event,
+					  struct ath12k_vif *apvlan_ahvif,
+					  struct ath12k_link_vif *parent_arvif,
+					  const u8 mac[ETH_ALEN], bool is_mlo)
+{
+	struct ath12k_base *ab = parent_arvif->ar->ab;
+	struct ieee80211_vif *vif = apvlan_ahvif->vif;
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+	struct ath12k_dp_hw_group *dp_hw_grp = ab->dp->dp_hw_grp;
+	struct ath12k_dp_hw_group_ipa *ipa_global_ctx = dp_hw_grp->extn.ipa;
+	struct ieee80211_chanctx_conf *chanctx = &parent_arvif->chanctx;
+	struct wlan_ipa_evt_wq_args *ev;
+	struct net_device *dev;
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ENTER event=%d apvlan_ahvif=%p"
+	       " ahvif_id=%u parent_arvif=%p link_id=%u\n",
+	       __func__, event, apvlan_ahvif, apvlan_ahvif->dp_vif.ahvif_id,
+	       parent_arvif, parent_arvif->link_id);
+
+	if (!ipa_global_ctx) {
+		ath12k_err(ab, "AP_VLAN IPA: ipa_global_ctx not initialized\n");
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ABORTED ahvif_id=%u --"
+		       " ipa_global_ctx NULL\n", __func__,
+		       apvlan_ahvif->dp_vif.ahvif_id);
+		return;
+	}
+
+	if (!wdev || !wdev->netdev) {
+		ath12k_warn(ab, "AP_VLAN IPA: invalid wdev/netdev for %pM\n", mac);
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ABORTED ahvif_id=%u --"
+		       " wdev=%p wdev->netdev=%p invalid\n", __func__,
+		       apvlan_ahvif->dp_vif.ahvif_id, wdev,
+		       wdev ? wdev->netdev : NULL);
+		return;
+	}
+	dev = wdev->netdev;
+
+	if (!chanctx || !chanctx->def.chan) {
+		ath12k_warn(ab, "AP_VLAN IPA: parent AP has no chanctx for %pM\n", mac);
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ABORTED ahvif_id=%u"
+		       " link_id=%u -- chanctx=%p chanctx->def.chan=%p\n",
+		       __func__, apvlan_ahvif->dp_vif.ahvif_id,
+		       parent_arvif->link_id, chanctx,
+		       chanctx ? chanctx->def.chan : NULL);
+		return;
+	}
+
+	ev = kzalloc(sizeof(*ev), GFP_ATOMIC);
+	if (!ev) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ABORTED ahvif_id=%u --"
+		       " kzalloc(ev) FAILED\n", __func__,
+		       apvlan_ahvif->dp_vif.ahvif_id);
+		return;
+	}
+
+	ev->event    = event;
+	/*
+	 * Use the AP_VLAN's own ahvif_id as session_id, NOT parent_arvif->vdev_id.
+	 *
+	 * On WiFi8, vdev_id == ahvif_id (firmware global_vdev_id = ahvif_id).
+	 * The parent AP is already registered in IPA at vdev_to_iface[parent_ahvif_id].
+	 * Using parent_arvif->vdev_id here would collide: ath12k_ipa_wlan_evt()
+	 * would see vdev_to_iface[parent_ahvif_id] < max_iface and return
+	 * "Vdev already connected" silently, leaving WDS STA unregistered.
+	 *
+	 * The AP_VLAN has its own unique ahvif_id from ath12k_mac_ahvif_id_allocate().
+	 * It maps 1:1 to a unique VP (VP = ahvif_id + VP_MIN - 1).
+	 */
+	ev->session_id  = apvlan_ahvif->dp_vif.ahvif_id;
+	ev->pdev_idx = parent_arvif->ar->pdev_idx;
+	ev->device_id = ab->device_id;
+	ev->link_id  = parent_arvif->link_id;
+	/* Register AP_VLAN's netdev with IPA (iface_name + intf_idx) */
+	strscpy(ev->dev.name, dev->name, IFNAMSIZ);
+	ether_addr_copy(ev->dev.dev_addr, (const u8 *)dev->dev_addr);
+	ev->dev.ifindex = dev->ifindex;
+	/*
+	 * Pass NL80211_IFTYPE_AP so ath12k_ipa_wlan_evt() accepts it and
+	 * ath12k_ipa_mode() maps it to ATH12K_IPA_SAP.
+	 */
+	ev->mode  = NL80211_IFTYPE_AP;
+	ev->band  = chanctx->def.chan->band;
+	ether_addr_copy(ev->mac_addr, mac);
+	ev->is_mlo = is_mlo;
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: event=%d netdev=%s ifindex=%d"
+	       " session_id=%u (AP_VLAN ahvif_id) parent_vdev_id=%u"
+	       " band=%d pdev_idx=%u is_mlo=%d\n",
+	       __func__, event, dev->name, dev->ifindex,
+	       ev->session_id, parent_arvif->vdev_id,
+	       ev->band, ev->pdev_idx, (int)ev->is_mlo);
+
+	spin_lock_bh(&ipa_global_ctx->list_lock);
+	list_add_tail(&ev->list_elem, &ipa_global_ctx->list);
+	spin_unlock_bh(&ipa_global_ctx->list_lock);
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ev=%p QUEUED on"
+	       " ipa_global_ctx->list (session_id=%u event=%d) --"
+	       " calling queue_work(system_unbound_wq)\n",
+	       __func__, ev, ev->session_id, ev->event);
+
+	/*
+	 * Schedule work on system_unbound_wq (process context).
+	 * ath12k_wlan_ipa_evt_handler() → ath12k_ipa_wlan_evt()
+	 * → wlan_ipa_setup_iface() → dp_ipa_setup_iface()
+	 * → ipa_wdi_reg_intf_per_inst() from process context.
+	 */
+	queue_work(system_unbound_wq, &ipa_global_ctx->work);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: EXIT session_id=%u event=%d"
+	       " queue_work() called, work may run on any CPU asynchronously"
+	       " from here on\n", __func__, ev->session_id, ev->event);
+}
+
+/**
+ * ath12k_dp_ipa_apvlan_connect - Send WLAN_AP_CONNECT to IPA for an AP_VLAN interface
+ * @hw:               ieee80211_hw (needed for wiphy_dereference)
+ * @apvlan_ahvif:     AP_VLAN's ath12k_vif (provides the AP_VLAN netdev)
+ * @vlan_master_ahvif: Parent AP's ath12k_vif (provides links_map)
+ * @vlan_master_vif:  Parent AP's ieee80211_vif (for MLO check)
+ * @vif:              AP_VLAN's ieee80211_vif (provides MAC address)
+ *
+ * Finds the first active parent AP link with ar and chanctx, then enqueues
+ * a WLAN_AP_CONNECT event via ath12k_ipa_enqueue_evt_apvlan().
+ * Called from ath12k_mac_op_add_interface() after AP_VLAN vlan_iface creation.
+ */
+void ath12k_dp_ipa_apvlan_connect(struct ieee80211_hw *hw,
+				  struct ath12k_vif *apvlan_ahvif,
+				  struct ath12k_vif *vlan_master_ahvif,
+				  struct ieee80211_vif *vlan_master_vif,
+				  struct ieee80211_vif *vif)
+{
+	struct ath12k_link_vif *parent_arvif = NULL;
+	struct ath12k_base *ab = NULL;
+	unsigned long parent_links;
+	bool is_mlo;
+	u8 lid;
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: apvlan_ahvif=%p ahvif_id=%u"
+	       " vlan_master_ahvif=%p links_map=0x%x vif_addr=%pM\n",
+	       __func__, apvlan_ahvif,
+	       apvlan_ahvif ? apvlan_ahvif->dp_vif.ahvif_id : 0xFF,
+	       vlan_master_ahvif,
+	       vlan_master_ahvif ? vlan_master_ahvif->links_map : 0,
+	       vif ? vif->addr : NULL);
+
+	if (!ath12k_ipa_config_is_enabled() || !vlan_master_ahvif) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: early return:"
+		       " ipa_config_enabled=%d vlan_master_ahvif=%p\n",
+		       __func__, ath12k_ipa_config_is_enabled(),
+		       vlan_master_ahvif);
+		return;
+	}
+
+	parent_links = vlan_master_ahvif->links_map;
+	is_mlo = ieee80211_vif_is_mld(vlan_master_vif);
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: parent_links=0x%lx is_mlo=%d"
+	       " searching for parent arvif with chanctx...\n",
+	       __func__, parent_links, (int)is_mlo);
+
+	/*
+	 * Find first active parent link with ar and chanctx.
+	 * Also track any link with ar so we can use its ab for logging
+	 * if no fully-active link is found.
+	 */
+	for_each_set_bit(lid, &parent_links, ATH12K_NUM_MAX_LINKS) {
+		struct ath12k_link_vif *arvif =
+			wiphy_dereference(hw->wiphy, vlan_master_ahvif->link[lid]);
+
+		printk(KERN_ERR "WDS_IPA_DBG: %s: link_id=%u arvif=%p"
+		       " ar=%p chanctx.def.chan=%p\n",
+		       __func__, lid, arvif,
+		       arvif ? arvif->ar : NULL,
+		       (arvif && arvif->ar) ? arvif->chanctx.def.chan : NULL);
+
+		if (!arvif || !arvif->ar)
+			continue;
+		if (!ab)
+			ab = arvif->ar->ab;
+		if (arvif->chanctx.def.chan) {
+			parent_arvif = arvif;
+			break;
+		}
+	}
+
+	if (parent_arvif) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: found parent_arvif=%p"
+		       " vdev_id=%u lmac_id=%u link_id=%u"
+		       " calling ath12k_ipa_enqueue_evt_apvlan\n",
+		       __func__, parent_arvif,
+		       parent_arvif->vdev_id,
+		       parent_arvif->ar->lmac_id,
+		       parent_arvif->link_id);
+		ath12k_ipa_enqueue_evt_apvlan(WLAN_AP_CONNECT, apvlan_ahvif,
+					      parent_arvif, vif->addr, is_mlo);
+	} else {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: NO parent_arvif found"
+		       " with valid chanctx parent_links=0x%lx"
+		       " IPA WLAN_AP_CONNECT NOT sent for %pM\n",
+		       __func__, parent_links, vif ? vif->addr : NULL);
+		ath12k_warn(ab, "AP_VLAN IPA: no active parent arvif for %pM\n",
+			    vif->addr);
+	}
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_apvlan_connect);
+
+/**
+ * ath12k_dp_ipa_apvlan_disconnect - Send WLAN_AP_DISCONNECT to IPA for an AP_VLAN interface
+ * @apvlan_ahvif:    AP_VLAN's ath12k_vif (provides the AP_VLAN netdev)
+ * @parent_arvif:    Parent AP's link_vif (provides ar/chanctx/vdev_id)
+ * @vif:             AP_VLAN's ieee80211_vif (provides MAC address)
+ * @vlan_master_vif: Parent AP's ieee80211_vif (for MLO check)
+ *
+ * Enqueues a WLAN_AP_DISCONNECT event via ath12k_ipa_enqueue_evt_apvlan().
+ * Called from ath12k_mac_op_remove_interface() in the AP_VLAN loop block.
+ */
+void ath12k_dp_ipa_apvlan_disconnect(struct ath12k_vif *apvlan_ahvif,
+				     struct ath12k_link_vif *parent_arvif,
+				     struct ieee80211_vif *vif,
+				     struct ieee80211_vif *vlan_master_vif)
+{
+	bool is_mlo;
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ENTER apvlan_ahvif=%p ahvif_id=%u"
+	       " parent_arvif=%p vdev_id=%u link_id=%u\n",
+	       __func__, apvlan_ahvif, apvlan_ahvif->dp_vif.ahvif_id,
+	       parent_arvif, parent_arvif->vdev_id, parent_arvif->link_id);
+
+	if (!ath12k_ipa_config_is_enabled()) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_config NOT enabled --"
+		       " ABORTED, no event enqueued ahvif_id=%u\n",
+		       __func__, apvlan_ahvif->dp_vif.ahvif_id);
+		return;
+	}
+
+	if (!parent_arvif->ar || !parent_arvif->chanctx.def.chan) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ABORTED ahvif_id=%u"
+		       " link_id=%u -- parent_arvif->ar=%p"
+		       " chanctx.def.chan=%p (both must be non-NULL) --"
+		       " no event enqueued, WLAN_AP_DISCONNECT for this link"
+		       " is DROPPED\n",
+		       __func__, apvlan_ahvif->dp_vif.ahvif_id,
+		       parent_arvif->link_id, parent_arvif->ar,
+		       parent_arvif->chanctx.def.chan);
+		return;
+	}
+
+	is_mlo = ieee80211_vif_is_mld(vlan_master_vif);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ahvif_id=%u link_id=%u is_mlo=%d"
+	       " calling ath12k_ipa_enqueue_evt_apvlan(WLAN_AP_DISCONNECT)\n",
+	       __func__, apvlan_ahvif->dp_vif.ahvif_id, parent_arvif->link_id,
+	       (int)is_mlo);
+	ath12k_ipa_enqueue_evt_apvlan(WLAN_AP_DISCONNECT, apvlan_ahvif,
+				      parent_arvif, vif->addr, is_mlo);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: EXIT ahvif_id=%u link_id=%u"
+	       " ath12k_ipa_enqueue_evt_apvlan RETURNED\n",
+	       __func__, apvlan_ahvif->dp_vif.ahvif_id, parent_arvif->link_id);
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_apvlan_disconnect);
 
 static
 int ath12k_wmi_ipa_offload_enable_disable_param_cmd(struct ath12k *ar, u32 vdev_id,

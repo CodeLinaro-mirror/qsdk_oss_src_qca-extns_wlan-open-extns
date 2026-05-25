@@ -11,6 +11,7 @@
 #include "../../dp_tx.h"
 #include "../../hal.h"
 #include "../../../dp_cmn.h"
+#include "../../../hif.h"
 
 /* ============================================================================
  * IPA debug_info Helper Functions
@@ -54,10 +55,84 @@ static void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *
 	in->is_meta_data_valid = 0;
 }
 
+/*
+ * ath12k_wifi8_dp_ipa_wds_bank_setup - configure bank and TCL search
+ *    index table for a WDS STA (AP_VLAN) in IPA offload mode.
+ */
+void ath12k_wifi8_dp_ipa_wds_bank_setup(struct ath12k_hw *ah,
+					struct ath12k_vif *ahvif)
+{
+	struct ath12k_dp_vif *dp_vif = &ahvif->dp_vif;
+	struct ath12k_vif *parent_ahvif;
+	struct ath12k_link_vif *parent_arvif = NULL;
+	struct ath12k_base *ab, *central_ab;
+	struct ath12k_dp *central_dp;
+	u32 bank_config;
+	int bank_id;
+	u8 slot;
+	u32 ppeds_idx_map_val;
+	int i;
+
+	if (!dp_vif->is_wds_4addr)
+		return;
+
+	if (!ahvif->vlan_iface || !ahvif->vlan_iface->parent_vif)
+		return;
+
+	parent_ahvif = ath12k_vif_to_ahvif(ahvif->vlan_iface->parent_vif);
+
+	if (!parent_ahvif)
+		return;
+
+
+	for (i = 0; i < ATH12K_NUM_MAX_LINKS; i++) {
+		parent_arvif = wiphy_dereference(ah->hw->wiphy,
+						 parent_ahvif->link[i]);
+		if (parent_arvif && parent_arvif->ar)
+			break;
+		parent_arvif = NULL;
+	}
+	if (!parent_arvif)
+		return;
+
+	ab = parent_arvif->ar->ab;
+
+	central_ab = ath12k_dp_get_ab_from_dp_hw_group(ab->dp->dp_hw_grp);
+	if (!central_ab)
+		return;
+
+	central_dp = ath12k_ab_to_dp(central_ab);
+
+	bank_config = ath12k_wifi8_dp_tx_get_vdev_bank_config(ab, parent_ahvif,
+							      0, false);
+	bank_config |= u32_encode_bits(1, HAL_TX_BANK_CONFIG_INDEX_LOOKUP_EN);
+	bank_config &= ~HAL_TX_BANK_CONFIG_ADDRX_EN; /*For SDX platforms, this shall
+						       be disabled. */
+
+	bank_id = ath12k_dp_tx_get_bank_profile(central_dp, bank_config);
+	if (bank_id == DP_INVALID_BANK_ID)
+		return;
+
+	dp_vif->bank_id = bank_id;
+
+	slot = dp_vif->ahvif_id & HAL_TCL_PPE_INDEX_MAPPING_TABLE_SLOT_MASK;
+	ppeds_idx_map_val =
+		u32_encode_bits(dp_vif->ast_idx,  HAL_TX_PPEDS_CFG_SEARCH_IDX) |
+		u32_encode_bits(dp_vif->ast_hash, HAL_TX_PPEDS_CFG_CACHE_SET);
+
+	{
+		u32 tcl_map_reg =
+			HAL_TCL_PPE_INDEX_MAPPING_TABLE_n_ADDR(
+				HAL_SEQ_WCSS_UMAC_TCL_REG, slot);
+		ath12k_hif_write32(central_ab, tcl_map_reg, ppeds_idx_map_val);
+	}
+}
+EXPORT_SYMBOL(ath12k_wifi8_dp_ipa_wds_bank_setup);
+
 static struct ath12k_vif *get_ahvif_from_dev_name(const char *net_dev_name)
 {
 	struct wireless_dev *wdev;
-	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
 	struct net_device *dev = dev_get_by_name(&init_net, net_dev_name);
 
 	if (!dev)
@@ -66,12 +141,12 @@ static struct ath12k_vif *get_ahvif_from_dev_name(const char *net_dev_name)
 	if (!wdev)
 		goto err;
 
-	vif = wdev_to_ieee80211_vif_vlan(wdev, false);
-	if (!vif)
+	ahvif = ath12k_ahvif_from_wdev(wdev);
+	if (!ahvif)
 		goto err;
 
 	dev_put(dev);
-	return ath12k_vif_to_ahvif(vif);
+	return ahvif;
 err:
 	dev_put(dev);
 	return NULL;
@@ -108,9 +183,11 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 {
 	int vp_num;
 	struct ath12k_vif *ahvif;
+	struct ath12k_vif *parent_ahvif;
 	struct ath12k_link_vif *arvif;
 	struct ath12k_ipa_vp_profile vp_profile;
 	struct net_device *dev;
+	struct wiphy *wiphy;
 
 	ahvif = get_ahvif_from_dev_name(in->netdev_name);
 	if (!ahvif) {
@@ -118,6 +195,13 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 			    in->netdev_name);
 		return;
 	}
+
+	if (!ahvif->ah || !ahvif->ah->hw || !ahvif->ah->hw->wiphy) {
+		ath12k_ipa_err(NULL, "ipa vp_num setup: ah/hw/wiphy not found for netdev=%s\n",
+			    in->netdev_name);
+		return;
+	}
+	wiphy = ahvif->ah->hw->wiphy;
 
 	vp_num = get_vp_num_from_dev_name(in->netdev_name, ahvif);
 	if (vp_num == -EEXIST) {
@@ -139,9 +223,22 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 		return;
 	}
 
-	rcu_read_lock();
+	wiphy_lock(wiphy);
 	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
-	if (!arvif) {
+	/*
+	 * AP_VLAN vdevs (WDS STA, e.g. phy00-mld0.sta1) shares the parent AP's
+	 * firmware vdev and have no link[link_id] of their own.  Fall back to
+	 * the parent AP's arvif to get vdev_id and lmac_id for the VP register.
+	 * Without this the VP register is never programmed for WDS STA.
+	 */
+	if (!arvif && ahvif->vif &&
+	    ahvif->vif->type == NL80211_IFTYPE_AP_VLAN &&
+	    ahvif->vlan_iface && ahvif->vlan_iface->parent_vif) {
+		parent_ahvif =	ath12k_vif_to_ahvif(ahvif->vlan_iface->parent_vif);
+		if (parent_ahvif)
+			arvif = ath12k_get_arvif_from_link_id(parent_ahvif, link_id);
+	}
+	if (!arvif || !arvif->ar) {
 		ath12k_ipa_err(NULL, "ipa vp_num setup: arvif not found for link_id=%u netdev=%s\n",
 			    link_id, in->netdev_name);
 		goto err;
@@ -155,7 +252,9 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 	}
 
 	in->vpnum = vp_num;
-	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, dev, arvif);
+	/* Pass ahvif (AP_VLAN's own, not parent's) so set_ppe_vp_entry_config
+	 * reads ast_idx/ast_hash/bank_id from the correct dp_vif. */
+	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, arvif, ahvif);
 	dev_put(dev);
 
 	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, &vp_profile);
@@ -201,20 +300,15 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 		spin_unlock_bh(&ipa_ctx->debug_info_lock);
 	}
 err:
-	rcu_read_unlock();
+	wiphy_unlock(wiphy);
 }
 
-void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
+void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(u8 ahvif_id, struct ath12k_base *ab)
 {
 	struct ath12k_vif *ahvif;
-	struct ath12k_link_vif *arvif;
-	struct ath12k_base *ab = NULL;
-	u8 ahvif_id;
+	struct wireless_dev *wdev;
+	struct net_device *dev;
 	int vp_num;
-
-	ahvif = get_ahvif_from_dev_name(dev_name);
-	if (!ahvif)
-		return;
 
 	/*
 	 * Compute VP number directly from ahvif_id — do NOT call
@@ -222,25 +316,29 @@ void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
 	 * (VP still allocated) and the early-return would skip both
 	 * dealloc_vp_num and the hardware VP entry clear.
 	 */
-	ahvif_id = ahvif->dp_vif.ahvif_id;
-	if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
-	    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
+	if (ahvif_id == ATH12K_INVALID_AHVIF_ID || ahvif_id >= ATH12K_DP_IPA_VP_RANGE) {
+		ath12k_err(ab, "%s: ahvif_id=%u is invalid\n",__func__, ahvif_id);
 		return;
+	}
 	vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
+	dev = ath12k_dp_ipa_get_netdev_from_vp(vp_num);
 
-	/*
-	 * Retrieve arvif under rcu_read_lock, save the ab pointer, then
-	 * drop the lock before calling dealloc_vp_num: dealloc calls
-	 * synchronize_rcu() which sleeps and must NOT run under
-	 * rcu_read_lock.
-	 */
-	rcu_read_lock();
-	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
-	if (arvif)
-		ab = arvif->ar->ab;
-	rcu_read_unlock();
+	if (!dev) {
+		ath12k_err(ab, "dev is null\n");
+		return;
+	}
 
-	ath12k_dp_ipa_dealloc_vp_num(ahvif);
+	wdev = dev->ieee80211_ptr;
+
+	ahvif = wdev ? ath12k_ahvif_from_wdev(wdev) : NULL;
+
+	if (!ahvif) {
+		ath12k_err(ab, "ahvif is null\n");
+		dev_put(dev);
+		return;
+	}
+
+	ath12k_dp_ipa_dealloc_vp_num(ahvif_id);
 
 	if (ab) {
 		ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(ab, vp_num, NULL);
@@ -254,11 +352,14 @@ void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
 			entry.ahvif_id = ahvif_id;
 			entry.vp_num = vp_num;
 			entry.log_evt = ATH12K_IPA_LOG_EVT_VP_FREE;
-			snprintf((char *)entry.netdev_name, 16, "%s", dev_name);
+			snprintf((char *)entry.netdev_name, IFNAMSIZ, "%s", dev->name);
 			ath12k_wifi8_ipa_evt_entry_add(ipa_ctx, &entry);
 		}
 	}
+	dev_put(dev);
 }
+
+
 
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
 						  int intf_idx)

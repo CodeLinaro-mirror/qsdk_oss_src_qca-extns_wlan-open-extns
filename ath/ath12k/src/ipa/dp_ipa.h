@@ -482,7 +482,7 @@ struct ath12k_ipa_evt_entry {
 	u8  wmi_enable;            /* WMI enable */
 	u8  mld_enabled;           /* MLO enabled */
 	s32  result;                /* Result code */
-	u8  netdev_name[16];       /* Network device name */
+	u8  netdev_name[IFNAMSIZ]; /* Network device name */
 };
 
 /**
@@ -677,7 +677,7 @@ struct ath12k_ipa_arch_ops {
 	void (*ipa_iface_setup_set_metadata)(struct ipa_wdi_reg_intf_in_params *in);
 	void (*ipa_iface_setup_set_vp_num)(u8 link_id,
 					   struct ipa_wdi_reg_intf_in_params *in);
-	void (*ipa_iface_cleanup_vp_num)(const char *dev_name, u8 link_id);
+	void (*ipa_iface_cleanup_vp_num)(u8 ahvif_id, struct ath12k_base *ab);
 	void (*ipa_iface_setup_set_intf_idx)(struct ipa_wdi_reg_intf_in_params *in,
 					     int intf_idx);
 	int (*ipa_client_connect_ex)(struct ath12k_ipa *ipa_ctx,
@@ -1398,6 +1398,13 @@ void ath12k_wlan_ipa_msg_free_fn(void *buff, u32 len, u32 type);
 void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *arvif,
 			    const u8 mac[ETH_ALEN], bool is_mlo);
 
+void ath12k_dp_ipa_apvlan_connect(struct ieee80211_hw *hw,
+				  struct ath12k_vif *apvlan_ahvif);
+
+bool ath12k_dp_ipa_apvlan_disconnect(struct ath12k_vif *apvlan_ahvif,
+				     struct ath12k_link_vif *parent_arvif,
+				     struct ieee80211_vif *vlan_master_vif);
+
 bool ath12k_wlan_ipa_is_sta_only_offload_enabled(void);
 
 bool ath12k_ipa_config_is_enabled(void);
@@ -1431,7 +1438,7 @@ enum ath12k_ipa_opmode ath12k_ipa_mode(enum nl80211_iftype mode);
 
 void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 			    const u8 *mac_addr, ipa_wdi_hdl_t hdl, u16 session_id,
-			    bool mld_enabled, u8 link_id);
+			    bool mld_enabled);
 
 int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 			 struct dp_ipa_net_device_priv *net_dev_priv,
@@ -1493,13 +1500,14 @@ ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(struct ath12k_ipa *ipa_ctx,
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(struct ath12k_ipa *ipa_ctx,
-					       const char *dev_name,
-					       u8 link_id)
+					       u8 ahvif_id,
+					       struct ath12k_base *ab)
 {
 	if (ipa_ctx && ipa_ctx->arch_ops &&
 	    ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num)
-		ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num(dev_name, link_id);
+		ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num(ahvif_id, ab);
 }
+
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(struct ath12k_ipa *ipa_ctx,
@@ -1728,5 +1736,15 @@ ath12k_dp_ipa_arch_op_evt_entry_add(struct ath12k_ipa *ipa_ctx,
 	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->evt_entry_add)
 		ipa_ctx->arch_ops->evt_entry_add(ipa_ctx, entry);
 }
+
+void ath12k_dp_ipa_apvlan_connect(struct ieee80211_hw *hw,
+				  struct ath12k_vif *apvlan_ahvif);
+
+bool ath12k_dp_ipa_apvlan_disconnect(struct ath12k_vif *apvlan_ahvif,
+				     struct ath12k_link_vif *parent_arvif,
+				     struct ieee80211_vif *vlan_master_vif);
+
+void ath12k_dp_ipa_apvlan_sync_cleanup(struct ieee80211_hw *hw,
+				       struct ath12k_vif *apvlan_ahvif);
 
 #endif

@@ -65,14 +65,21 @@ int ath12k_dp_ipa_alloc_vp_num(struct ath12k_vif *ahvif, struct net_device *dev)
 
 /**
  * ath12k_dp_ipa_dealloc_vp_num - remove a netdev from the IPA VP pool
- * @ahvif: vif handle whose VP mapping should be removed
+ * @ahvif_id: ahvif_id whose VP mapping should be removed
  *
- * Removes the VP-to-netdev association for the given vif and drops the
+ * Removes the VP-to-netdev association for the given ahvif_id and drops the
  * device reference after an RCU grace period.
+ *
+ * Takes ahvif_id by value instead of a struct ath12k_vif * on purpose:
+ * ahvif->dp_vif.ahvif_id is reset to ATH12K_INVALID_AHVIF_ID synchronously
+ * inside ath12k_mac_op_remove_interface(), and this function is called
+ * later from an async IPA workqueue callback -- re-reading the field from
+ * a live ahvif would race against that reset. The caller already knows
+ * the correct ahvif_id (captured by value at IPA-event-enqueue time), so
+ * it's passed directly here instead.
  */
-void ath12k_dp_ipa_dealloc_vp_num(struct ath12k_vif *ahvif)
+void ath12k_dp_ipa_dealloc_vp_num(u8 ahvif_id)
 {
-	u8 ahvif_id = ahvif->dp_vif.ahvif_id;
 	struct net_device *dev;
 	int idx;
 
@@ -108,7 +115,6 @@ void ath12k_dp_ipa_dealloc_vp_num(struct ath12k_vif *ahvif)
 int ath12k_dp_ipa_get_vp_from_dev(struct net_device *dev)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
-	struct ieee80211_vif *vif;
 	struct ath12k_vif *ahvif;
 	u8 ahvif_id;
 	int vp_num;
@@ -116,11 +122,10 @@ int ath12k_dp_ipa_get_vp_from_dev(struct net_device *dev)
 	if (!wdev)
 		return -EINVAL;
 
-	vif = wdev_to_ieee80211_vif_vlan(wdev, false);
-	if (!vif)
+	ahvif = ath12k_ahvif_from_wdev(wdev);
+	if (!ahvif)
 		return -EINVAL;
 
-	ahvif = ath12k_vif_to_ahvif(vif);
 	ahvif_id = ahvif->dp_vif.ahvif_id;
 
 	if (ahvif_id == ATH12K_INVALID_AHVIF_ID)
@@ -130,6 +135,7 @@ int ath12k_dp_ipa_get_vp_from_dev(struct net_device *dev)
 
 	if(ATH12K_DP_IPA_VP_NUM_INVALID(vp_num))
 		return -EINVAL;
+
 	return vp_num;
 }
 
@@ -149,7 +155,7 @@ struct net_device *ath12k_dp_ipa_get_netdev_from_vp(u8 vp_num)
 	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num))
 		return NULL;
 
-	idx = ATH12K_DP_IPA_GET_VP_IDX_FROM_VP(vp_num);
+	idx = ATH12K_DP_IPA_GET_AHVIFID_FROM_VP(vp_num);
 
 	rcu_read_lock();
 	dev = rcu_dereference(ath12k_ipa_vp_to_dev[idx]);
@@ -166,62 +172,138 @@ struct net_device *ath12k_dp_ipa_get_netdev_from_vp(u8 vp_num)
  *
  * For WDS (AP_VLAN): returns the AP_VLAN's own bank_id which has
  * HAL_TX_BANK_CONFIG_INDEX_LOOKUP_EN=1 (allocated during add_interface).
- * For normal AP/STA: returns the interface's standard bank_id.
+ * For normal AP/STA: returns the interface's standard bank_id
+ * (INDEX_LOOKUP_EN=0).
  *
- * Return: bank_id for the interface, or DP_INVALID_BANK_ID on error.
+ * Returns: bank_id on success, DP_INVALID_BANK_ID on error.
  */
-static u32 ath12k_ipa_get_bank_id(struct net_device *dev)
+u32 ath12k_dp_ipa_get_bank_id(struct net_device *dev)
 {
 	struct wireless_dev *wdev;
-	struct ieee80211_vif *vif;
 	struct ath12k_vif *ahvif;
 
 	if (!dev)
 		return DP_INVALID_BANK_ID;
+
 	wdev = dev->ieee80211_ptr;
 	if (!wdev)
 		return DP_INVALID_BANK_ID;
-	vif = wdev_to_ieee80211_vif_vlan(wdev, false);
-	if (!vif)
+
+	ahvif = ath12k_ahvif_from_wdev(wdev);
+	if (!ahvif)
 		return DP_INVALID_BANK_ID;
-	ahvif = ath12k_vif_to_ahvif(vif);
+
 	return ahvif->dp_vif.bank_id;
 }
+EXPORT_SYMBOL(ath12k_dp_ipa_get_bank_id);
 
 /**
- * get_search_idx_reg_num - return PPE search index register number
- * @dev: netdev for which search index register number is required
+ * ath12k_dp_ipa_get_search_idx_reg_num - get SRCH_IDX_REG_NUM for VP config
+ * @dev: netdev of the interface being registered with IPA
  *
- * Placeholder for platform-specific logic; currently returns 0.
+ * SRCH_IDX_REG_NUM in the HAL VP config table is only meaningful for
+ * WDS-EXT (AP_VLAN with is_wds_4addr=true).  For normal AP/STA interfaces
+ * the hardware does not use index-based lookup, so return 0.
  *
- * Return: register number to program into HAL_TX_PPE_VP_CFG_SRCH_IDX_REG_NUM
+ * For WDS, the AST index (ast_idx) stored in dp_vif is the correct value —
+ * it is the same index used in the TCL data command for TX.
+ *
+ * Returns: ast_idx for WDS (AP_VLAN), 0 for all other interface types.
  */
-static u8 get_search_idx_reg_num(struct net_device *dev)
+u8 ath12k_dp_ipa_get_search_idx_reg_num(struct net_device *dev)
 {
+	struct wireless_dev *wdev;
+	struct ath12k_vif *ahvif;
+
+	if (!dev)
+		return 0;
+	wdev = dev->ieee80211_ptr;
+	if (!wdev)
+		return 0;
+
+	ahvif = ath12k_ahvif_from_wdev(wdev);
+	if (!ahvif)
+		return 0;
+
+	if (ahvif->vif->type == NL80211_IFTYPE_AP_VLAN && ahvif->dp_vif.is_wds_4addr)
+		return (u8)ahvif->dp_vif.ast_idx;
+
 	return 0;
 }
+EXPORT_SYMBOL(ath12k_dp_ipa_get_search_idx_reg_num);
 
 /**
- * ath12k_dp_ipa_set_ppe_vp_entry_config - fill PPE VP profile for a vdev
- * @vp_profile: profile structure to populate
- * @dev: netdev associated with the vdev (AP_VLAN for WDS, AP/STA otherwise)
- * @arvif: link-vif providing vdev_id and lmac context
+ * ath12k_dp_ipa_get_cache_set - get cache_set (ast_hash) for WDS VP config
+ * @dev: netdev of the interface being registered with IPA
  *
- * Initializes vp_profile fields used by hardware tables before programming
- * PPE VP configuration for the given vdev context.
+ * Returns the ast_hash for WDS (AP_VLAN with is_wds_4addr=true), which is
+ * stored in the vp_profile for reference and used when programming the AST
+ * override map register.  Returns 0 for normal AP/STA interfaces.
+ *
+ * Returns: ast_hash for WDS (AP_VLAN), 0 for all other interface types.
+ */
+u8 ath12k_dp_ipa_get_cache_set(struct net_device *dev)
+{
+	struct wireless_dev *wdev;
+	struct ath12k_vif *ahvif;
+
+	if (!dev)
+		return 0;
+	wdev = dev->ieee80211_ptr;
+	if (!wdev)
+		return 0;
+
+	ahvif = ath12k_ahvif_from_wdev(wdev);
+	if (!ahvif)
+		return 0;
+
+	if (ahvif->vif->type == NL80211_IFTYPE_AP_VLAN && ahvif->dp_vif.is_wds_4addr)
+		return (u8)ahvif->dp_vif.ast_hash;
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_get_cache_set);
+
+/**
+ * ath12k_dp_ipa_set_ppe_vp_entry_config - populate VP profile for HAL programming
+ * @vp_profile: profile to fill
+ * @arvif:      parent AP's link_vif (provides vdev_id, lmac_id)
+ * @ahvif:      interface's own ath12k_vif — for AP_VLAN this is the
+ *              AP_VLAN's ahvif (NOT the parent AP's), obtained via
+ *              ath12k_ahvif_from_wdev() which uses IEEE80211_WDEV_TO_SUB_IF.
+ *
+ * For WDS (AP_VLAN with is_wds_4addr):
+ *   - bank_id            = bank with INDEX_LOOKUP_EN=1 (allocated at sta_set_4addr)
+ *   - search_idx_reg_num = ahvif_id & 0x3F (SLOT into TCL_PPE_INDEX_MAPPING_TABLE;
+ *                          NOT the ast_idx — that value is stored at TABLE[slot])
+ *   - cache_set          = 0 (not encoded into the WiFi8 VP register)
+ *
+ * For normal AP/STA:
+ *   - bank_id            = interface's bank_id (INDEX_LOOKUP_EN=0)
+ *   - search_idx_reg_num = 0 (index-based lookup not used)
+ *   - cache_set          = 0
  */
 void ath12k_dp_ipa_set_ppe_vp_entry_config(struct ath12k_ipa_vp_profile *vp_profile,
-					   struct net_device *dev,
-					   struct ath12k_link_vif *arvif)
+					   struct ath12k_link_vif *arvif,
+					   struct ath12k_vif *ahvif)
 {
 	vp_profile->drop_prec_enable = 0;
 	vp_profile->to_fw_sw = 0;
 	vp_profile->use_ppe_int_pri = 0;
-	vp_profile->vdev_id = arvif->vdev_id;
-	vp_profile->search_idx_reg_num = get_search_idx_reg_num(dev);
-	vp_profile->bank_id = ath12k_ipa_get_bank_id(dev);
-	vp_profile->lmac_id = arvif->ar->lmac_id;
 	vp_profile->entry_valid = true;
+	vp_profile->vdev_id = arvif->vdev_id;
+	vp_profile->lmac_id = arvif->ar->lmac_id;
+
+	if (ahvif->dp_vif.is_wds_4addr &&
+	    ahvif->dp_vif.bank_id != DP_INVALID_BANK_ID) {
+		vp_profile->search_idx_reg_num = ahvif->dp_vif.ahvif_id & HAL_TCL_PPE_INDEX_MAPPING_TABLE_SLOT_MASK;
+		vp_profile->cache_set          = 0;
+		vp_profile->bank_id            = ahvif->dp_vif.bank_id;
+	} else {
+		vp_profile->search_idx_reg_num = 0;
+		vp_profile->cache_set          = 0;
+		vp_profile->bank_id            = arvif->ahvif->dp_vif.bank_id;
+	}
 }
 
 #define HAL_TX_PPE_VP_CONFIG_TABLE_ADDR  0x00F1336C
@@ -229,13 +311,26 @@ void ath12k_dp_ipa_set_ppe_vp_entry_config(struct ath12k_ipa_vp_profile *vp_prof
 
 /**
  * ath12k_dp_ipa_hal_tx_set_ppe_vp_entry - program PPE VP config table entry
- * @ab: device base pointer
- * @vp_num: VP number in [ATH12K_DP_IPA_VP_MIN, ATH12K_DP_IPA_VP_MAX]
- * @vp_profile: profile to encode; if NULL, clears the entry
+ * @ab:         ath12k_base of any SoC in the group (central SoC is resolved
+ *              internally via ath12k_dp_get_ab_from_dp_hw_group)
+ * @vp_num:     VP number in [ATH12K_DP_IPA_VP_MIN, ATH12K_DP_IPA_VP_MAX]
+ * @vp_profile: VP profile to program, or NULL to clear the entry
  *
- * Encodes vp_profile into the HAL TX PPE VP configuration format and writes it
- * into the central DP HW group's register space for the specified VP. Passing
- * a NULL vp_profile clears the table entry.
+ * Writes the VP configuration to the PPE VP config table register at:
+ *   HAL_TX_PPE_VP_CONFIG_TABLE_ADDR + (4 * (vp_num - VP_MIN))
+ *
+ * Register layout (32-bit):
+ *   Bit  0:      ENTRY_VALID
+ *   Bits 3:1:    LMAC_ID
+ *   Bits 11:4:   BANK_ID   (WDS: INDEX_LOOKUP_EN=1; normal: INDEX_LOOKUP_EN=0)
+ *   Bits 19:12:  VDEV_ID
+ *   Bits 25:20:  SRCH_IDX_REG_NUM  (WDS: ast_idx; normal: 0)
+ *   Bit  26:     USE_PPE_INT_PRI
+ *   Bit  27:     TO_FW
+ *   Bit  28:     DROP_PREC_EN
+ *
+ * Passing NULL for @vp_profile writes 0 to the register, invalidating the
+ * entry (ENTRY_VALID=0).
  */
 void ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(struct ath12k_base *ab,
 					   u8 vp_num,

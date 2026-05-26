@@ -960,4 +960,7 @@ enum srtype {
 #define MAX_VHT80_RATE_MASK   0x3bffffff /* NSS=1 MCS 0-9, NSS=2 MCS 0-9, NSS=3 MCS 0-5 7-9 */
 
 #define MAX_VHT_SGI_MASK   0x3ff /* MCS 0-9 */
+
+const char *ath12k_phymode_str(enum wmi_phy_mode mode);
+
 #endif /* VENDOR_EXTN_H */

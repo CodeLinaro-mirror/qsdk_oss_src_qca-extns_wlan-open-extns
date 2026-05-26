@@ -10327,6 +10327,7 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 		}
 	}
 
+
 	if (tb[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN]) {
 		ret = nla_parse_nested(tb_split,
 				       QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX,
@@ -10373,6 +10374,104 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 
 	ret = ath12k_cbs_start(ar, &cbs);
 	return ret;
+}
+
+void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
+				       struct wmi_scan_event *scan_ev)
+{
+	struct ath12k_cbs_scan_params *cbs;
+	struct ath12k_link_vif *arvif;
+	struct nlattr *nla_freqs = NULL, *nla_split = NULL;
+	struct sk_buff *skb;
+	struct wireless_dev *wdev;
+	u8 split_scan_type;
+	u8 scan_complete;
+	u32 scan_complete_freq;
+
+	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return;
+	if (!scan_ev)
+		return;
+
+	rcu_read_lock();
+	cbs = &ar->ar_extn.cbs_params;
+
+	spin_lock_bh(&ar->data_lock);
+
+	split_scan_type = cbs->enable;
+
+	if (ar->ar_extn.cbs.chan_list[ar->ar_extn.cbs.nchans - 1] ==
+	    le32_to_cpu(scan_ev->channel_freq))
+		scan_complete = VENDOR_SCAN_STATUS_NEW_RESULTS;
+	else
+		scan_complete = VENDOR_SPLIT_SCAN_COMPLETE_PER_CHANNEL;
+
+	scan_complete_freq = le32_to_cpu(scan_ev->channel_freq);
+
+	wdev = NULL;
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (!arvif->ahvif || !arvif->ahvif->vif)
+			continue;
+
+		if (arvif->vdev_id == le32_to_cpu(scan_ev->vdev_id)) {
+			wdev = ieee80211_vif_to_wdev(arvif->ahvif->vif);
+			break;
+		}
+	}
+	spin_unlock_bh(&ar->data_lock);
+
+	if (!wdev)
+		goto out;
+
+	skb = cfg80211_vendor_event_alloc(ar->ah->hw->wiphy, wdev,
+					  NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_SCAN_DONE_INDEX,
+					  GFP_ATOMIC);
+	if (!skb)
+		goto out;
+
+	nla_freqs = nla_nest_start(skb, QCA_WLAN_VENDOR_ATTR_SCAN_FREQUENCIES);
+	if (!nla_freqs)
+		goto fail;
+
+	if (nla_put_u32(skb, 1, scan_complete_freq))
+		goto fail;
+
+	nla_nest_end(skb, nla_freqs);
+	nla_freqs = NULL;
+
+	nla_split = nla_nest_start(skb, QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN);
+	if (!nla_split)
+		goto fail;
+
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_TYPE,
+		       split_scan_type))
+		goto fail;
+
+	nla_nest_end(skb, nla_split);
+	nla_split = NULL;
+
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCAN_STATUS, scan_complete))
+		goto fail;
+
+	cfg80211_vendor_event(skb, GFP_ATOMIC);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "CBS scan done event sent: status=%u split_type=%u scan_complete_freq=%u fw_event_type=%u reason=%u\n",
+		   scan_complete, split_scan_type, scan_complete_freq,
+		   le32_to_cpu(scan_ev->event_type),
+		   le32_to_cpu(scan_ev->reason));
+
+	goto out;
+
+fail:
+	if (nla_split)
+		nla_nest_cancel(skb, nla_split);
+	if (nla_freqs)
+		nla_nest_cancel(skb, nla_freqs);
+	kfree_skb(skb);
+out:
+	rcu_read_unlock();
 }
 
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,

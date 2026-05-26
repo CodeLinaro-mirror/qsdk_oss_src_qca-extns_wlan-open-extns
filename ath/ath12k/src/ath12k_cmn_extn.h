@@ -39,6 +39,7 @@ struct ath12k_skb_cb;
 struct ath12k_sta;
 struct ath12k_wmi_resource_config_params;
 struct ath12k_wmi_resource_config_arg;
+struct wmi_scan_event;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -325,6 +326,7 @@ struct ath12k_extn {
 	u16 dcs_config_bitmap;
 	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
 	struct ath12k_cbs_scan_params cbs_params;
+	struct wmi_scan_event *cbs_scan_event;
 	struct wlan_intf_extn wlan_intf;
 	u8 intf_detect_cnt;
 	u8 samp_cnt;
@@ -736,6 +738,20 @@ void ath12k_mgmt_srng_hw_disable_extn(struct ath12k_base *ab)
 
 void ath12k_wifi8_mgmt_rx_ring_free_extn(struct ath12k_base *ab)
 {
+}
+
+static inline bool
+ath12k_cbs_skip_scan_event_and_send_scan_complete(
+	struct ath12k *ar,
+	const struct wmi_scan_event *scan_ev)
+{
+	return false;
+}
+
+static inline bool
+ath12k_is_cbs_vendor_event(struct ath12k *ar)
+{
+	return false;
 }
 
 int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt,
@@ -1154,6 +1170,11 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 
 void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
+
+bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
+	struct ath12k *ar,
+	const struct wmi_scan_event *scan_ev);
+bool ath12k_is_cbs_vendor_event(struct ath12k *ar);
 
 /**
  * ath12k_reg_chan_list_cc_ext_parse_extn - Helper function to parse extn TLVs

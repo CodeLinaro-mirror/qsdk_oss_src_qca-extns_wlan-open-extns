@@ -9464,13 +9464,113 @@ static int ath12k_vendor_display_320mhz_caps(enum nl80211_band band,
 	return cap_len;
 }
 
+static int ath12k_vendor_build_bw_str(enum nl80211_band band,
+				      const struct ieee80211_channel *chan,
+				      char *buf, size_t buf_len)
+{
+	static const struct {
+		u32 flag;
+		u16 bw;
+		u8 min_band;
+	} bw_table[] = {
+		{ IEEE80211_CHAN_NO_10MHZ,  10,  NL80211_BAND_2GHZ },
+		{ IEEE80211_CHAN_NO_20MHZ,  20,  NL80211_BAND_2GHZ },
+		{ IEEE80211_CHAN_NO_HT40,   40,  NL80211_BAND_2GHZ },
+		{ IEEE80211_CHAN_NO_80MHZ,  80,  NL80211_BAND_5GHZ },
+		{ IEEE80211_CHAN_NO_160MHZ, 160, NL80211_BAND_5GHZ },
+		{ IEEE80211_CHAN_NO_320MHZ, 320, NL80211_BAND_6GHZ },
+	};
+	const char *sep = "";
+	bool any = false;
+	int len;
+	int i;
+
+	len = scnprintf(buf, buf_len, "BW:[");
+
+	for (i = 0; i < ARRAY_SIZE(bw_table); i++) {
+		if (band < bw_table[i].min_band)
+			continue;
+		if (chan->flags & bw_table[i].flag)
+			continue;
+		len += scnprintf(buf + len, buf_len - len,
+				 "%s%u", sep, bw_table[i].bw);
+		sep = ",";
+		any = true;
+	}
+
+	if (!any)
+		len += scnprintf(buf + len, buf_len - len, "20");
+
+	len += scnprintf(buf + len, buf_len - len, "]");
+	return len;
+}
+
+static int ath12k_vendor_build_status_str(const struct ieee80211_channel *chan,
+					  const struct ieee80211_chanctx_conf *chanctx,
+					  char *buf, size_t buf_len)
+{
+	bool is_active = false;
+	bool is_primary = false;
+	bool is_punctured = false;
+	int len = 0;
+
+	if (chanctx && chanctx->def.chan) {
+		int bw_mhz = cfg80211_chandef_get_width(&chanctx->def);
+		u32 cf1 = chanctx->def.center_freq1;
+		u32 chan_freq = chan->center_freq;
+
+		if (bw_mhz > 20) {
+			u32 home_start = cf1 - (u32)bw_mhz / 2 + 10;
+			u32 home_end = cf1 + (u32)bw_mhz / 2 - 10;
+
+			if (chan_freq >= home_start && chan_freq <= home_end)
+				is_active = true;
+		} else {
+			if (chan_freq == cf1)
+				is_active = true;
+		}
+
+		is_primary = (chan_freq == chanctx->def.chan->center_freq);
+
+		if (is_active && chanctx->def.punctured && bw_mhz >= 80) {
+			u32 home_start = cf1 - (u32)bw_mhz / 2 + 10;
+			int sub_idx = (int)(chan_freq - home_start) / 20;
+
+			if (sub_idx >= 0 &&
+			    (chanctx->def.punctured & BIT(sub_idx)))
+				is_punctured = true;
+		}
+	}
+
+	buf[0] = '\0';
+	if (is_active)
+		len += scnprintf(buf + len, buf_len - len, " ACTIVE");
+	if (is_primary)
+		len += scnprintf(buf + len, buf_len - len, " PRIMARY");
+	if (is_punctured)
+		len += scnprintf(buf + len, buf_len - len, " PUNCTURED");
+	if (chan->flags & IEEE80211_CHAN_NO_IR)
+		len += scnprintf(buf + len, buf_len - len, " NO_IR");
+	if (chan->flags & IEEE80211_CHAN_RADAR) {
+		if (chan->dfs_state == NL80211_DFS_UNAVAILABLE)
+			len += scnprintf(buf + len, buf_len - len, " In_NOL(RADAR_DETECTED)");
+		else if (chan->dfs_state == NL80211_DFS_USABLE)
+			len += scnprintf(buf + len, buf_len - len, " CAC_REQUIRED");
+		else if (chan->dfs_state == NL80211_DFS_AVAILABLE)
+			len += scnprintf(buf + len, buf_len - len, " CAC_CLEARED");
+	}
+
+	return len;
+}
+
 static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
 					       struct ieee80211_supported_band *sband,
 					       enum nl80211_band band,
 					       bool has_he,
 					       bool has_eht,
 					       u32 range_start_mhz,
-					       u32 range_end_mhz)
+					       u32 range_end_mhz,
+					       const struct ieee80211_chanctx_conf *chanctx)
 {
 	struct ath12k_vendor_chan_caps chan_caps;
 	int i;
@@ -9478,6 +9578,8 @@ static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
 	for (i = 0; i < sband->n_channels; i++) {
 		const struct ieee80211_channel *chan;
 		char cap[ATH12K_VENDOR_CAP_BUF_LEN];
+		char bw_str[64];
+		char status_str[128];
 		int cap_len;
 
 		chan = &sband->channels[i];
@@ -9485,26 +9587,28 @@ static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
 						       range_end_mhz))
 			continue;
 
+		ath12k_vendor_build_bw_str(band, chan, bw_str, sizeof(bw_str));
+		ath12k_vendor_build_status_str(chan, chanctx,
+					       status_str, sizeof(status_str));
+
 		ath12k_vendor_fill_chan_caps(band, chan, &chan_caps);
 		cap_len = ath12k_vendor_display_pre_he_chan_caps(band, &chan_caps, cap);
 
 		if (has_he)
 			cap_len = ath12k_vendor_display_he_chan_caps(band, &chan_caps,
 								     cap, cap_len);
-
 		if (has_eht)
 			cap_len = ath12k_vendor_display_eht_chan_caps(band, &chan_caps,
 								      cap, cap_len);
-
 		cap_len = ath12k_vendor_display_320mhz_caps(band, &chan_caps, has_eht,
 							    cap, cap_len);
-
 		ath12k_info(ar->ab,
-			    "Channel %3u : %u%c%c Mhz %s\n",
+			    "Channel %3u : %4u MHz  %3d dBm  %s%s  %s\n",
 			    chan_caps.chan_num,
 			    chan->center_freq,
-			    (chan->flags & IEEE80211_CHAN_NO_IR) ? '*' : ' ',
-			    (chan->flags & IEEE80211_CHAN_RADAR) ? '~' : ' ',
+			    chan->max_reg_power,
+			    bw_str,
+			    status_str,
 			    cap);
 	}
 }
@@ -9520,6 +9624,7 @@ static int ath12k_vendor_display_band_chans(struct ath12k *ar)
 	bool use_freq_range = false;
 	bool has_he;
 	bool has_eht;
+	struct ieee80211_chanctx_conf *chanctx;
 
 	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
 		return -EINVAL;
@@ -9565,8 +9670,10 @@ static int ath12k_vendor_display_band_chans(struct ath12k *ar)
 		return -1;
 	}
 
+	chanctx = ath12k_mac_get_first_active_arvif_chanctx(ar);
 	ath12k_vendor_display_channel_caps(ar, sband, band, has_he, has_eht,
-					   range_start_mhz, range_end_mhz);
+					   range_start_mhz, range_end_mhz,
+					   chanctx);
 
 	return 0;
 }

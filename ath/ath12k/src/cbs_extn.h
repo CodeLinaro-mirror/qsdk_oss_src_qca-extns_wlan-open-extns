@@ -72,6 +72,9 @@
 #define ATH12K_CBS_CSA_ENABLE				0x6	/* Enable CSA on CBS */
 #define ATH12K_CBS_TOTAL_DWELL_TIME_CMD			0x7	/* Configure total dwell time */
 
+#define ATH12K_CBS_RUN_ONCE		0x1
+#define ATH12K_CBS_RUN_CONTINUOUS	0x2
+
 /**
  * enum ath12k_cbs_state - CBS State Machine States
  * 
@@ -217,6 +220,8 @@ int ath12k_cbs_start(struct ath12k *ar,
 		     const struct ath12k_cbs_scan_params *scan_params);
 void ath12k_cbs_stop(struct ath12k *ar);
 void ath12k_cbs_stop_async(struct ath12k *ar);
+int ath12k_cbs_allow_mac80211_scan(struct ath12k *ar);
+void ath12k_cbs_resume_post_mac80211_scan(struct ath12k *ar);
 
 /* Event handling */
 void ath12k_cbs_post_event(struct ath12k_cbs *cbs, enum ath12k_cbs_event event);

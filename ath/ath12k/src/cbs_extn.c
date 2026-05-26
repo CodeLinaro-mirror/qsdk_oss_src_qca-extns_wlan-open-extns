@@ -163,14 +163,16 @@ static void ath12k_cbs_set_state(struct ath12k_cbs *cbs,
 			   ath12k_cbs_state_str(state));
 }
 
-static void ath12k_cbs_timer(struct timer_list *timer)
+static void ath12k_cbs_resume_after_wait(struct ath12k_cbs *cbs)
 {
-	struct ath12k_cbs *cbs = from_timer(cbs, timer, timer);
 	enum ath12k_cbs_event event = 0;
+	struct ath12k *ar = cbs->ar;
 
 	switch (cbs->state) {
 	case ATH12K_CBS_STATE_SCAN:
-		event = ATH12K_CBS_EVENT_DWELL_SPLIT;
+		ath12k_err(ar->ab, "CBS: Invalid state %s\n",
+			   ath12k_cbs_state_str(cbs->state));
+		event = ATH12K_CBS_EVENT_SCAN_CANCEL;
 		break;
 	case ATH12K_CBS_STATE_REST:
 		if (cbs->dwell_split_cnt < cbs->max_dwell_split_cnt)
@@ -185,7 +187,50 @@ static void ath12k_cbs_timer(struct timer_list *timer)
 		return;
 	}
 
+	ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "CBS: current state: %s, current event to post: %d, cbs_enable flag: %d\n",
+		   ath12k_cbs_state_str(cbs->state), event, cbs->cbs_enable);
+
 	ath12k_cbs_post_event(cbs, event);
+}
+
+static void ath12k_cbs_timer(struct timer_list *timer)
+{
+	struct ath12k_cbs *cbs = from_timer(cbs, timer, timer);
+	struct ath12k *ar = cbs->ar;
+
+	if (ar->scan.state != ATH12K_SCAN_IDLE) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "CBS: mac80211 scan is in progress, CBS will resume on scan complete\n");
+		return;
+	}
+
+	ath12k_cbs_resume_after_wait(cbs);
+}
+
+void ath12k_cbs_resume_post_mac80211_scan(struct ath12k *ar)
+{
+        struct ath12k_cbs *cbs = &ar->ar_extn.cbs;
+
+	if (cbs->state == ATH12K_CBS_STATE_INIT)
+		return;
+
+	cbs->cbs_enable = 1;
+
+	ath12k_cbs_resume_after_wait(cbs);
+}
+
+int ath12k_cbs_allow_mac80211_scan(struct ath12k *ar)
+{
+	struct ath12k_cbs *cbs = &ar->ar_extn.cbs;
+
+	if (!cbs->cbs_enable)
+		return 0;
+
+	if (cbs->state == ATH12K_CBS_STATE_SCAN)
+		return -EBUSY;
+	else
+		cbs->cbs_enable = 0;
+
+	return 0;
 }
 
 static bool ath12k_cbs_is_urgent_event(enum ath12k_cbs_event event)
@@ -193,7 +238,7 @@ static bool ath12k_cbs_is_urgent_event(enum ath12k_cbs_event event)
 	return event == ATH12K_CBS_EVENT_SCAN_CANCEL;
 }
 
-static void ath12k_cbs_cancel(struct ath12k_cbs *cbs, bool restart)
+static void ath12k_cbs_cancel(struct ath12k_cbs *cbs)
 {
 	struct ath12k *ar = cbs->ar;
 
@@ -204,8 +249,7 @@ static void ath12k_cbs_cancel(struct ath12k_cbs *cbs, bool restart)
 	cbs->dwell_split_cnt = cbs->max_dwell_split_cnt;
 	cbs->pending_event = 0;
 
-	if (!restart)
-		ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
+	ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
 
 	if (ar)
 		memset(&ar->ar_extn.cbs_params, 0,
@@ -215,7 +259,17 @@ static void ath12k_cbs_cancel(struct ath12k_cbs *cbs, bool restart)
 static void ath12k_cbs_complete(struct ath12k_cbs *cbs)
 {
 	cbs->complete_count++;
-	ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
+
+	if (cbs->cbs_enable == ATH12K_CBS_RUN_ONCE) {
+		cbs->cbs_enable = 0;
+		ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
+	} else if (cbs->cbs_enable == ATH12K_CBS_RUN_CONTINUOUS) {
+		ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_WAIT);
+	} else {
+		ath12k_err(NULL, "CBS: invalid enable option: %d", cbs->cbs_enable);
+		ath12k_cbs_cancel(cbs);
+	}
+
 }
 
 static void ath12k_cbs_work(struct work_struct *work)
@@ -273,6 +327,7 @@ void ath12k_cbs_deinit(struct ath12k *ar)
 		return;
 
 	cbs = &ar->ar_extn.cbs;
+
 	ath12k_cbs_stop(ar);
 	cancel_work_sync(&cbs->work);
 	del_timer_sync(&cbs->timer);
@@ -289,6 +344,8 @@ int ath12k_cbs_start(struct ath12k *ar,
 		return -EINVAL;
 
 	cbs = &ar->ar_extn.cbs;
+	if (ar->scan.state != ATH12K_SCAN_IDLE)
+		return -EBUSY;
 
 	spin_lock_bh(&cbs->lock);
 	if (!cbs->ar)
@@ -347,7 +404,7 @@ void ath12k_cbs_stop(struct ath12k *ar)
 		ret = ath12k_wmi_send_scan_stop_cmd(ar, &arg);
 		if (ret)
 			ath12k_warn(ar->ab, "CBS: failed to stop active scan: %d\n", ret);
-		ath12k_cbs_cancel(cbs, false);
+		ath12k_cbs_cancel(cbs);
 	}
 }
 
@@ -525,7 +582,7 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 	case ATH12K_CBS_EVENT_SCAN_CANCEL:
 		if (cur_state != ATH12K_CBS_STATE_INIT) {
 			cbs->cancel_count++;
-			ath12k_cbs_cancel(cbs, false);
+			ath12k_cbs_cancel(cbs);
 		}
 		break;
 	case ATH12K_CBS_EVENT_SCAN_COMPLETE:
@@ -533,7 +590,7 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 		break;
 	case ATH12K_CBS_EVENT_SCAN_RESTART:
 		if (cur_state != ATH12K_CBS_STATE_INIT) {
-			ath12k_cbs_cancel(cbs, true);
+			ath12k_cbs_cancel(cbs);
 			ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_WAIT);
 			mod_timer(&cbs->timer,
 				  jiffies + msecs_to_jiffies(ATH12K_CBS_RESTART_TIME));
@@ -562,9 +619,10 @@ void ath12k_cbs_scan_event_handler(struct ath12k *ar, u32 scan_id,
 	switch (event_type) {
 	case WMI_SCAN_EVENT_COMPLETED:
 		if (cbs->state == ATH12K_CBS_STATE_SCAN && cbs->dwell_split_cnt < cbs->max_dwell_split_cnt) {
-			if (cbs->dwell_split_time) {
+			if (cbs->min_dwell_rest_time) {
+				ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_REST);
 				mod_timer(&cbs->timer,
-					  jiffies + msecs_to_jiffies(cbs->dwell_split_time));
+					  jiffies + msecs_to_jiffies(cbs->min_dwell_rest_time));
 			} else {
 				ath12k_cbs_post_event(cbs, ATH12K_CBS_EVENT_DWELL_SPLIT);
 			}

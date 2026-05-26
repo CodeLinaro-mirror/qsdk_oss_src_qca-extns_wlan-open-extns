@@ -510,6 +510,11 @@ int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
 					      u8 catagory,
 					      const u8 *pos,
 					      const u8 *end);
+
+struct ath12k_radio_cfg_extn {
+	u8 scan_f_strict_passive_pch;
+};
+
 #ifndef CPTCFG_QCN_EXTN
 static inline void
 int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,

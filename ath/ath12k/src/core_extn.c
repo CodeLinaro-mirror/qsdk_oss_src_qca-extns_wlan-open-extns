@@ -26,6 +26,7 @@
 #include "../net/mac80211/ieee80211_i.h"
 #include "esp_extn.h"
 #include "vendor_extn.h"
+#include "qcn_extns/cbs_extn.h"
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
 #include <linux/device.h>
@@ -926,6 +927,7 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 	ath12k_esp_init_extn(ar);
 	ath12k_custom_txrx_init(ar);
 	ath12k_extn_ini_debugfs_register(ar->ab);
+	ath12k_cbs_init(ar);
 
 	/* Initialize WLAN interference stats cache */
 	ar->ar_extn.wlan_intf.prev_valid = false;
@@ -944,6 +946,7 @@ void ath12k_ar_extn_deinit(struct ath12k *ar)
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
 {
 	ath12k_extn_ini_debugfs_unregister(ar->ab);
+	ath12k_cbs_deinit(ar);
 	ath12k_esp_cleanup_extn(ar);
 	ath12k_custom_txrx_deinit(ar);
 	ath12k_ar_extn_deinit(ar);

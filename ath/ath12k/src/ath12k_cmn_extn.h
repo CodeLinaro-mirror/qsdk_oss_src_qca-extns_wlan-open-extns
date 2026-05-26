@@ -11,6 +11,7 @@
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
 #include "rropinfo.h"
 #include "sa_api.h"
+#include "cbs_extn.h"
 
 struct ath12k_base;
 struct ath12k_hw_blocklist_state;
@@ -290,6 +291,7 @@ struct ath12k_cbs_scan_params {
 	u32 *freq_list;
 	u8 num_freqs;
 	u8 link_id;
+	struct ath12k_link_vif *arvif;
 };
 
 /**
@@ -332,6 +334,7 @@ struct ath12k_extn {
 
 	/* Smart Antenna Specific */
 	struct sa_ar_extn sa_ar;
+	struct ath12k_cbs cbs;
 };
 
 /**

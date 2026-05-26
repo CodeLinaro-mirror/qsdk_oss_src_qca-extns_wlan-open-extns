@@ -2266,6 +2266,345 @@ static int ath12k_set_chainmask(struct ath12k *ar, u32 value, bool is_tx)
     	return ath12k_mac_set_rx_antenna(ar, value);
 }
 
+static u8 ath12k_vendor_get_max_tx_nss(struct ath12k *ar)
+{
+	if (!ar || !ar->pdev)
+		return 0;
+
+	return hweight32(ar->pdev->cap.tx_chain_mask);
+}
+
+static int ath12k_vendor_get_link_band(struct ath12k_link_vif *arvif,
+				       enum nl80211_band *band)
+{
+	struct ieee80211_vif *vif;
+	struct cfg80211_chan_def def;
+
+	if (!arvif || !band)
+		return -EINVAL;
+
+	vif = ath12k_ahvif_to_vif(arvif->ahvif);
+	if (!vif)
+		return -EINVAL;
+
+	if (ath12k_mac_vif_link_chan(vif, arvif->link_id, &def) || !def.chan)
+		return -EINVAL;
+
+	*band = def.chan->band;
+	return 0;
+}
+
+static int ath12k_vendor_resolve_nss(struct ath12k_link_vif *arvif,
+				     u32 requested_nss, u8 *nss)
+{
+	struct ath12k *ar = arvif->ar;
+	u8 max_nss;
+
+	if (!ar || !nss)
+		return -EINVAL;
+
+	max_nss = ath12k_vendor_get_max_tx_nss(ar);
+	if (!max_nss) {
+		ath12k_err(ar->ab, "invalid tx chain capability for nss\n");
+		return -EINVAL;
+	}
+
+	if (!requested_nss)
+		requested_nss = max_nss;
+
+	if (requested_nss > max_nss) {
+		ath12k_err(ar->ab, "Invalid nss %u (max %u)\n",
+			   requested_nss, max_nss);
+		return -EINVAL;
+	}
+
+	*nss = requested_nss;
+	return 0;
+}
+
+static int ath12k_vendor_validate_he_eht_mode(struct ath12k_link_vif *arvif,
+					      bool eht)
+{
+	struct ieee80211_bss_conf *bss_conf;
+
+	/* Allow pre-config before vdev is brought up. */
+	if (!arvif->is_up)
+		return 0;
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!bss_conf)
+		return 0;
+
+	if (eht && !bss_conf->eht_support) {
+		ath12k_err(arvif->ar->ab, "EHT fixed rate is not allowed in current mode\n");
+		return -EINVAL;
+	}
+
+	if (!eht && !bss_conf->he_support) {
+		ath12k_err(arvif->ar->ab, "HE fixed rate is not allowed in current mode\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
+ath12k_vendor_set_fixed_rate(struct ath12k_link_vif *arvif, u32 value, u32 mode)
+{
+	struct ath12k *ar = arvif->ar;
+	u32 rate_code = WMI_FIXED_RATE_NONE;
+	u32 config_value = value;
+	u8 nss, rate_idx;
+	enum nl80211_band band;
+	int ret;
+
+	switch (mode) {
+	case ATH12K_VENDOR_FIXED_RATE_LEGACY_HT:
+		if (!value || value == WMI_FIXED_RATE_NONE) {
+			break;
+		}
+
+		rate_idx = value & ATH12K_VENDOR_FIXED_RATE_RATE_IDX_MASK;
+
+		if (value & ATH12K_VENDOR_FIXED_RATE_HT_MCS_BIT) {
+			nss = ((value & ATH12K_VENDOR_FIXED_RATE_HT_NSS_MASK) >>
+			       ATH12K_VENDOR_FIXED_RATE_HT_NSS_SHIFT) + 1;
+			ret = ath12k_vendor_resolve_nss(arvif, nss, &nss);
+			if (ret)
+				return ret;
+
+			rate_code = ATH12K_HW_RATE_CODE(rate_idx, nss - 1,
+							WMI_RATE_PREAMBLE_HT, 0);
+			break;
+		}
+
+		if (value & ATH12K_VENDOR_FIXED_RATE_LEGACY_CCK_BIT) {
+			ret = ath12k_vendor_get_link_band(arvif, &band);
+			if (!ret && band != NL80211_BAND_2GHZ) {
+				ath12k_err(ar->ab,
+					   "CCK fixed rate is valid only for 2.4 GHz\n");
+				return -EINVAL;
+			}
+
+			if (rate_idx != ATH12K_VENDOR_FIXED_RATE_CCK_1MBPS_IDX)
+				rate_idx |= ATH12K_VENDOR_FIXED_RATE_CCK_SHORT_PREAMBLE_BIT;
+
+			rate_code = ATH12K_HW_RATE_CODE(rate_idx, 0,
+							WMI_RATE_PREAMBLE_CCK, 0);
+			break;
+		}
+
+		rate_code = ATH12K_HW_RATE_CODE(rate_idx, 0,
+						WMI_RATE_PREAMBLE_OFDM, 0);
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_VHT_MCS:
+		if (value > ATH12K_VHT_MCS_MAX) {
+			ath12k_warn(ar->ab,
+				    "VHT MCS %u exceeds max %u, clamping\n",
+				    value, ATH12K_VHT_MCS_MAX);
+			config_value = ATH12K_VHT_MCS_MAX;
+		}
+
+		ret = ath12k_vendor_resolve_nss(arvif, arvif->vap_cfg.nss, &nss);
+		if (ret)
+			return ret;
+
+		rate_code = ATH12K_HW_RATE_CODE(config_value, nss - 1,
+						WMI_RATE_PREAMBLE_VHT, 0);
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_HE_MCS:
+		ret = ath12k_vendor_validate_he_eht_mode(arvif, false);
+		if (ret)
+			return ret;
+
+		if (value > ATH12K_HE_MCS_MAX) {
+			ath12k_warn(ar->ab,
+				    "HE MCS %u exceeds max %u, clamping\n",
+				    value, ATH12K_HE_MCS_MAX);
+			config_value = ATH12K_HE_MCS_MAX;
+		}
+
+		ret = ath12k_vendor_resolve_nss(arvif, arvif->vap_cfg.nss, &nss);
+		if (ret)
+			return ret;
+
+		rate_code = ATH12K_HW_RATE_CODE(config_value, nss - 1,
+						WMI_RATE_PREAMBLE_HE, 0);
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_EHT_MCS:
+		ret = ath12k_vendor_validate_he_eht_mode(arvif, true);
+		if (ret)
+			return ret;
+
+		if (value > ATH12K_EHT_MCS_MAX) {
+			ath12k_warn(ar->ab,
+				    "EHT MCS %u exceeds max %u, clamping\n",
+				    value, ATH12K_EHT_MCS_MAX);
+			config_value = ATH12K_EHT_MCS_MAX;
+		}
+
+		ret = ath12k_vendor_resolve_nss(arvif, arvif->vap_cfg.nss, &nss);
+		if (ret)
+			return ret;
+
+		rate_code = ATH12K_HW_RATE_CODE(config_value, nss - 1,
+						WMI_RATE_PREAMBLE_EHT, 0);
+		break;
+	default:
+		ath12k_err(ar->ab, "Invalid fixed rate mode %u\n", mode);
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					    WMI_VDEV_PARAM_FIXED_RATE, rate_code);
+	if (ret) {
+		ath12k_err(ar->ab, "Failed to send WMI_VDEV_PARAM_FIXED_RATE to firmware\n");
+		return ret;
+	}
+
+	arvif->vap_cfg.fixed_rate = config_value;
+	switch (mode) {
+	case ATH12K_VENDOR_FIXED_RATE_VHT_MCS:
+		arvif->vap_cfg.fixed_vht_mcs = config_value;
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_HE_MCS:
+		arvif->vap_cfg.fixed_he_mcs = config_value;
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_EHT_MCS:
+		arvif->vap_cfg.fixed_eht_mcs = config_value;
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int
+ath12k_vendor_set_ul_fixed_rate(struct ath12k_link_vif *arvif, u32 value, u32 mode)
+{
+	struct ath12k *ar = arvif->ar;
+	u32 rate_code = WMI_FIXED_RATE_NONE;
+	u32 config_value = value;
+	u32 requested_nss;
+	u8 nss;
+	int ret;
+
+	switch (mode) {
+	case ATH12K_VENDOR_UL_FIXED_RATE_HE:
+		ret = ath12k_vendor_validate_he_eht_mode(arvif, false);
+		if (ret)
+			return ret;
+
+		if (value != WMI_FIXED_RATE_NONE && value > ATH12K_HE_MCS_MAX) {
+			ath12k_err(ar->ab,
+				   "UL HE MCS value %u cannot be greater than %u\n",
+				   value, ATH12K_HE_MCS_MAX);
+			return -EINVAL;
+		}
+
+		requested_nss = arvif->vap_cfg.he_ul_nss ?: arvif->vap_cfg.nss;
+		ret = ath12k_vendor_resolve_nss(arvif, requested_nss, &nss);
+		if (ret)
+			return ret;
+
+		if (value != WMI_FIXED_RATE_NONE)
+			rate_code = ATH12K_HW_RATE_CODE(config_value, nss - 1,
+							WMI_RATE_PREAMBLE_HE, 0);
+
+		break;
+	case ATH12K_VENDOR_UL_FIXED_RATE_EHT:
+		ret = ath12k_vendor_validate_he_eht_mode(arvif, true);
+		if (ret)
+			return ret;
+
+		if (value != WMI_FIXED_RATE_NONE && value > ATH12K_EHT_MCS_MAX) {
+			ath12k_err(ar->ab,
+				   "UL EHT MCS value %u cannot be greater than %u\n",
+				   value, ATH12K_EHT_MCS_MAX);
+			return -EINVAL;
+		}
+
+		requested_nss = arvif->vap_cfg.eht_ul_nss ?: arvif->vap_cfg.nss;
+		ret = ath12k_vendor_resolve_nss(arvif, requested_nss, &nss);
+		if (ret)
+			return ret;
+
+		if (value != WMI_FIXED_RATE_NONE)
+			rate_code = ATH12K_HW_RATE_CODE(config_value, nss - 1,
+							WMI_RATE_PREAMBLE_EHT, 0);
+		break;
+	default:
+		ath12k_err(ar->ab, "Invalid UL fixed rate mode %u\n", mode);
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					    WMI_VDEV_PARAM_UL_FIXED_RATE,
+					    rate_code);
+	if (ret) {
+		ath12k_err(ar->ab, "Failed to send WMI_VDEV_PARAM_UL_FIXED_RATE to firmware\n");
+		return ret;
+	}
+
+	arvif->vap_cfg.ul_fixed_rate = config_value;
+	if (mode == ATH12K_VENDOR_UL_FIXED_RATE_HE) {
+		arvif->vap_cfg.ul_fixed_he_mcs = config_value;
+		if (!arvif->vap_cfg.he_ul_ldpc && value != WMI_FIXED_RATE_NONE &&
+		    config_value > ATH12K_VHT_MCS_MAX)
+			arvif->vap_cfg.he_ul_ldpc = 1;
+	} else {
+		arvif->vap_cfg.ul_fixed_eht_mcs = config_value;
+		if (!arvif->vap_cfg.eht_ul_ldpc && value != WMI_FIXED_RATE_NONE &&
+		    config_value > ATH12K_VHT_MCS_MAX)
+			arvif->vap_cfg.eht_ul_ldpc = 1;
+	}
+
+	return 0;
+}
+
+static int ath12k_vendor_get_fixed_rate(struct ath12k_link_vif *arvif,
+					u32 mode, u64 *value)
+{
+	switch (mode) {
+	case ATH12K_VENDOR_FIXED_RATE_LEGACY_HT:
+		*value = arvif->vap_cfg.fixed_rate;
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_VHT_MCS:
+		*value = arvif->vap_cfg.fixed_vht_mcs;
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_HE_MCS:
+		*value = arvif->vap_cfg.fixed_he_mcs;
+		break;
+	case ATH12K_VENDOR_FIXED_RATE_EHT_MCS:
+		*value = arvif->vap_cfg.fixed_eht_mcs;
+		break;
+	default:
+		ath12k_err(arvif->ar->ab, "Invalid fixed rate mode %u\n", mode);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int ath12k_vendor_get_ul_fixed_rate(struct ath12k_link_vif *arvif,
+					   u32 mode, u64 *value)
+{
+	switch (mode) {
+	case ATH12K_VENDOR_UL_FIXED_RATE_HE:
+		*value = arvif->vap_cfg.ul_fixed_he_mcs;
+		break;
+	case ATH12K_VENDOR_UL_FIXED_RATE_EHT:
+		*value = arvif->vap_cfg.ul_fixed_eht_mcs;
+		break;
+	default:
+		ath12k_err(arvif->ar->ab, "Invalid UL fixed rate mode %u\n", mode);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static void ath12k_wsi_bypass_workfn(struct work_struct *work)
 {
 	struct ath12k_wsi_remap_work *w =
@@ -2754,6 +3093,61 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		} else {
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_BW_NSS_RATEMASK to firmware");
 		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CHWIDTH:
+		if (value > WMI_HOST_CHAN_WIDTH_MAX) {
+			ath12k_err(ar->ab, "Invalid channel width value %u\n", value);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_CHWIDTH, value);
+		if (!ret) {
+			arvif->vap_cfg.chwidth = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_CHWIDTH to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_NSS:
+		{
+			u8 nss;
+
+			ret = ath12k_vendor_resolve_nss(arvif, value, &nss);
+			if (ret)
+				return ret;
+
+			value = nss;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_NSS, value);
+		if (!ret) {
+			arvif->vap_cfg.nss = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_NSS to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_RATE:
+		ret = ath12k_vendor_set_fixed_rate(arvif, value,
+						   ATH12K_VENDOR_FIXED_RATE_LEGACY_HT);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_VHT_MCS:
+		ret = ath12k_vendor_set_fixed_rate(arvif, value,
+						   ATH12K_VENDOR_FIXED_RATE_VHT_MCS);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_HE_MCS:
+		ret = ath12k_vendor_set_fixed_rate(arvif, value,
+						   ATH12K_VENDOR_FIXED_RATE_HE_MCS);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_EHT_MCS:
+		ret = ath12k_vendor_set_fixed_rate(arvif, value,
+						   ATH12K_VENDOR_FIXED_RATE_EHT_MCS);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_UL_FIXED_RATE:
+		ret = ath12k_vendor_set_ul_fixed_rate(arvif, value,
+						      ATH12K_VENDOR_UL_FIXED_RATE_HE);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_FIXED_RATE:
+		ret = ath12k_vendor_set_ul_fixed_rate(arvif, value,
+						      ATH12K_VENDOR_UL_FIXED_RATE_EHT);
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LDPC:
 		if (value < 0 || value > 1) {
@@ -4869,7 +5263,6 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
                 rcu_read_unlock();
                 return -EINVAL;
         }
-
         ar = arvif->ar;
         rcu_read_unlock();
 
@@ -8820,6 +9213,44 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BW_NSS_RATE:
 		*value = arvif->vap_cfg.bw_nss_rate;
 		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CHWIDTH:
+		*value = arvif->vap_cfg.chwidth;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_NSS:
+		*value = arvif->vap_cfg.nss;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_RATE:
+		ret = ath12k_vendor_get_fixed_rate(arvif,
+						   ATH12K_VENDOR_FIXED_RATE_LEGACY_HT,
+						   value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_VHT_MCS:
+		ret = ath12k_vendor_get_fixed_rate(arvif,
+						   ATH12K_VENDOR_FIXED_RATE_VHT_MCS,
+						   value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_HE_MCS:
+		ret = ath12k_vendor_get_fixed_rate(arvif,
+						   ATH12K_VENDOR_FIXED_RATE_HE_MCS,
+						   value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FIXED_EHT_MCS:
+		ret = ath12k_vendor_get_fixed_rate(arvif,
+						   ATH12K_VENDOR_FIXED_RATE_EHT_MCS,
+						   value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_UL_FIXED_RATE:
+		ret = ath12k_vendor_get_ul_fixed_rate(arvif,
+						      ATH12K_VENDOR_UL_FIXED_RATE_HE,
+						      value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_FIXED_RATE:
+		ret = ath12k_vendor_get_ul_fixed_rate(arvif,
+						      ATH12K_VENDOR_UL_FIXED_RATE_EHT,
+						      value);
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LDPC:
 		*value = arvif->vap_cfg.eht_ul_ldpc;

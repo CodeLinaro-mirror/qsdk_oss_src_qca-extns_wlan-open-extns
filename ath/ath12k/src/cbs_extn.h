@@ -39,12 +39,13 @@
 #define ATH12K_CBS_DEFAULT_TOTAL_DWELL_TIME		200	/* msec - total dwell per channel */
 
 /* CBS Dwell Time Options (in milliseconds) */
-#define ATH12K_CBS_DWELL_TIME_10MS			10
+#define ATH12K_CBS_DWELL_TIME_20MS			20
 #define ATH12K_CBS_DWELL_TIME_25MS			25
 #define ATH12K_CBS_DWELL_TIME_50MS			50
-#define ATH12K_CBS_DWELL_TIME_75MS			75
 
 /* CBS Total Dwell Time Options (in milliseconds) */
+#define ATH12K_CBS_TOTAL_DWELL_TIME_20MS		20
+#define ATH12K_CBS_TOTAL_DWELL_TIME_25MS		25
 #define ATH12K_CBS_TOTAL_DWELL_TIME_50MS		50
 #define ATH12K_CBS_TOTAL_DWELL_TIME_100MS		100
 #define ATH12K_CBS_TOTAL_DWELL_TIME_200MS		200
@@ -220,6 +221,9 @@ void ath12k_cbs_stop_async(struct ath12k *ar);
 /* Event handling */
 void ath12k_cbs_post_event(struct ath12k_cbs *cbs, enum ath12k_cbs_event event);
 int ath12k_cbs_event_handler(struct ath12k_cbs *cbs, enum ath12k_cbs_event event);
+
+/* Dwell configuration */
+void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs);
 
 /* Scan event callback */
 void ath12k_cbs_scan_event_handler(struct ath12k *ar, u32 scan_id,

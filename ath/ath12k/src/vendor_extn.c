@@ -10396,6 +10396,7 @@ void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 	struct wireless_dev *wdev;
 	u8 split_scan_type;
 	u8 scan_complete;
+	u8 link_id = INVALID_LINK_ID;
 	u32 scan_complete_freq;
 
 	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
@@ -10429,6 +10430,7 @@ void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 
 		if (arvif->vdev_id == le32_to_cpu(scan_ev->vdev_id)) {
 			wdev = ieee80211_vif_to_wdev(arvif->ahvif->vif);
+			link_id = arvif->link_id;
 			break;
 		}
 	}
@@ -10468,11 +10470,15 @@ void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCAN_STATUS, scan_complete))
 		goto fail;
 
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCAN_LINK_ID, link_id))
+		goto fail;
+
 	cfg80211_vendor_event(skb, GFP_ATOMIC);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-		   "CBS scan done event sent: status=%u split_type=%u scan_complete_freq=%u fw_event_type=%u reason=%u\n",
+		   "CBS scan done event sent: status=%u split_type=%u scan_complete_freq=%u link_id=%u fw_event_type=%u reason=%u\n",
 		   scan_complete, split_scan_type, scan_complete_freq,
+		   link_id,
 		   le32_to_cpu(scan_ev->event_type),
 		   le32_to_cpu(scan_ev->reason));
 

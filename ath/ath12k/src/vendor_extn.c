@@ -10801,7 +10801,7 @@ int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
 				nla_get_u8(tb_split[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_TYPE]);
 	}
 
-	ath12k_dbg(NULL, ATH12K_DBG_CFG,
+	ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
 		   "CBS scan params: enable=%u resttime=%u dwellrest=%u waittime=%u dwellsplit=%u totaldwell=%u num_freqs=%u link_id=%u\n",
 		   split_scan_type, ar->ar_extn.cbs.rest_time,
 		   ar->ar_extn.cbs.min_dwell_rest_time,

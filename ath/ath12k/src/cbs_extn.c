@@ -48,12 +48,13 @@ static const char *ath12k_cbs_event_str(enum ath12k_cbs_event event)
 	return "UNKNOWN";
 }
 
-void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
+int ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
 {
+	int ret = 0;
 	u32 idx;
 
 	if (!cbs)
-		return;
+		return -EINVAL;
 
 	memset(cbs->scan_offset, 0, sizeof(cbs->scan_offset));
 	memset(cbs->scan_dwell_rest, 0, sizeof(cbs->scan_dwell_rest));
@@ -74,7 +75,7 @@ void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
 				cbs->scan_offset[idx] = idx * 10;
 			break;
 		default:
-			return;
+			ret = -EINVAL;
 		}
 		break;
 	case ATH12K_CBS_DWELL_TIME_25MS:
@@ -102,7 +103,8 @@ void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
 			cbs->scan_offset[7] = 75;
 			break;
 		default:
-			return;
+
+			ret = -EINVAL;
 		}
 		break;
 	case ATH12K_CBS_DWELL_TIME_50MS:
@@ -124,11 +126,24 @@ void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
 			cbs->scan_offset[3] = 50;
 			break;
 		default:
-			return;
+			ret = -EINVAL;
 		}
 		break;
 	default:
-		return;
+		ret = -EINVAL;
+	}
+
+	if (ret) {
+		ath12k_dbg(cbs->ar->ab, ATH12K_DBG_SCAN,
+			   "CBS: invalid total dwell %d for dwell %d",
+			   cbs->cbs_total_dwell_time, cbs->dwell_split_time);
+		ath12k_dbg(cbs->ar->ab, ATH12K_DBG_SCAN,
+			   "CBS: dwell 20ms can have total dwell of 20ms, 200ms");
+		ath12k_dbg(cbs->ar->ab, ATH12K_DBG_SCAN,
+			   "CBS: dwell 25ms can have total dwell of 25ms, 100ms, 200ms");
+		ath12k_dbg(cbs->ar->ab, ATH12K_DBG_SCAN,
+			   "CBS: dwell 50ms can have total dwell of 50ms, 100ms, 200ms");
+		return ret;
 	}
 
 	cbs->dwell_split_cnt = cbs->max_arr_size_used ? cbs->max_arr_size_used - 1 : 0;
@@ -147,6 +162,8 @@ void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs)
 		else
 			cbs->scan_dwell_rest[idx] = 0;
 	}
+
+	return ret;
 }
 
 static void ath12k_cbs_set_state(struct ath12k_cbs *cbs,
@@ -260,6 +277,7 @@ static void ath12k_cbs_complete(struct ath12k_cbs *cbs)
 		ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
 	} else if (cbs->cbs_enable == ATH12K_CBS_RUN_CONTINUOUS) {
 		ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_WAIT);
+		mod_timer(&cbs->timer, jiffies + msecs_to_jiffies(cbs->wait_time));
 	} else {
 		ath12k_err(NULL, "CBS: invalid enable option: %d", cbs->cbs_enable);
 		ath12k_cbs_cancel(cbs);
@@ -437,6 +455,9 @@ int ath12k_cbs_start(struct ath12k *ar)
 		return 0;
 	}
 
+	if (ath12k_cbs_init_dwell_params(cbs))
+		return -EINVAL;
+
 	spin_unlock_bh(&cbs->lock);
 
 	ath12k_cbs_post_event(cbs, ATH12K_CBS_EVENT_SCAN_START);
@@ -542,7 +563,6 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 		case ATH12K_CBS_STATE_INIT:
 		case ATH12K_CBS_STATE_WAIT:
 			cbs->chan_list_idx = 0;
-			ath12k_cbs_init_dwell_params(cbs);
 			if (!cbs->max_arr_size_used) {
 				ret = -EINVAL;
 				break;
@@ -657,7 +677,7 @@ int ath12k_cbs_event_handler(struct ath12k_cbs *cbs,
 			ath12k_cbs_cancel(cbs);
 			ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_WAIT);
 			mod_timer(&cbs->timer,
-				  jiffies + msecs_to_jiffies(ATH12K_CBS_RESTART_TIME));
+				  jiffies + msecs_to_jiffies(cbs->wait_time));
 		}
 		break;
 	default:

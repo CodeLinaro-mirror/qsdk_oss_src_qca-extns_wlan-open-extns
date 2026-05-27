@@ -29,15 +29,6 @@
 
 #define ATH12K_CBS_SCAN_ID				0xA001
 
-/* CBS Default Configuration Parameters */
-#define ATH12K_CBS_DEFAULT_RESTTIME			500	/* msec - rest between channels */
-#define ATH12K_CBS_DEFAULT_DWELL_TIME			50	/* msec - time on each channel */
-#define ATH12K_CBS_DEFAULT_WAIT_TIME			1000	/* msec - wait after scan cycle */
-#define ATH12K_CBS_DEFAULT_DWELL_SPLIT_TIME		50	/* msec - split dwell duration */
-#define ATH12K_CBS_DEFAULT_DWELL_REST_TIME		500	/* msec - rest between splits */
-#define ATH12K_CBS_DEFAULT_MIN_REST_TIME		50	/* msec - minimum rest time */
-#define ATH12K_CBS_DEFAULT_TOTAL_DWELL_TIME		200	/* msec - total dwell per channel */
-
 /* CBS Dwell Time Options (in milliseconds) */
 #define ATH12K_CBS_DWELL_TIME_20MS			20
 #define ATH12K_CBS_DWELL_TIME_25MS			25
@@ -51,26 +42,10 @@
 #define ATH12K_CBS_TOTAL_DWELL_TIME_200MS		200
 
 /* CBS Array Sizes for dwell split configuration */
-#define ATH12K_CBS_MIN_SCAN_OFFSET_ARRAY_SIZE		0
-#define ATH12K_CBS_MAX_SCAN_OFFSET_ARRAY_SIZE		9
 #define ATH12K_CBS_SCAN_OFFSET_ARRAY_SIZE		10
-
-/* CBS Timing Constants */
-#define ATH12K_CBS_RESTART_TIME				60000	/* msec - restart delay */
-#define ATH12K_CBS_SCAN_START_OFFSET_MIN		5	/* msec - min scan offset */
-#define ATH12K_CBS_DEFAULT_BEACON_INTERVAL		100	/* msec - beacon interval */
 
 /* Maximum channels supported in scan list */
 #define ATH12K_CBS_MAX_CHANNELS				256
-
-/* CBS Configuration Commands */
-#define ATH12K_CBS_ENABLE				0x1	/* Enable/disable CBS */
-#define ATH12K_CBS_DWELL_SPLIT_TIME_CMD			0x2	/* Configure dwell split time */
-#define ATH12K_CBS_DWELL_REST_TIME_CMD			0x3	/* Configure dwell rest time */
-#define ATH12K_CBS_REST_TIME_CMD			0x4	/* Configure rest time */
-#define ATH12K_CBS_WAIT_TIME_CMD			0x5	/* Configure wait time */
-#define ATH12K_CBS_CSA_ENABLE				0x6	/* Enable CSA on CBS */
-#define ATH12K_CBS_TOTAL_DWELL_TIME_CMD			0x7	/* Configure total dwell time */
 
 #define ATH12K_CBS_RUN_ONCE		0x1
 #define ATH12K_CBS_RUN_CONTINUOUS	0x2
@@ -229,7 +204,7 @@ void ath12k_cbs_post_event(struct ath12k_cbs *cbs, enum ath12k_cbs_event event);
 int ath12k_cbs_event_handler(struct ath12k_cbs *cbs, enum ath12k_cbs_event event);
 
 /* Dwell configuration */
-void ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs);
+int ath12k_cbs_init_dwell_params(struct ath12k_cbs *cbs);
 
 /* Scan event callback */
 void ath12k_cbs_scan_event_handler(struct ath12k *ar, u32 scan_id,

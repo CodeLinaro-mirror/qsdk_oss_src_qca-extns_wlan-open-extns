@@ -265,6 +265,7 @@
 	ATH12K_CFG(ATH12K_CFG_SA_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_SA_SW_TEST) \
 	ATH12K_CFG(ATH12K_CFG_SA_MODE) \
+	ATH12K_CFG(ATH12K_CFG_NOL_AUTO_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_REO_MGMT_PATH_DISABLE) \
 
 #define ATH12K_CFG_REG \
@@ -753,6 +754,10 @@
 #define ATH12K_CFG_SA_MODE \
 	ATH12K_CFG_INI_INT("sa_mode_overwrite", -1, 1, -1, \
 	ATH12K_CFG_VALUE_OR_DEFAULT, "Overwrite Smart Antenna Mode")
+
+#define ATH12K_CFG_NOL_AUTO_ENABLE \
+	ATH12K_CFG_INI_BOOL("nol_auto_enable", true, \
+	"Enable/Disable DFS NOL persistence automation")
 
 /* Note: This is a dev-only INI exposed for dealing with unanticipated scenarios */
 #define ATH12K_CFG_REO_MGMT_PATH_DISABLE \

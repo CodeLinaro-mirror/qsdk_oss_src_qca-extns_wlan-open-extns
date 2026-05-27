@@ -650,6 +650,12 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 int ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
 					 const char *path, u32 *num_updated);
 
+int ath12k_vendor_nol_dump_to_file_extn(struct wiphy *wiphy, u8 radio_idx,
+					const char *path, u32 *dump_len);
+
+int ath12k_vendor_nol_restore_from_file_extn(struct wiphy *wiphy, u8 radio_idx,
+					     const char *path, u32 *num_updated);
+
 bool ath12k_vendor_nol_chan_matches_radio(struct wiphy *wiphy,
 					  struct ieee80211_channel *chan,
 					  int radio_idx);

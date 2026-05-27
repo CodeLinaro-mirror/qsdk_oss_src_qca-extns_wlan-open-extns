@@ -11170,6 +11170,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 			   "Getting CAC timeout for pdev %u: %u sec\n",
 			   ar->pdev_idx, *value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_GET_CAC_STATE:
+		*value = test_bit(ATH12K_FLAG_CAC_RUNNING, &ar->dev_flags);
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_LIST_5GHZ_CHAN_INFO:
 		ret = ath12k_display_5ghz_chan_info(ar);
 		break;

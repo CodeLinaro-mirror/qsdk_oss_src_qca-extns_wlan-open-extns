@@ -18,15 +18,6 @@
  * impact on active traffic.
  */
 
-#define ATH12K_CBS_DEBUG 1
-
-#if ATH12K_CBS_DEBUG
-#define ath12k_cbs_dbg(ar, fmt, ...) \
-	ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "CBS: " fmt, ##__VA_ARGS__)
-#else
-#define ath12k_cbs_dbg(ar, fmt, ...) do { } while (0)
-#endif
-
 #define ATH12K_CBS_SCAN_ID				0xA001
 
 /* CBS Dwell Time Options (in milliseconds) */

@@ -45,7 +45,7 @@ bool ath12k_wifi8_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 		if (likely(is_recycler))
 			skb_ctrl->flags |= DP_SKB_RECYCLED;
 		ath12k_wifi8_ucast_handler(dp_vif, link_id, NULL, skb, skb_ctrl,
-					   qos_nw_delay, vlan_ahvif);
+					   qos_nw_delay, vlan_ahvif, NULL);
 		return true;
 	} else if (skb->fast_xmit) {
 		ath12k_err(NULL,

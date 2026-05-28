@@ -3972,6 +3972,217 @@ static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
 	return ret;
 }
 
+/**
+ * ath12k_get_current_cac_timeout - Get configured CAC timeout for this radio
+ * @ar: pointer to ath12k structure
+ * @timeout_sec: configured CAC timeout in seconds
+ *
+ * Return: 0 on success, -1 when no channel context/channel is available,
+ * or -EINVAL for invalid input.
+ */
+static int ath12k_get_current_cac_timeout(struct ath12k *ar, u32 *timeout_sec)
+{
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	struct cfg80211_chan_def *chandef;
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	u32 cac_time_ms;
+
+	if (!timeout_sec)
+		return -EINVAL;
+
+	*timeout_sec = 0;
+
+	chanctx_conf = ath12k_mac_get_first_active_arvif_chanctx(ar);
+	if (!chanctx_conf)
+		return -ENODEV;
+
+	chandef = &chanctx_conf->def;
+	if (!chandef->chan)
+		return -ENODEV;
+
+	if (ar->ar_extn.cac_timeout_override_ms != NO_CAC_OVERRIDE) {
+		*timeout_sec = (u32)(ar->ar_extn.cac_timeout_override_ms /
+				     ATH12K_MSEC_PER_SEC);
+		return 0;
+	}
+
+	cac_time_ms = cfg80211_chandef_dfs_cac_time(hw->wiphy, chandef, false, false);
+	*timeout_sec = cac_time_ms / ATH12K_MSEC_PER_SEC;
+
+	return 0;
+}
+
+/**
+ * ath12k_get_current_bgcac_timeout - Get the current BG CAC timeout
+ * @ar: ath12k radio instance
+ * @timeout_sec: output buffer for the BG CAC timeout in seconds
+ *
+ * Return the per-radio BG CAC timeout override when configured. Otherwise,
+ * return the default BG CAC timeout for the active channel.
+ *
+ * Return: 0 on success, -ENODEV when no channel context is available,
+ * -EINVAL for invalid input, or -EOPNOTSUPP when BG CAC timeout override
+ * support is not compiled in.
+ */
+static int ath12k_get_current_bgcac_timeout(struct ath12k *ar, u32 *timeout_sec)
+{
+#ifdef CPTCFG_QCA_LAB_TEST_FEATURES
+	struct ieee80211_chanctx_conf *chanctx_conf;
+	struct cfg80211_chan_def *chandef;
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	u32 timeout_ms;
+
+	if (!timeout_sec)
+		return -EINVAL;
+
+	*timeout_sec = 0;
+	timeout_ms = cfg80211_get_radio_bgcac_cac_time(hw->wiphy, ar->radio_idx);
+	if (timeout_ms) {
+		*timeout_sec = timeout_ms / ATH12K_MSEC_PER_SEC;
+		return 0;
+	}
+
+	chanctx_conf = ath12k_mac_get_first_active_arvif_chanctx(ar);
+	if (!chanctx_conf)
+		return -ENODEV;
+
+	chandef = &chanctx_conf->def;
+	if (!chandef->chan)
+		return -ENODEV;
+
+	timeout_ms = cfg80211_chandef_dfs_cac_time(hw->wiphy, chandef, true, false);
+	*timeout_sec = timeout_ms / ATH12K_MSEC_PER_SEC;
+
+	return 0;
+#else
+	return -EOPNOTSUPP;
+#endif
+}
+
+/**
+ * ath12k_set_current_bgcac_timeout - Configure the BG CAC timeout override
+ * @ar: ath12k radio instance
+ * @timeout_ms: BG CAC timeout override in milliseconds, or 0 to clear it
+ *
+ * Store the per-radio BG CAC timeout override in cfg80211 radio configuration.
+ * BG CAC timeout is consumed by cfg80211_chandef_dfs_cac_time(), so updating
+ * cfg80211 avoids changing ieee80211_channel extension data and does not
+ * require a regulatory rebuild that could reset DFS channel state.
+ *
+ * Return: 0 on success, a negative cfg80211 error code on failure, or
+ * -EOPNOTSUPP when BG CAC timeout override support is not compiled in.
+ */
+static int ath12k_set_current_bgcac_timeout(struct ath12k *ar, u32 timeout_ms)
+{
+#ifdef CPTCFG_QCA_LAB_TEST_FEATURES
+	struct wiphy *wiphy = ath12k_ar_to_hw(ar)->wiphy;
+	int ret;
+
+	ret = cfg80211_set_radio_bgcac_cac_time(wiphy, ar->radio_idx, timeout_ms);
+	if (ret) {
+		ath12k_err(ar->ab,
+			   "failed to set BG CAC timeout for pdev %u: %d\n",
+			   ar->pdev_idx, ret);
+		return ret;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "BG CAC timeout is now %s (%u sec) for pdev %u\n",
+		   timeout_ms ? "overridden" : "default",
+		   timeout_ms / ATH12K_MSEC_PER_SEC, ar->pdev_idx);
+
+	return 0;
+#else
+	return -EOPNOTSUPP;
+#endif
+}
+
+/**
+ * ath12k_is_timeout_sec_valid - Validate a vendor CAC timeout value
+ * @ab: ath12k base instance used for logging
+ * @timeout_sec: timeout value in seconds
+ * @name: timeout name to include in validation errors
+ * @allow_zero: true if 0 is accepted as a valid timeout value
+ *
+ * Check the user-provided CAC or BG CAC timeout before converting it to
+ * milliseconds.  Non-zero values are capped at ATH12K_MAX_CAC_TIMEOUT_SEC to
+ * keep the millisecond conversion within the supported range.
+ *
+ * Return: true if @timeout_sec is valid, false otherwise.
+ */
+static bool ath12k_is_timeout_sec_valid(struct ath12k_base *ab,
+					u32 timeout_sec,
+					const char *name,
+					bool allow_zero)
+{
+	if (!timeout_sec && !allow_zero) {
+		ath12k_err(ab, "Invalid %s timeout value: 0\n", name);
+		return false;
+	}
+
+	if (timeout_sec > ATH12K_MAX_CAC_TIMEOUT_SEC) {
+		ath12k_err(ab, "%s timeout value too large: %u (max %u sec)\n",
+			   name, timeout_sec, ATH12K_MAX_CAC_TIMEOUT_SEC);
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * ath12k_is_ar_range_valid - Check whether a radio frequency range is valid
+ * @ar: ath12k radio instance
+ *
+ * Validate that both ends of the per-radio frequency range are initialized.
+ * The range is used to limit CAC timeout updates to regulatory rules that
+ * belong to the current radio.
+ *
+ * Return: true if both low and high frequencies are configured, false
+ * otherwise.
+ */
+static inline bool ath12k_is_ar_range_valid(struct ath12k *ar)
+{
+	return ar->chan_info.low_freq && ar->chan_info.high_freq;
+}
+
+/**
+ * ath12k_apply_cac_timeout_override - Apply CAC timeout to active cfg80211 data
+ * @ar: ath12k radio instance
+ * @cac_timeout_ms: CAC timeout override in milliseconds
+ *
+ * Update the active cfg80211 regulatory domain and channel list for the radio's
+ * frequency range.  This applies a newly configured CAC timeout immediately
+ * without scheduling ath12k_regd_update_work(), which would rebuild channels
+ * through handle_band_custom() and may reset DFS channel state.
+ *
+ * Return: 0 on success, a negative cfg80211 error code on failure, or
+ * -EOPNOTSUPP when CAC timeout override support is not compiled in.
+ */
+static int ath12k_apply_cac_timeout_override(struct ath12k *ar,
+					     u32 cac_timeout_ms)
+{
+#ifdef CPTCFG_QCA_LAB_TEST_FEATURES
+	struct wiphy *wiphy = ath12k_ar_to_hw(ar)->wiphy;
+	u32 start_freq = 0, end_freq = 0;
+	int ret;
+
+	if (ath12k_is_ar_range_valid(ar)) {
+		start_freq = ar->chan_info.low_freq;
+		end_freq = ar->chan_info.high_freq;
+	}
+
+	ret = cfg80211_update_dfs_cac_time(wiphy, start_freq, end_freq, cac_timeout_ms);
+	if (ret)
+		ath12k_err(ar->ab,
+			   "failed to apply CAC timeout override for pdev %u: %d\n",
+			   ar->pdev_idx, ret);
+
+	return ret;
+#else
+	return -EOPNOTSUPP;
+#endif
+}
+
 /* Set radio level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
@@ -5116,6 +5327,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		break;
 	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_WSI_BYPASS:
+	{
 	        int i;
 	        struct ath12k_hw_group *ag;
 	        struct ath12k_base *ab;
@@ -5192,6 +5404,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 	        queue_work(system_unbound_wq, &w->work);
 
 	        return 0;
+	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2:
 		u8 alpha2[REG_ALPHA2_LEN];
 		bool regdom_changed;
@@ -5211,6 +5424,38 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		if (!ret && country_changed)
 			*reload = true;
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_CAC_TIMEOUT:
+	{
+		s32 cac_timeout_sec = value;
+		s32 cac_timeout_ms;
+		s32 prev_cac_timeout_ms;
+
+		if (!ath12k_is_timeout_sec_valid(ar->ab, cac_timeout_sec, "CAC", false))
+			return -EINVAL;
+
+		cac_timeout_ms = cac_timeout_sec * ATH12K_MSEC_PER_SEC;
+		prev_cac_timeout_ms = ar->ar_extn.cac_timeout_override_ms;
+		ath12k_set_current_cac_timeout(ar, cac_timeout_ms);
+
+		ret = ath12k_apply_cac_timeout_override(ar, (u32)cac_timeout_ms);
+		if (ret) {
+			ath12k_set_current_cac_timeout(ar, prev_cac_timeout_ms);
+			return ret;
+		}
+
+		ret = 0;
+		break;
+	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_BGCAC_TIMEOUT:
+	{
+		u32 timeout_ms = value * ATH12K_MSEC_PER_SEC;
+
+		if (!ath12k_is_timeout_sec_valid(ar->ab, value, "BG CAC", false))
+			return -EINVAL;
+
+		ret = ath12k_set_current_bgcac_timeout(ar, timeout_ms);
+		break;
+	}
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -10549,6 +10794,22 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		*value = regdomain;
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_CAC_TIMEOUT:
+		ret = ath12k_get_current_cac_timeout(ar, value);
+		if (ret) {
+			ath12k_err(ar->ab,
+				   "failed to get CAC timeout for pdev %u: %d\n",
+				   ar->pdev_idx, ret);
+			break;
+		}
+
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "Getting CAC timeout for pdev %u: %u sec\n",
+			   ar->pdev_idx, *value);
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_BGCAC_TIMEOUT:
+		ret = ath12k_get_current_bgcac_timeout(ar, value);
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -10604,6 +10865,27 @@ int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
         ret = ath12k_vendor_get_arvif_params(arvif, param, value);
 
         return ret;
+}
+
+/**
+ * ath12k_is_rule_in_radio - Check if a regulatory rule overlaps a radio
+ * @ar: ath12k radio instance
+ * @rule: regulatory rule to test
+ *
+ * Compare @rule against the per-radio frequency range in @ar.  The helper uses
+ * overlap instead of full containment so wide regulatory rules that partially
+ * cover a radio still receive the radio-specific CAC timeout override.
+ *
+ * Return: true if the rule overlaps the radio frequency range, false otherwise.
+ */
+static inline bool ath12k_is_rule_in_radio(struct ath12k *ar,
+					   const struct ieee80211_reg_rule *rule)
+{
+	u32 rule_low  = KHZ_TO_MHZ(rule->freq_range.start_freq_khz);
+	u32 rule_high = KHZ_TO_MHZ(rule->freq_range.end_freq_khz);
+
+	return rule_high > ar->chan_info.low_freq &&
+	       rule_low < ar->chan_info.high_freq;
 }
 
 /* Find the 'ar' radio instance using the radio index of the wiphy
@@ -11944,6 +12226,48 @@ static int ath12k_vendor_send_reg_params_update(struct wiphy *wiphy,
 fail:
 	kfree_skb(skb);
 	return -EMSGSIZE;
+}
+
+void ath12k_set_current_cac_timeout(struct ath12k *ar, s32 cac_timeout_ms)
+{
+	ar->ar_extn.cac_timeout_override_ms = cac_timeout_ms;
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "CAC timeout is now %s (%d sec)\n",
+		   (cac_timeout_ms == NO_CAC_OVERRIDE) ?
+		   "default" : "overridden",
+		   (cac_timeout_ms == NO_CAC_OVERRIDE) ?
+		   NO_CAC_OVERRIDE : cac_timeout_ms / ATH12K_MSEC_PER_SEC);
+}
+
+void
+ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
+				   struct ieee80211_regdomain *regd)
+{
+	s32 cac_timeout_ms = ar->ar_extn.cac_timeout_override_ms;
+	int i;
+
+	if (cac_timeout_ms == NO_CAC_OVERRIDE)
+		return;
+
+	if (!ath12k_is_ar_range_valid(ar))
+		return;
+
+	for (i = 0; i < regd->n_reg_rules; i++) {
+		struct ieee80211_reg_rule *rule = &regd->reg_rules[i];
+
+		if (!(rule->flags & NL80211_RRF_DFS))
+			continue;
+
+		if (!ath12k_is_rule_in_radio(ar, rule))
+			continue;
+
+		rule->dfs_cac_ms = (u32)cac_timeout_ms;
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "regd update: DFS rule [%u-%u MHz] dfs_cac_ms -> %u ms\n",
+			   KHZ_TO_MHZ(rule->freq_range.start_freq_khz),
+			   KHZ_TO_MHZ(rule->freq_range.end_freq_khz),
+			   (u32)cac_timeout_ms);
+	}
 }
 
 int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,

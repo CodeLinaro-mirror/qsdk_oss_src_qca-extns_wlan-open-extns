@@ -929,6 +929,7 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 	ath12k_esp_init_extn(ar);
 	ath12k_custom_txrx_init(ar);
 	ath12k_extn_ini_debugfs_register(ar->ab);
+	ar->ar_extn.cac_timeout_override_ms = NO_CAC_OVERRIDE;
 
 	/* Initialize CBS params */
 	ath12k_cbs_init(ar);

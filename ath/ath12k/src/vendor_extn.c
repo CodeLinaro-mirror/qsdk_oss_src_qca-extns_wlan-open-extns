@@ -4146,6 +4146,69 @@ static inline bool ath12k_is_ar_range_valid(struct ath12k *ar)
 }
 
 /**
+ * ath12k_is_rule_in_radio - Check if a regulatory rule overlaps a radio
+ * @ar: ath12k radio instance
+ * @rule: regulatory rule to test
+ *
+ * Compare @rule against the per-radio frequency range in @ar.  The helper uses
+ * overlap instead of full containment so wide regulatory rules that partially
+ * cover a radio still receive the radio-specific CAC timeout override.
+ *
+ * Return: true if the rule overlaps the radio frequency range, false otherwise.
+ */
+static inline bool ath12k_is_rule_in_radio(struct ath12k *ar,
+					   const struct ieee80211_reg_rule *rule)
+{
+	u32 rule_low = KHZ_TO_MHZ(rule->freq_range.start_freq_khz);
+	u32 rule_high = KHZ_TO_MHZ(rule->freq_range.end_freq_khz);
+
+	return rule_high > ar->chan_info.low_freq &&
+	       rule_low < ar->chan_info.high_freq;
+}
+
+static struct ath12k *ath12k_get_block_dfs_regd_update_ar(struct ath12k *ar)
+{
+	struct ath12k_hw *ah = ar->ah;
+	struct ath12k *ar_tmp;
+	int i;
+
+	if (!ah->use_6ghz_regd || ar->supports_6ghz)
+		return ar;
+
+	for_each_ar(ah, ar_tmp, i) {
+		if (ar_tmp->supports_6ghz)
+			return ar_tmp;
+	}
+
+	return ar;
+}
+
+/**
+ * ath12k_queue_block_dfs_regd_update - Queue blockdfslist regulatory rebuild
+ * @ar: pointer to ath12k structure
+ *
+ * Marks the wiphy regulatory state stale and queues the existing ath12k
+ * regulatory update worker. The worker rebuilds the cfg80211 regdomain from
+ * the stored firmware regdomain and applies blockdfslist overrides before
+ * notifying userspace.
+ */
+static void ath12k_queue_block_dfs_regd_update(struct ath12k *ar)
+{
+	struct ath12k_base *ab = ar->ab;
+	struct ath12k_hw *ah = ar->ah;
+	struct ath12k *update_ar;
+
+	update_ar = ath12k_get_block_dfs_regd_update_ar(ar);
+
+	ah->regd_updated = false;
+	queue_work(update_ar->ab->workqueue, &update_ar->regd_update_work);
+
+	ath12k_info(ab,
+		    "blockdfslist: queued regd update requested pdev %u update pdev %u use_6ghz_regd %u\n",
+		    ar->pdev_idx, update_ar->pdev_idx, ah->use_6ghz_regd);
+}
+
+/**
  * ath12k_apply_cac_timeout_override - Apply CAC timeout to active cfg80211 data
  * @ar: ath12k radio instance
  * @cac_timeout_ms: CAC timeout override in milliseconds
@@ -5456,6 +5519,16 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		ret = ath12k_set_current_bgcac_timeout(ar, timeout_ms);
 		break;
 	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_BLOCK_DFS_LIST:
+		ar->ar_extn.block_dfs_channels = value ? 1 : 0;
+
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "%s DFS channels for pdev %u\n",
+			   value ? "Blocking" : "Unblocking", ar->pdev_idx);
+		ath12k_queue_block_dfs_regd_update(ar);
+
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -7589,6 +7662,95 @@ int ath12k_vendor_nol_restore_from_file_extn(struct wiphy *wiphy, u8 radio_idx,
 {
 	return ath12k_vendor_set_nol_chan_list_extn(wiphy, radio_idx,
 						     path, num_updated);
+}
+
+/**
+ * ath12k_should_remove_dfs_reg_rule - Check if a DFS rule should be blocked
+ * @ar: pointer to ath12k structure
+ * @rule: regulatory rule to check
+ *
+ * Return: true if @rule is a DFS rule and overlaps this radio's frequency
+ * range, false otherwise. If the radio range is unavailable, all DFS rules are
+ * considered applicable to this radio.
+ */
+static bool
+ath12k_should_remove_dfs_reg_rule(struct ath12k *ar,
+				  const struct ieee80211_reg_rule *rule)
+{
+	if (!(rule->flags & NL80211_RRF_DFS))
+		return false;
+
+	if (!ath12k_is_ar_range_valid(ar))
+		return true;
+
+	return ath12k_is_rule_in_radio(ar, rule);
+}
+
+/**
+ * ath12k_remove_dfs_reg_rules - Remove blocked DFS rules from a regdomain copy
+ * @ar: pointer to ath12k structure
+ * @regd: regulatory domain copy to update
+ *
+ * Compacts @regd in place by dropping DFS rules selected by
+ * ath12k_should_remove_dfs_reg_rule(). The stored firmware regdomain is not
+ * modified, so unblocking can restore DFS operation by rebuilding from a fresh
+ * firmware regdomain copy.
+ */
+static void
+ath12k_remove_dfs_reg_rules(struct ath12k *ar, struct ieee80211_regdomain *regd)
+{
+	unsigned int num_rules = 0;
+	unsigned int removed_rules = 0;
+	unsigned int i;
+
+	for (i = 0; i < regd->n_reg_rules; i++) {
+		struct ieee80211_reg_rule *rule = &regd->reg_rules[i];
+
+		if (ath12k_should_remove_dfs_reg_rule(ar, rule)) {
+			ath12k_info(ar->ab,
+				    "blockdfslist: remove DFS rule [%u-%u MHz] for pdev %u\n",
+				    KHZ_TO_MHZ(rule->freq_range.start_freq_khz),
+				    KHZ_TO_MHZ(rule->freq_range.end_freq_khz),
+				    ar->pdev_idx);
+			removed_rules++;
+			continue;
+		}
+
+		if (num_rules != i)
+			regd->reg_rules[num_rules] = *rule;
+		num_rules++;
+	}
+
+	regd->n_reg_rules = num_rules;
+
+	ath12k_info(ar->ab,
+		    "blockdfslist: pdev %u removed %u DFS rules, remaining %u rules\n",
+		    ar->pdev_idx, removed_rules, regd->n_reg_rules);
+}
+
+/**
+ * ath12k_update_regd_block_dfs_ext - Apply DFS block state into reg_rules
+ * @ar: pointer to ath12k structure
+ * @regd: pointer to the regulatory domain copy to update
+ *
+ * When block_dfs_channels is set, removes DFS rules for this radio from the
+ * temporary regd copy passed to regulatory_set_wiphy_regd().  The original
+ * firmware regulatory domain is never modified, so unblocking uses a fresh copy
+ * with the original DFS rules intact.
+ */
+void ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
+				      struct ieee80211_regdomain *regd)
+{
+	if (!ar->ar_extn.block_dfs_channels)
+		return;
+
+	ath12k_info(ar->ab,
+		    "blockdfslist: apply pdev %u block %u range %u-%u rules %u\n",
+		    ar->pdev_idx, ar->ar_extn.block_dfs_channels,
+		    ar->chan_info.low_freq, ar->chan_info.high_freq,
+		    regd->n_reg_rules);
+
+	ath12k_remove_dfs_reg_rules(ar, regd);
 }
 
 /* Find the 'ar' radio instance using the radio index of the wiphy
@@ -10410,6 +10572,207 @@ static void ath12k_super_chan_dump(struct ath12k *ar,
 	}
 }
 
+static u32 ath12k_get_cac_half_bw(enum nl80211_chan_width width)
+{
+	switch (width) {
+	case NL80211_CHAN_WIDTH_40:
+		return 20;
+	case NL80211_CHAN_WIDTH_80:
+	case NL80211_CHAN_WIDTH_80P80:
+		return 40;
+	case NL80211_CHAN_WIDTH_160:
+		return 80;
+	default:
+		return 10;
+	}
+}
+
+/**
+ * ath12k_get_rem_cac_sec_for_chan() - Compute remaining CAC time for a channel
+ * @ar: Pointer to ath12k radio instance
+ * @chan: Pointer to the ieee80211_channel being queried
+ *
+ * Returns remaining CAC time in seconds when CAC is in progress, or -1 when
+ * no CAC is running on this channel.
+ */
+static s32
+ath12k_get_rem_cac_sec_for_chan(struct ath12k *ar, struct ieee80211_channel *chan)
+{
+	struct wireless_dev *wdev;
+	struct cfg80211_chan_def *chandef;
+	unsigned long cac_start_time;
+	u32 half_bw, elapsed_ms;
+	int link_id;
+
+	list_for_each_entry(wdev, &ath12k_ar_to_hw(ar)->wiphy->wdev_list, list) {
+		if (wdev->iftype != NL80211_IFTYPE_AP)
+			continue;
+
+		for (link_id = 0; link_id < ARRAY_SIZE(wdev->links); link_id++) {
+			if (!wdev->links[link_id].cac_started)
+				continue;
+
+			chandef = wdev_chandef(wdev, link_id);
+			if (!chandef || !chandef->chan)
+				continue;
+
+			half_bw = ath12k_get_cac_half_bw(chandef->width);
+
+			if (chan->center_freq < chandef->center_freq1 - half_bw + 10 ||
+			    chan->center_freq > chandef->center_freq1 + half_bw - 10)
+				continue;
+
+			cac_start_time = wdev->links[link_id].cac_start_time;
+			elapsed_ms = jiffies_to_msecs(jiffies - cac_start_time);
+
+			if (wdev->links[link_id].cac_time_ms <= elapsed_ms)
+				return 0;
+
+			return (s32)((wdev->links[link_id].cac_time_ms -
+					       elapsed_ms) / ATH12K_MSEC_PER_SEC);
+		}
+	}
+
+	return -1;
+}
+
+/**
+ * ath12k_get_dfs_chan_info() - Fill DFS state string and timing for a channel
+ * @ar: Pointer to ath12k radio instance
+ * @chan: Pointer to the ieee80211_channel being queried
+ * @dfs_state_str: Output human-readable DFS state string
+ * @rem_cac_sec: Output remaining CAC time in seconds
+ * @cac_comp_time: Output CAC completion timestamp in 0.1 ms units since boot
+ * @rem_nop_sec: Output remaining NOP time in seconds
+ */
+static void ath12k_get_dfs_chan_info(struct ath12k *ar,
+				     struct ieee80211_channel *chan,
+				     const char **dfs_state_str,
+				     s32 *rem_cac_sec,
+				     u64 *cac_comp_time,
+				     s32 *rem_nop_sec)
+{
+	u32 elapsed_ms;
+
+	*rem_cac_sec = -1;
+	*cac_comp_time = 0;
+	*rem_nop_sec = -1;
+
+	if (!(chan->flags & IEEE80211_CHAN_RADAR)) {
+		*dfs_state_str = "NON_DFS_CHANNEL";
+		return;
+	}
+
+	switch (chan->dfs_state) {
+	case NL80211_DFS_USABLE:
+		*rem_cac_sec = ath12k_get_rem_cac_sec_for_chan(ar, chan);
+		*dfs_state_str = *rem_cac_sec >= 0 ?
+				 "DFS_CAC_STARTED" : "DFS_CAC_REQUIRED";
+		break;
+	case NL80211_DFS_AVAILABLE:
+		*dfs_state_str = "DFS_CAC_COMPLETED";
+		*cac_comp_time = (u64)jiffies_to_msecs(chan->dfs_state_entered -
+							  INITIAL_JIFFIES);
+		break;
+	case NL80211_DFS_UNAVAILABLE:
+		*dfs_state_str = "DFS_NOL";
+		if (!chan->dfs_state_entered)
+			break;
+
+		elapsed_ms = jiffies_to_msecs(jiffies - chan->dfs_state_entered);
+		if (elapsed_ms < IEEE80211_DFS_MIN_NOP_TIME_MS)
+			*rem_nop_sec = (s32)((IEEE80211_DFS_MIN_NOP_TIME_MS -
+					       elapsed_ms) / ATH12K_MSEC_PER_SEC);
+		else
+			*rem_nop_sec = 0;
+		break;
+	default:
+		*dfs_state_str = "DFS_INVALID";
+		break;
+	}
+}
+
+/* Returns true if chan falls within ar's configured frequency range */
+static inline bool ath12k_is_chan_in_ar(struct ath12k *ar,
+					struct ieee80211_channel *chan)
+{
+	if (!ar->chan_info.low_freq || !ar->chan_info.high_freq)
+		return true;
+	return chan->center_freq >= ar->chan_info.low_freq &&
+	       chan->center_freq <= ar->chan_info.high_freq;
+}
+
+#define ATH12K_BAND5_START_FREQ_MHZ  5000
+#define ATH12K_BAND5_CHAN_SPACING_MHZ 5
+
+/* Convert a 5 GHz center frequency to IEEE 802.11 channel number */
+static inline u8 ath12k_5g_chan_to_ieee_num(struct ieee80211_channel *chan)
+{
+	return (chan->center_freq - ATH12K_BAND5_START_FREQ_MHZ) /
+	       ATH12K_BAND5_CHAN_SPACING_MHZ;
+}
+
+/**
+ * ath12k_display_5ghz_chan_info() - Print 5 GHz channel info for a radio
+ * @ar: Pointer to ath12k radio instance
+ *
+ * Iterates over all 5 GHz channels in the radio's supported band and
+ * prints remaining CAC/NOL time, opclass, channel state,
+ * channel and frequency.
+ *
+ * Returns 0 on success, -ENODATA if no 5 GHz band is available for the
+ * radio.
+ */
+
+static int ath12k_display_5ghz_chan_info(struct ath12k *ar)
+{
+	struct ieee80211_supported_band *sband;
+	int i;
+
+	sband = &ar->mac.sbands[NL80211_BAND_5GHZ];
+	if (!sband->channels || !sband->n_channels) {
+		ath12k_err(ar->ab,
+			   "get_5ghz_chan_info: no 5GHz channels for radio %d\n",
+			   ar->pdev_idx);
+		return -ENODATA;
+	}
+
+	pr_info("5GHz channel info for radio %d (pdev %d, freq range %u-%u MHz):\n",
+		ar->pdev_idx, ar->pdev->pdev_id,
+		ar->chan_info.low_freq, ar->chan_info.high_freq);
+
+	for (i = 0; i < sband->n_channels; i++) {
+		struct ieee80211_channel *chan;
+		const char *dfs_state_str;
+		u64 cac_comp_time;
+		s32 rem_cac_sec, rem_nop_sec;
+		u8 chan_num, opclass;
+
+		chan = &sband->channels[i];
+
+		if (chan->flags & IEEE80211_CHAN_DISABLED)
+			continue;
+
+		if (!ath12k_is_chan_in_ar(ar, chan))
+			continue;
+
+		chan_num = ath12k_5g_chan_to_ieee_num(chan);
+		opclass = ath12k_reg_get_opclass_from_freq_width(NULL,
+								 chan->center_freq,
+								 20,
+								 BIT(BEHAV_NONE));
+		ath12k_get_dfs_chan_info(ar, chan, &dfs_state_str,
+					 &rem_cac_sec, &cac_comp_time,
+					 &rem_nop_sec);
+		pr_info("freq: %u chan_num: %u, opclass: %u, state: %s, rem_cac_time: %d cac_comp_time: %llu, rem_nop_time: %d\n",
+			chan->center_freq, chan_num, opclass,
+			dfs_state_str, rem_cac_sec,
+			cac_comp_time, rem_nop_sec);
+	}
+
+	return 0;
+}
+
 /* Get radio level parameters */
 static int ath12k_vendor_display_super_chan_list(struct ath12k *ar, u32 *value)
 {
@@ -10807,9 +11170,24 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 			   "Getting CAC timeout for pdev %u: %u sec\n",
 			   ar->pdev_idx, *value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_LIST_5GHZ_CHAN_INFO:
+		ret = ath12k_display_5ghz_chan_info(ar);
+		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_BGCAC_TIMEOUT:
 		ret = ath12k_get_current_bgcac_timeout(ar, value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_BLOCK_DFS_LIST: {
+		struct ath12k_base *ab = ar->ab;
+
+		*value = ar->ar_extn.block_dfs_channels;
+
+		ath12k_dbg(ab, ATH12K_DBG_REG,
+			   "Getting block_dfs_channels for pdev %u: %u\n",
+			   ar->pdev_idx, *value);
+
+		ret = 0;
+		break;
+	}
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -10865,27 +11243,6 @@ int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
         ret = ath12k_vendor_get_arvif_params(arvif, param, value);
 
         return ret;
-}
-
-/**
- * ath12k_is_rule_in_radio - Check if a regulatory rule overlaps a radio
- * @ar: ath12k radio instance
- * @rule: regulatory rule to test
- *
- * Compare @rule against the per-radio frequency range in @ar.  The helper uses
- * overlap instead of full containment so wide regulatory rules that partially
- * cover a radio still receive the radio-specific CAC timeout override.
- *
- * Return: true if the rule overlaps the radio frequency range, false otherwise.
- */
-static inline bool ath12k_is_rule_in_radio(struct ath12k *ar,
-					   const struct ieee80211_reg_rule *rule)
-{
-	u32 rule_low  = KHZ_TO_MHZ(rule->freq_range.start_freq_khz);
-	u32 rule_high = KHZ_TO_MHZ(rule->freq_range.end_freq_khz);
-
-	return rule_high > ar->chan_info.low_freq &&
-	       rule_low < ar->chan_info.high_freq;
 }
 
 /* Find the 'ar' radio instance using the radio index of the wiphy

@@ -494,6 +494,11 @@ ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
 {
 }
 
+static inline void
+ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
+				 struct ieee80211_regdomain *regd)
+{
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -749,6 +754,10 @@ void ath12k_set_current_cac_timeout(struct ath12k *ar, s32 cac_timeout_ms);
 void
 ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
 				   struct ieee80211_regdomain *regd);
+
+void
+ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
+				 struct ieee80211_regdomain *regd);
 
 enum ath12k_chan_144_state {
 	CHAN_144_DIS = 0,

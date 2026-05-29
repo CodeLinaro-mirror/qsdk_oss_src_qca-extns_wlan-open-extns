@@ -293,6 +293,8 @@ struct wlan_intf_extn {
  * @raw_pkt_ctx:   raw packet home/off-channel context.
  * @radio_kobj:    pointer to radio kernel object.
  * @vifs_kobj:     Pointer to vifs kernel object.
+ * @block_dfs_channels: 1:DFS channels disabled by blockdfslist command,
+ *   0: DFS channel are not disabled by blockdfslist command
  * @cac_timeout_override_ms: Custom CAC timeout override in ms.
  *	NO_CAC_OVERRIDE = no override set (use regulatory domain CAC timeout).
  *	Any positive value = override in ms.
@@ -317,6 +319,7 @@ struct ath12k_extn {
 	/* sysfs entries under ieee80211: radioX */
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
+	bool block_dfs_channels;
 	s32 cac_timeout_override_ms;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;

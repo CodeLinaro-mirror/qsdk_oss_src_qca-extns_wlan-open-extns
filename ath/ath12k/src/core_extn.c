@@ -1657,3 +1657,45 @@ bool ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
 
 	return false;
 }
+
+/**
+ * ath12k_get_monitor_version - Return the monitor ring version for a device
+ * @ab: ath12k base device instance
+ *
+ * Maps the hardware revision to the monitor ring version used by the
+ * firmware, mirroring the Prop driver's ol_ath_get_monitor_version():
+ *
+ *   Version 1: QCA Proprietary Lithium Monitor
+ *   Version 2: QCA Proprietary Beryllium Monitor
+ *   Version 3: UD Lithium - Quad Ring Monitor
+ *   Version 4: UD Beryllium - Dual Ring Monitor
+ *   Version 5: UD Boron - Dual Ring Monitor
+ *
+ * Return: Monitor version number, or 0 if the hw_rev is unknown.
+ */
+u32 ath12k_get_monitor_version(struct ath12k_base *ab)
+{
+	if (!ab)
+		return 0;
+
+	switch (ab->hw_rev) {
+	case ATH12K_HW_WCN7850_HW20:
+	case ATH12K_HW_QCN9074_HW10:
+	case ATH12K_HW_QCN9160_HW10:
+		return 3;
+	case ATH12K_HW_QCN9274_HW10:
+	case ATH12K_HW_QCN9274_HW20:
+	case ATH12K_HW_IPQ5332_HW10:
+	case ATH12K_HW_IPQ5424_HW10:
+	case ATH12K_HW_QCN6432_HW10:
+		return 4;
+	case ATH12K_HW_QCN9625_HW10:
+	case ATH12K_HW_QCN9625_HW20:
+	case ATH12K_HW_QCN9589_HW10:
+		return 5;
+	default:
+		ath12k_warn(ab, "unknown hw_rev %d for monitor version\n",
+			    ab->hw_rev);
+		return 0;
+	}
+}

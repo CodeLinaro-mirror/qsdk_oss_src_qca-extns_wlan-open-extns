@@ -11793,6 +11793,38 @@ void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 			return;
 		}
 	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_AGILE_CAPABLE]) {
+		u8 adfs_capable;
+
+		if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]) {
+			radio_idx = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+		} else {
+			/* No radio_idx given — find first 5 GHz radio */
+			for (radio_idx = 0; radio_idx < ah->num_radio; radio_idx++) {
+				ar = &ah->radio[radio_idx];
+				if (ar->mac.sbands[NL80211_BAND_5GHZ].channels)
+					break;
+			}
+		}
+
+		if (radio_idx >= ah->num_radio) {
+			ath12k_err(NULL,
+				   "Invalid radio index %u (valid range: 0..%u)\n",
+				   radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+			return;
+		}
+
+		ar = &ah->radio[radio_idx];
+		adfs_capable = test_bit(ar->cfg_rx_chainmask,
+					&ar->pdev->cap.adfs_chain_mask) ? 1 : 0;
+
+		if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_CONFIG_AGILE_CAPABLE,
+			       adfs_capable)) {
+			ath12k_err(NULL, "failed to put agile capable\n");
+			return;
+		}
+	}
 }
 
 int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,

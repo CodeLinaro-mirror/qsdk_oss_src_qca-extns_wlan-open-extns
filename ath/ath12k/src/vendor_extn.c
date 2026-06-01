@@ -11614,6 +11614,11 @@ out:
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)
 {
+	struct ath12k_dp_vif *dp_vif;
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+	u8 allow_3addr_mc;
+
 	int ret;
 
 	ret = ath12k_vendor_set_esp_params_extn(wiphy, tb, wdev);
@@ -11621,6 +11626,35 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 		ath12k_err(NULL, "Failed to set ESP params: %d\n", ret);
 		return ret;
 	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]) {
+		allow_3addr_mc = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]);
+
+		if (allow_3addr_mc > 1) {
+			ath12k_err(NULL, "Invalid allow_3addr_mc value: %u\n", allow_3addr_mc);
+			return -EINVAL;
+		}
+
+		vif = wdev_to_ieee80211_vif(wdev);
+		if (!vif) {
+			ath12k_err(NULL, "vif is NULL\n");
+			return -EINVAL;
+		}
+
+		if (vif->type != NL80211_IFTYPE_STATION) {
+			ath12k_dbg(NULL, ATH12K_DBG_PPE, "\n");
+			return -EOPNOTSUPP;
+		}
+		ahvif = ath12k_vif_to_ahvif(vif);
+		if (!ahvif) {
+			ath12k_err(NULL, "ahvif is NULL\n");
+			return -EINVAL;
+		}
+
+		dp_vif = &ahvif->dp_vif;
+		dp_vif->dp_extn.allow_3addr_mc = !!allow_3addr_mc;
+	}
+
 
 	return 0;
 }

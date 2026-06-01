@@ -66,6 +66,7 @@ struct ath12k_dp_vif_extn {
 	uint32_t rx_filter; /* mesh rx filter */
 	bool mesh_tx; /*  drop disassocition frames if configured */
 #endif
+	bool allow_3addr_mc;
 };
 
 /**

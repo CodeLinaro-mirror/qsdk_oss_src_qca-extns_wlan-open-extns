@@ -17,7 +17,7 @@
 #define SMARTANTENNA_DEFAULT            3
 
 /* Number of radio supports in test module */
-#define SA_MAX_RADIOS 3
+#define SA_MAX_RADIOS 5
 /* MAX RSSI sample collected from training stats */
 #define SA_MAX_RSSI_SAMPLES 10
 /* MAX receive chains */
@@ -38,7 +38,7 @@
  * rates is about 6.5 Mbps.
  */
 #define MIN_GOODPUT_THRESHOLD 6
-/* 1 sec */
+/* 2 seconds */
 #define SA_PERF_TRAIN_INTERVEL 2000
 /* max number of perf slots for which no traffic can be there */
 #define SA_MAX_NOTRAFFIC_TIME 10

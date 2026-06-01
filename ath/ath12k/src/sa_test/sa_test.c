@@ -286,23 +286,28 @@ static int sa_test_peer_connect(void **ccp, struct ath12k_sa_node_info *node_inf
 	return 0;
 }
 
-static int sa_test_peer_disconnect(void *ccp)
+static int sa_test_peer_disconnect(void **ccp)
 {
-	struct sa_node_ccp *node = ccp;
+	struct sa_node_ccp *node;
 	struct radio_config *radio;
 
-	if (!node)
+	if (!ccp || !*ccp)
 		return -1;
+	node = *ccp;
 
 	radio = &g_sa.radio[node->node_info.radio_id];
-	radio->nodes_connected--;
-	radio->node_count_per_ant[node->train_info.previous_selected_antenna]--;
+	if (radio->nodes_connected > 0)
+		radio->nodes_connected--;
+	if ((node->train_info.previous_selected_antenna < SA_ANTENNA_COMBINATIONS) &&
+	    (radio->node_count_per_ant[node->train_info.previous_selected_antenna] > 0))
+		radio->node_count_per_ant[node->train_info.previous_selected_antenna]--;
 	SA_DEBUG_PRINT(SA_DEBUG_LVL2, node->node_info.radio_id,
 		       "Mac: %pM RadioId: %d channel: %d band: %d\n",
 		       node->node_info.mac_addr, node->node_info.radio_id,
 		       node->node_info.chan_num, node->node_info.band);
 
 	kfree(node);
+	*ccp = NULL;
 
 	return 0;
 }
@@ -469,21 +474,21 @@ static void display_help(void)
 		"Training init for a particualr node",
 		SMART_ANT_PARAM_TRAIN_START);
 	pr_info(" SMART_ANT_PARAM_TRAIN_ENABLE            %d    "
-		"Enable bitmap for init,periodic & performence triggers",
+		"Enable bitmap for init,periodic & performance triggers",
 		SMART_ANT_PARAM_TRAIN_ENABLE);
 	pr_info(" SMART_ANT_PARAM_PERFTRAIN_INTERVAL      %d    "
-		"Performence monitoring interval",
+		"Performance monitoring interval",
 		SMART_ANT_PARAM_PERFTRAIN_INTERVAL);
 	pr_info(" SMART_ANT_PARAM_RETRAIN_INTERVAL        %d    "
 		"Periodic retrain interval", SMART_ANT_PARAM_RETRAIN_INTERVAL);
 	pr_info(" SMART_ANT_PARAM_PERFTRAIN_THRESHOLD     %d    "
-		"percentage change in goodput to tigger performance training",
+		"Percentage change in goodput to trigger performance training",
 		SMART_ANT_PARAM_PERFTRAIN_THRESHOLD);
 	pr_info(" SMART_ANT_PARAM_MIN_GOODPUT_THRESHOLD   %d    "
-		"Minimum Good put threshold to tigger performance training",
+		"Minimum Good put threshold to trigger performance training",
 		SMART_ANT_PARAM_MIN_GOODPUT_THRESHOLD);
 	pr_info(" SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL    %d    "
-		"goodput avg interval", SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL);
+		"Goodput avg interval", SMART_ANT_PARAM_GOODPUT_AVG_INTERVAL);
 	pr_info(" SMART_ANT_PARAM_DEFAULT_ANTENNA         %d    "
 		"Default antenna for RX", SMART_ANT_PARAM_DEFAULT_ANTENNA);
 	pr_info(" SMART_ANT_PARAM_DEFAULT_TX_ANTENNA      %d    "
@@ -494,28 +499,34 @@ static void display_help(void)
 	pr_info(" SMART_ANT_PARAM_DBG_LEVEL               %d    "
 		"Debug level for each radio", SMART_ANT_PARAM_DBG_LEVEL);
 	pr_info(" SMART_ANT_PARAM_PRETRAIN_PKTS           %d    "
-		"num of pre train packets", SMART_ANT_PARAM_PRETRAIN_PKTS);
+		"Number of pre train packets", SMART_ANT_PARAM_PRETRAIN_PKTS);
 	pr_info(" SMART_ANT_PARAM_OTHER_BW_PKTS_TH        %d    "
 		"Threshold for other bw packets",
 		SMART_ANT_PARAM_OTHER_BW_PKTS_TH);
 	pr_info(" SMART_ANT_PARAM_GOODPUT_IGNORE_INTERVAL %d    "
-		"goodput ignore interval",
+		"Goodput ignore interval",
 		SMART_ANT_PARAM_GOODPUT_IGNORE_INTERVAL);
 	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW20         %d    "
-		"min num packets in 20 to indicate active bw",
+		"Min num packets in 20 MHz to indicate active bw",
 		SMART_ANT_PARAM_MIN_PKT_TH_BW20);
 	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW40         %d    "
-		"min num packets in 40 to indicate active bw",
+		"Min num packets in 40 MHz to indicate active bw",
 		SMART_ANT_PARAM_MIN_PKT_TH_BW40);
 	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW80         %d    "
-		"min num packets in 80 to indicate active bw",
+		"Min num packets in 80 MHz to indicate active bw",
 		SMART_ANT_PARAM_MIN_PKT_TH_BW80);
+	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW160         %d    "
+		"Min num packets in 160 MHz to indicate active bw",
+		SMART_ANT_PARAM_MIN_PKT_TH_BW160);
+	pr_info(" SMART_ANT_PARAM_MIN_PKT_TH_BW320         %d    "
+		"Min num packets in 320 MHz to indicate active bw",
+		SMART_ANT_PARAM_MIN_PKT_TH_BW320);
 	pr_info(" SMART_ANT_PARAM_DEBUG_INFO              %d    "
 		"Displays node debug info", SMART_ANT_PARAM_DEBUG_INFO);
 	pr_info(" SMART_ANT_PARAM_MAX_TRAIN_PPDU          %d    "
-		"max number of train ppdus", SMART_ANT_PARAM_MAX_TRAIN_PPDU);
+		"Max number of train ppdus", SMART_ANT_PARAM_MAX_TRAIN_PPDU);
 	pr_info(" SMART_ANT_PARAM_PERF_HYSTERESIS         %d    "
-		"hysteresis for performence based trigger",
+		"Hysteresis for performance based trigger",
 		SMART_ANT_PARAM_PERF_HYSTERESIS);
 	pr_info(" SMART_ANT_PARAM_TX_FEEDBACK_CONFIG      %d    "
 		"Tx Feedback config", SMART_ANT_PARAM_TX_FEEDBACK_CONFIG);
@@ -544,6 +555,7 @@ static void display_help(void)
 			"Training start in test mode",
 			SMART_ANT_PARAM_TRAIN_START_TESTMODE);
 	}
+	pr_info("\n");
 }
 
 static int sa_test_set_param(struct ath12k_sa_config_params *params)
@@ -566,7 +578,7 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 		return -1;
 
 	SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
-		       "SA Test: set_param type=%u id=%u val=0x%x",
+		       "SA Test: set_param type=%u id=%u val=0x%x\n",
 		       params->param_type, params->param_id, params->param_value);
 
 	sa_params = &radio->sa_params;
@@ -715,7 +727,7 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 			node->train_info.perf_trigger_count = 0;
 			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
 				"Last training time :%d ,Periodic triggers: %d,"
-				"performence triggers: %d\n",
+				"performance triggers: %d\n",
 				node->train_info.last_training_time,
 				node->train_info.prd_trigger_count,
 				node->train_info.perf_trigger_count);
@@ -832,7 +844,7 @@ static int sa_test_get_param(struct ath12k_sa_config_params *params)
 		return -1;
 
 	SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
-		       "SA Test: get_param type=%u id=%u",
+		       "SA Test: get_param type=%u id=%u\n",
 		       params->param_type, params->param_id);
 
 	radio = &g_sa.radio[params->radio_id];
@@ -949,7 +961,7 @@ static int sa_test_get_param(struct ath12k_sa_config_params *params)
 			params->param_value = node->train_info.train_enable;
 			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
 				       "Last training time: %d, Periodic "
-				       "triggers: %d, performence triggers: "
+				       "triggers: %d, performance triggers: "
 				       "%d\n",
 				       node->train_info.last_training_time,
 				       node->train_info.prd_trigger_count,

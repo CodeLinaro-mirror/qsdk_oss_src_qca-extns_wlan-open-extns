@@ -326,9 +326,7 @@ void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta)
 	struct ath12k *ar;
 
 	rcu_read_lock();
-	ops = rcu_dereference(g_sa_ops);
-	if (!arsta || !arsta->arvif || !arsta->arvif->ar ||
-	    !ops || !ops->sa_peer_disconnect) {
+	if (!arsta || !arsta->arvif || !arsta->arvif->ar) {
 		rcu_read_unlock();
 		return;
 	}
@@ -340,8 +338,14 @@ void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta)
 	}
 
 	sa_sta = &arsta->arsta_extn.sa_sta;
-	if (sa_sta->ctx)
-		ops->sa_peer_disconnect(sa_sta->ctx);
+	ops = rcu_dereference(g_sa_ops);
+	if (ops && ops->sa_peer_disconnect) {
+		if (sa_sta->ctx)
+			ops->sa_peer_disconnect(&sa_sta->ctx);
+	} else if (sa_sta->ctx) {
+		kfree(sa_sta->ctx);
+	}
+
 	sa_sta->ctx = NULL;
 	rcu_read_unlock();
 }
@@ -854,7 +858,7 @@ static void sa_core_tx_feedback_notify(struct ath12k *ar,
 	u8 status = 0;
 
 	ops = rcu_dereference(g_sa_ops);
-	if (!ops || !ops->sa_update_txfeedback)
+	if (!ops || !ops->sa_update_txfeedback || !sa_sta->ctx)
 		return;
 
 	if (ops->sa_update_txfeedback(sa_sta->ctx, tx, &status)) {
@@ -895,7 +899,7 @@ static void sa_core_rx_feedback_notify(struct ath12k *ar,
 	u8 status = 0;
 
 	ops = rcu_dereference(g_sa_ops);
-	if (!ops || !ops->sa_update_rxfeedback)
+	if (!ops || !ops->sa_update_rxfeedback || !sa_sta->ctx)
 		return;
 
 	if (ops->sa_update_rxfeedback(sa_sta->ctx, rx, &status)) {

@@ -1389,3 +1389,52 @@ int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
 	return cfg80211_find_ext_elem(WLAN_EID_EXT_MLO_LINK_INFO,
 				      pos, end - pos) ? 1 : 0;
 }
+
+/**
+ * ath12k_control_beaconing_bootup_cac_check_extn - Check boot-up CAC state
+ * and defer vdev_up if DFS CAC is still in progress.
+ *
+ * @ar:        ath12k radio instance
+ * @arvif:     link vif for which vdev_up is being considered
+ * @link_conf: ieee80211_bss_conf for the link
+ *
+ * Returns true if vdev_up should be deferred (CAC still running), false
+ * otherwise.  When returning true the function also clears arvif->is_up and
+ * emits a debug message.  When returning false and the CAC_RUNNING flag is
+ * still set it is cleared so that get_txpower no longer returns -EAGAIN.
+ */
+bool ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
+						     struct ath12k_link_vif *arvif,
+						     struct ieee80211_bss_conf *link_conf)
+{
+	struct ieee80211_chanctx_conf *chanctx_conf;
+
+	chanctx_conf = wiphy_dereference(ath12k_ar_to_hw(ar)->wiphy,
+					 link_conf->chanctx_conf);
+
+	if (chanctx_conf &&
+	    cfg80211_chandef_dfs_usable(ath12k_ar_to_hw(ar)->wiphy,
+					&chanctx_conf->def) &&
+	    !cfg80211_chandef_dfs_available(ath12k_ar_to_hw(ar)->wiphy,
+					    &chanctx_conf->def)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "vdev %d: boot-up CAC in progress, deferring vdev_up\n",
+			   arvif->vdev_id);
+		arvif->is_up = false;
+		return true;
+	}
+
+	/*
+	 * Boot-up CAC has completed; clear the CAC_RUNNING flag so that
+	 * get_txpower no longer returns -EAGAIN and iw dev shows the
+	 * correct txpower for this vdev.
+	 */
+	if (test_bit(ATH12K_FLAG_CAC_RUNNING, &ar->dev_flags)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "vdev %d: clearing CAC_RUNNING flag post boot-up CAC\n",
+			   arvif->vdev_id);
+		clear_bit(ATH12K_FLAG_CAC_RUNNING, &ar->dev_flags);
+	}
+
+	return false;
+}

@@ -13397,4 +13397,118 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 
 	return ret;
 }
+
+/**
+ * ath12k_vendor_sdwf_msduq_send_event - Build and send one SDWF MSDUQ NL event.
+ * @ar: Radio instance.
+ * @evt_data: Event payload.
+ */
+void
+ath12k_vendor_sdwf_msduq_send_event(struct ath12k *ar,
+				    const struct ath12k_sdwf_msduq_evt_data *evt_data)
+{
+	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_pdev_dp *dp_pdev;
+	struct wireless_dev *wdev = NULL;
+	struct sk_buff *skb;
+	struct wiphy *wiphy;
+	int buf_len;
+
+	if (!ar || !ar->ah || !ar->ah->hw)
+		return;
+
+	wiphy = ar->ah->hw->wiphy;
+	dp_pdev = &ar->dp;
+
+	buf_len = NLMSG_HDRLEN;
+	buf_len += nla_total_size(sizeof(u16));  /* HW_LINK_ID */
+	buf_len += nla_total_size(ETH_ALEN);     /* MAC */
+	if (evt_data->mlo)
+		buf_len += nla_total_size(ETH_ALEN); /* MLD_MAC */
+	buf_len += nla_total_size(sizeof(u8));   /* ID */
+	buf_len += nla_total_size(sizeof(u8));   /* EVENT_TYPE */
+	buf_len += nla_total_size(sizeof(u8));   /* SVC_ID */
+	buf_len += nla_total_size(sizeof(u8));   /* SVC_TYPE */
+	buf_len += nla_total_size(sizeof(u8));   /* SVC_PRIORITY */
+	buf_len += nla_total_size(sizeof(u8));   /* TID */
+	buf_len += nla_total_size(sizeof(u8));   /* AC */
+	buf_len += nla_total_size(sizeof(u32));  /* MARK_METADATA */
+	buf_len += nla_total_size(sizeof(u32));  /* SERVICE_INTERVAL */
+	buf_len += nla_total_size(sizeof(u32));  /* BURST_SIZE */
+	buf_len += nla_total_size(sizeof(u32));  /* DELAY_BOUND */
+	buf_len += nla_total_size(sizeof(u32));  /* MIN_THROUGHPUT */
+
+	rcu_read_lock();
+
+	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp_pdev->dp, dp_pdev,
+						       evt_data->peer_id);
+	if (dp_peer && dp_peer->vif)
+		wdev = ieee80211_vif_to_wdev(dp_peer->vif);
+
+	skb = cfg80211_vendor_event_alloc(wiphy, wdev, buf_len,
+					  QCA_NL80211_VENDOR_SUBCMD_SDWF_PEER_MSDUQ_EVENT_INDEX,
+					  GFP_ATOMIC);
+	if (!skb) {
+		ath12k_err(ar->ab, "failed to alloc skb for SDWF peer MSDUQ event\n");
+		rcu_read_unlock();
+		return;
+	}
+
+	if (nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_HW_LINK_ID,
+			evt_data->hw_link_id) ||
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_MAC,
+		    ETH_ALEN, evt_data->link_mac) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_ID,
+		       evt_data->msduq_id) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_EVENT_TYPE,
+		       QCA_WLAN_VENDOR_SDWF_PEER_MSDUQ_EVENT_ADD) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_SVC_ID,
+		       evt_data->svc_id) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_SVC_TYPE,
+		       evt_data->svc_type) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_SVC_PRIORITY,
+		       evt_data->priority) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_TID,
+		       evt_data->tid) ||
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_AC,
+		       evt_data->ac) ||
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_MARK_METADATA,
+			evt_data->mark_metadata) ||
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_SERVICE_INTERVAL,
+			evt_data->service_interval) ||
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_BURST_SIZE,
+			evt_data->burst_size) ||
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_DELAY_BOUND,
+			evt_data->delay_bound) ||
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_MIN_THROUGHPUT,
+			evt_data->min_throughput)) {
+		ath12k_err(ar->ab, "failed to fill SDWF peer MSDUQ event attrs\n");
+		kfree_skb(skb);
+		rcu_read_unlock();
+		return;
+	}
+
+	/* MLD MAC is optional — only for MLO peers */
+	if (evt_data->mlo) {
+		if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_SDWF_PEER_MSDUQ_MLD_MAC,
+			    ETH_ALEN, evt_data->mld_mac)) {
+			ath12k_err(ar->ab, "failed to put MLD MAC in SDWF MSDUQ event\n");
+			kfree_skb(skb);
+			rcu_read_unlock();
+			return;
+		}
+	}
+	rcu_read_unlock();
+	cfg80211_vendor_event(skb, GFP_ATOMIC);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_QOS,
+		   "SDWF peer MSDUQ event: hw_link_id=%u mac=%pM mld_mac=%pM mlo=%u msduq_id=%u svc_id=%u svc_type=%u priority=%u tid=%u ac=%u mark=0x%x svc_interval=%u burst_size=%u delay_bound=%u min_tput=%u\n",
+		   evt_data->hw_link_id, evt_data->link_mac, evt_data->mld_mac,
+		   evt_data->mlo, evt_data->msduq_id, evt_data->svc_id,
+		   evt_data->svc_type, evt_data->priority, evt_data->tid,
+		   evt_data->ac, evt_data->mark_metadata,
+		   evt_data->service_interval, evt_data->burst_size,
+		   evt_data->delay_bound, evt_data->min_throughput);
+}
+
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

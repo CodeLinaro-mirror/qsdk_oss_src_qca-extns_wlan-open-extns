@@ -226,22 +226,22 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 	struct wireless_dev *wdev;
 	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
 
-	spin_lock_bh(&dp_hw->peer_lock);
+	spin_lock_bh(&dp_hw->peer_hash_lock);
 
 	if (!params->is_vdev_peer) {
 		ath12k_err(NULL, "Peer is not vdev peer for scan radio\n");
-		spin_unlock_bh(&dp_hw->peer_lock);
+		spin_unlock_bh(&dp_hw->peer_hash_lock);
 		return -EINVAL;
 	}
 
 	dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, params->hw_link_id);
 
 	if (dp_peer) {
-		spin_unlock_bh(&dp_hw->peer_lock);
+		spin_unlock_bh(&dp_hw->peer_hash_lock);
 		return -EEXIST;
 	}
 
-	spin_unlock_bh(&dp_hw->peer_lock);
+	spin_unlock_bh(&dp_hw->peer_hash_lock);
 
 	dp_peer = kzalloc(sizeof(*dp_peer), GFP_KERNEL);
 	if (!dp_peer)
@@ -262,14 +262,19 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 	if (wdev)
 		dp_peer->dev = wdev->netdev;
 
-	spin_lock_bh(&dp_hw->peer_lock);
+	spin_lock_bh(&dp_hw->peer_hash_lock);
 
+	/* Add ath12k_dp_peer to the linked list taking peer_list_lock */
+	spin_lock_bh(&dp_hw->peer_list_lock);
 	list_add(&dp_peer->list, &dp_hw->peers);
+	spin_unlock_bh(&dp_hw->peer_list_lock);
+
+	ath12k_dp_peer_hash_table_add(dp_hw, dp_peer);
 
 	if (dp_peer->is_mlo && dp_peer->peer_id < MAX_DP_PEER_LIST_SIZE)
 		rcu_assign_pointer(dp_hw->dp_peer_list[dp_peer->peer_id], dp_peer);
 
-	spin_unlock_bh(&dp_hw->peer_lock);
+	spin_unlock_bh(&dp_hw->peer_hash_lock);
 
 	params->peer_id = ATH12K_DP_PEER_ID_INVALID;
 
@@ -283,7 +288,7 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
 	u16 peerid_index;
 
-	spin_lock_bh(&dp_hw->peer_lock);
+	spin_lock_bh(&dp_hw->peer_hash_lock);
 
 	if (sta)
 		dp_peer = ath12k_dp_peer_find_by_addr_and_sta(dp_hw, addr, sta);
@@ -291,7 +296,7 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 		dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, hw_link_id);
 
 	if (!dp_peer) {
-		spin_unlock_bh(&dp_hw->peer_lock);
+		spin_unlock_bh(&dp_hw->peer_hash_lock);
 		return;
 	}
 
@@ -300,9 +305,14 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 		rcu_assign_pointer(dp_hw->dp_peer_list[peerid_index], NULL);
 	}
 
-	list_del(&dp_peer->list);
+	ath12k_dp_peer_hash_table_delete(dp_hw, dp_peer);
 
-	spin_unlock_bh(&dp_hw->peer_lock);
+	/* Remove ath12k_dp_peer from linked list holding peer_list_lock */
+	spin_lock_bh(&dp_hw->peer_list_lock);
+	list_del(&dp_peer->list);
+	spin_unlock_bh(&dp_hw->peer_list_lock);
+
+	spin_unlock_bh(&dp_hw->peer_hash_lock);
 
 	synchronize_rcu();
 

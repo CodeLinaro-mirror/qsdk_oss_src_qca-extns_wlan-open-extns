@@ -9,6 +9,8 @@
 #include <net/genetlink.h>
 #include <net/cfg80211.h>
 #include <linux/byteorder/generic.h>
+#include <asm/unaligned.h>
+#include <linux/inet.h>
 #include <linux/ctype.h>
 #include <linux/delay.h>
 #include <linux/etherdevice.h>
@@ -609,6 +611,27 @@ ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CHAN_LIST] = { .type = NLA_NESTED },
 };
+
+enum rx_flow_tag_op {
+	RX_FLOW_TAG_ADD,
+	RX_FLOW_TAG_DEL,
+	RX_FLOW_TAG_DUMP,
+};
+
+/* struct rx_flow_blob - Binary layout of the RX flow tag operation blob */
+struct rx_flow_blob {
+	u8     op_code;        /* [0]      operation: 0=add, 1=del, 2=dump */
+	u8     ip_ver;         /* [1]      IP version: 4 or 6              */
+	u8     proto;          /* [2]      L4 protocol number               */
+	u8     _pad;           /* [3]      reserved / alignment             */
+	u8     src_ip_str[40]; /* [4..43]  null-terminated source IP string */
+	u8     dst_ip_str[40]; /* [44..83] null-terminated dest IP string   */
+	__le16 sport;          /* [84..85] source port (little-endian)      */
+	__le16 dport;          /* [86..87] destination port (little-endian) */
+	__le16 tag;            /* [88..89] FSE metadata tag (little-endian) */
+	u8     drop_flow;      /* [90]     1 = drop matching flows          */
+	u8     ring_id;        /* [91]     target REO destination ring      */
+} __packed;
 
 #define ATH12K_HWBL_NL_CHAN_WIDTH_INVALID ((u32)-1)
 
@@ -5363,9 +5386,9 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		ret = ath12k_vendor_chan144_apply(ar, value);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_TO_REO_DEST:
-		if (value < ATH12K_REO2SW1_RING || value > ATH12K_REO2SW4_RING) {
+		if (value < ATH12K_REO2SW0_RING || value > ATH12K_REO_RELEASE_RING) {
 			ath12k_err(NULL, "REO dest ring value should be between %d and %d\n",
-					ATH12K_REO2SW1_RING, ATH12K_REO2SW4_RING);
+					ATH12K_REO2SW0_RING, ATH12K_REO_RELEASE_RING);
                         ret = -EINVAL;
                 } else {
                         ar->radio_cfg.pdev_to_reo_dest = value;
@@ -5527,6 +5550,132 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 			return -EINVAL;
 
 		ret = ath12k_set_current_bgcac_timeout(ar, timeout_ms);
+		break;
+	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_RX_FLOW_TAG_OP:
+	{
+		struct ath12k_base *ab = ar->ab;
+		struct rx_flow_info flow_info = {0};
+		struct hal_flow_tuple_info *ti = &flow_info.flow_tuple_info;
+		const struct rx_flow_blob *blob;
+		u8 op_code, ip_ver, proto;
+		char src_ip_str[41], dst_ip_str[41];
+		u8 src_ip[16] = {0}, dst_ip[16] = {0};
+
+		if (!params->data || params->data_len < sizeof(struct rx_flow_blob)) {
+			ath12k_err(ab, "rx_flow_tag_op: invalid rx_flow_info_blob len %u (need %zu)\n",
+				   params->data_len, sizeof(struct rx_flow_blob));
+			return -EINVAL;
+		}
+
+		blob = (const struct rx_flow_blob *)params->data;
+
+		/* Unpack header */
+		op_code = blob->op_code;
+		ip_ver  = blob->ip_ver;
+		proto   = blob->proto;
+
+		/* Validate ip_ver: blob uses IP_VERSION_4, IP_VERSION_6 */
+		if (ip_ver != IP_VERSION_4 && ip_ver != IP_VERSION_6) {
+			ath12k_err(ab, "rx_flow_tag_op: invalid ip_ver %u (must be %d or %d)\n",
+				   ip_ver, IP_VERSION_4, IP_VERSION_6);
+			return -EINVAL;
+		}
+
+		memcpy(src_ip_str, blob->src_ip_str, sizeof(blob->src_ip_str));
+		src_ip_str[sizeof(blob->src_ip_str)] = '\0';
+		memcpy(dst_ip_str, blob->dst_ip_str, sizeof(blob->dst_ip_str));
+		dst_ip_str[sizeof(blob->dst_ip_str)] = '\0';
+
+		/* Parse and validate IP addresses using kernel helpers */
+		if (ip_ver == IP_VERSION_4) {
+			if (!in4_pton(src_ip_str, -1, src_ip, -1, NULL) ||
+			    !in4_pton(dst_ip_str, -1, dst_ip, -1, NULL)) {
+				ath12k_err(ab, "rx_flow_tag_op: invalid IPv4 addr src='%s' dst='%s'\n",
+					   src_ip_str, dst_ip_str);
+				return -EINVAL;
+			}
+		} else if (ip_ver == IP_VERSION_6) {
+			if (!in6_pton(src_ip_str, -1, src_ip, -1, NULL) ||
+			    !in6_pton(dst_ip_str, -1, dst_ip, -1, NULL)) {
+				ath12k_err(ab, "rx_flow_tag_op: invalid IPv6 addr src='%s' dst='%s'\n",
+					   src_ip_str, dst_ip_str);
+				return -EINVAL;
+			}
+		}
+
+		/* Pack into flow_tuple_info */
+		ti->l4_protocol  = proto;
+		ti->src_port     = le16_to_cpu(blob->sport);
+		ti->dest_port    = le16_to_cpu(blob->dport);
+		flow_info.fse_metadata = le16_to_cpu(blob->tag);
+		flow_info.drop   = blob->drop_flow ? 1 : 0;
+		flow_info.ring_id = blob->ring_id;
+
+		if (flow_info.ring_id < ATH12K_REO2SW0_RING || flow_info.ring_id > ATH12K_REO_RELEASE_RING) {
+			ath12k_err(ab, "rx_flow_tag_op: invalid ring_id %u\n",
+				   flow_info.ring_id);
+			return -EINVAL;
+		}
+
+		if (ip_ver == IP_VERSION_4) {
+			flow_info.is_addr_ipv4 = 1;
+			ti->src_ip_31_0  = get_unaligned_be32(src_ip);
+			ti->dest_ip_31_0 = get_unaligned_be32(dst_ip);
+		} else if (ip_ver == IP_VERSION_6) {
+			ti->src_ip_127_96  = get_unaligned_be32(&src_ip[0]);
+			ti->src_ip_95_64   = get_unaligned_be32(&src_ip[4]);
+			ti->src_ip_63_32   = get_unaligned_be32(&src_ip[8]);
+			ti->src_ip_31_0    = get_unaligned_be32(&src_ip[12]);
+			ti->dest_ip_127_96 = get_unaligned_be32(&dst_ip[0]);
+			ti->dest_ip_95_64  = get_unaligned_be32(&dst_ip[4]);
+			ti->dest_ip_63_32  = get_unaligned_be32(&dst_ip[8]);
+			ti->dest_ip_31_0   = get_unaligned_be32(&dst_ip[12]);
+		}
+
+		ath12k_dbg(ab, ATH12K_DBG_DP_FST,
+			   "rx_flow_tag: op=%u ip_ver=%u sport=%u dport=%u proto=%u meta=0x%x drop=%u ring=%u\n",
+			   op_code, ip_ver,
+			   ti->src_port, ti->dest_port, ti->l4_protocol,
+			   flow_info.fse_metadata, flow_info.drop, flow_info.ring_id);
+
+		if (op_code == RX_FLOW_TAG_ADD) {
+			ret = ath12k_dp_rx_flow_add_entry(ab, &flow_info);
+			if (ret)
+				ath12k_err(ab, "rx_flow_tag: add failed ret=%d\n", ret);
+		} else if (op_code == RX_FLOW_TAG_DEL) {
+			ret = ath12k_dp_rx_flow_delete_entry(ab, &flow_info);
+			if (ret)
+				ath12k_err(ab, "rx_flow_tag: delete failed ret=%d\n", ret);
+		} else if (op_code == RX_FLOW_TAG_DUMP) {
+			struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+			char *dump_buf;
+			ssize_t dump_len;
+
+			if (dp && dp->dp_hw_grp && dp->dp_hw_grp->fst)
+				ath12k_dp_arch_rx_flow_dump_entry(dp, &flow_info);
+
+			dump_buf = kzalloc(PAGE_SIZE * 4, GFP_KERNEL);
+			if (!dump_buf) {
+				ath12k_err(ab, "rx_flow_tag_op: failed to allocate dump buffer\n");
+				ret = -ENOMEM;
+				break;
+			}
+			dump_len = ath12k_dp_dump_fst_table(ab, dump_buf, PAGE_SIZE * 4);
+			if (dump_len > 0)
+				ath12k_info(ab,
+					    "rx_flow_tag_op: fst_dump_table:\n%s",
+					    dump_buf);
+			else
+				ath12k_warn(ab,
+					    "rx_flow_tag_op: fst_dump_table empty or failed len=%zd\n",
+					    dump_len);
+			kfree(dump_buf);
+			ret = 0;
+		} else {
+			ath12k_err(ab, "rx_flow_tag_op: unknown op_code %u\n", op_code);
+			ret = -EINVAL;
+		}
 		break;
 	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_BLOCK_DFS_LIST:

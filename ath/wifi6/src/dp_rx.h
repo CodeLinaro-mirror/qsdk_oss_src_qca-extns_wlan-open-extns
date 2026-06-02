@@ -37,23 +37,6 @@ int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9074(struct ath12k_base *ab);
 int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9160(struct ath12k_base *ab);
 
 static inline
-void ath12k_wifi6_dp_extract_rx_spd_data(struct ath12k_hal *hal,
-					 struct hal_rx_spd_data *rx_info,
-					 struct hal_rx_desc *rx_desc, int set)
-{
-	hal->hal_ops->extract_rx_spd_data(rx_info, rx_desc, set);
-}
-
-static inline
-void ath12k_wifi6_dp_extract_rx_desc_data(struct ath12k_dp *dp,
-					  struct hal_rx_desc_data *rx_desc_data,
-					  struct hal_rx_desc *rx_desc,
-					  struct hal_rx_desc *ldesc)
-{
-	dp->hw_params->hal_ops->extract_rx_desc_data(rx_desc_data, rx_desc, ldesc);
-}
-
-static inline
 u8 ath12k_wifi6_dp_rx_get_rbm_id(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;

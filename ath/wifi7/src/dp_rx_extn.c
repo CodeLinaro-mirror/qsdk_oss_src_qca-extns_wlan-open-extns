@@ -28,6 +28,8 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	u8 *rx_tlv_hdr;
 	u8 tid;
 	bool is_3addr_mcbc = false;
+	u8 ring_id = rx_spd->reo.ring_id;
+	u8 device_id = dp->device_id;
 
 	rx_tlv_hdr = rx_spd->vaddr;
 	rx_msdu_info = &rx_spd->rx_msdu_info;
@@ -87,6 +89,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 					  ATH12K_EGRESS_MACID_MASK);
 			if ((rx_mpdu_info->flow_info.flow_metadata &
 			    ATH12K_RX_FSE_FLOW_MATCH_USE_PPE)) {
+				dp->device_stats.fast_rx[ring_id][device_id]++;
 				if (!peer->dev->offload_ops->recv(peer->dev,
 								 msdu)) {
 					dev_kfree_skb_any(msdu);
@@ -103,6 +106,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		is_3addr_mcbc = true;
 		stats->sent_to_stack_mcast++;
 		stats->sent_to_stack_mcast_bytes += msdu->len;
+		dp->device_stats.non_fast_mcast_rx[ring_id][device_id]++;
 	}
 
 	/* deliver 802.3 frame to netif_receive_skb only if the following
@@ -118,16 +122,11 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	if (!rx_mpdu_info->flow_idx_timeout &&
 	    !rx_mpdu_info->flow_idx_invalid && !peer->is_mmesh_peer &&
 	    likely(peer->is_authorized)) {
-		if (rx_msdu_info->da_is_mcbc) {
-			stats->sent_to_stack_mcast_fast++;
-			stats->sent_to_stack_mcast_fast_bytes += msdu->len;
-		} else {
-			stats->sent_to_stack_ucast_fast++;
-			stats->sent_to_stack_ucast_fast_bytes += msdu->len;
-		}
+		stats->sent_to_stack_ucast_fast++;
+		stats->sent_to_stack_ucast_fast_bytes += msdu->len;
 
 		msdu->protocol = eth_type_trans(msdu, peer->dev);
-		dp->device_stats.fast_rx[rx_spd->reo.ring_id][dp->device_id]++;
+		dp->device_stats.fast_rx[ring_id][device_id]++;
 		prefetch(skb_shinfo(msdu));
 		netif_receive_skb(msdu);
 	} else {
@@ -143,7 +142,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		 */
 		ath12k_wifi7_dp_extract_rx_spd_data(hal,
 				    rx_spd,
-				    (struct hal_rx_desc *)rx_tlv_hdr, 1);
+				    (struct hal_rx_desc *)rx_tlv_hdr);
 
 		tlv_info = &rx_spd->tlv_info;
 
@@ -203,10 +202,11 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		rx_status = IEEE80211_SKB_RXCB(msdu);
 		*rx_status = *status;
 
-		stats->sent_to_stack_ucast++;
-		stats->sent_to_stack_ucast_bytes += msdu->len;
-
-		dp->device_stats.non_fast_unicast_rx[rx_spd->reo.ring_id][dp->device_id]++;
+		if (!is_3addr_mcbc) {
+			stats->sent_to_stack_ucast++;
+			stats->sent_to_stack_ucast_bytes += msdu->len;
+			dp->device_stats.non_fast_unicast_rx[ring_id][device_id]++;
+		}
 		ieee80211_rx_napi(ath12k_dp_pdev_to_hw(dp_pdev), pubsta, msdu,
 				  napi);
 	}

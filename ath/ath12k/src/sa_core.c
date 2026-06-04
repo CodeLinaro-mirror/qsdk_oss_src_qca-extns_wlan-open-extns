@@ -799,9 +799,9 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 	if (!is_valid_ether_addr(param.mac_addr))
 		return;
 
-	if (!ath12k_arsta_itr_on_ab_by_addr(ab, param.mac_addr,
-					    sa_core_peer_connect_notify,
-					    &param))
+	if (!ath12k_arsta_itr_on_ab_by_addr_bh(ab, param.mac_addr,
+					       sa_core_peer_connect_notify,
+					       &param))
 		ath12k_err(ab, "Failed to notify peer rate list for %pM\n",
 			   param.mac_addr);
 }
@@ -950,9 +950,9 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 			rx.rx_rssi[i][j] = ppdu->rssi_chain[i][j];
 	rx.rx_rate_index = ppdu->bw;
 
-	if (!ath12k_arsta_itr_on_ab_by_addr_bh(ab, stats->peer_mac,
-					       sa_core_rx_feedback_notify,
-					       &rx))
+	if (!ath12k_arsta_itr_on_ab_by_addr(ab, stats->peer_mac,
+					    sa_core_rx_feedback_notify,
+					    &rx))
 		ath12k_err(ab, "Failed to notify rx feedback for %pM\n",
 			   stats->peer_mac);
 
@@ -1029,9 +1029,9 @@ static int sa_core_get_tx_user_stats(struct htt_ppdu_user_stats *stats,
 			tx.nshort_retries[tx.rate_index] -= 1;
 	}
 
-	if (!ath12k_arsta_itr_on_ab_by_addr_bh(ab, stats->peer_mac,
-					       sa_core_tx_feedback_notify,
-					       &tx))
+	if (!ath12k_arsta_itr_on_ab_by_addr(ab, stats->peer_mac,
+					    sa_core_tx_feedback_notify,
+					    &tx))
 		ath12k_err(ab, "Failed to notify tx feedback for %pM\n",
 			   stats->peer_mac);
 

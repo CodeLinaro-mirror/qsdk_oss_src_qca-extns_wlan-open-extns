@@ -3212,6 +3212,19 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_UL_EHT_LTF to firmware");
 		}
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_LTF:
+		if (value > IEEE80211_EHT_LTF_4X) {
+			ath12k_err(NULL, "LTF value should be less than or equal to 0x%x\n", IEEE80211_EHT_LTF_4X);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+				WMI_VDEV_PARAM_EHT_LTF, value);
+		if (!ret) {
+			arvif->vap_cfg.eht_ltf = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_EHT_LTF to firmware");
+		}
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_NSS:
 		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
 				WMI_VDEV_PARAM_UL_NSS, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
@@ -9869,6 +9882,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LTF:
 		*value = arvif->vap_cfg.eht_ul_ltf;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_LTF:
+		*value = arvif->vap_cfg.eht_ltf;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_NSS:

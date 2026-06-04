@@ -368,6 +368,7 @@
 	ATH12K_CFG(ATH12K_CFG_DP_RXDMA_MONITOR_BUF_RING_SIZE) \
 	ATH12K_CFG(ATH12K_CFG_DP_RXDMA_MONITOR_DST_RING_SIZE) \
 	ATH12K_CFG(ATH12K_CFG_DP_MON_NUM_PPDU_DESC) \
+	ATH12K_CFG(ATH12K_CFG_DP_UMCMN_INTR_HANDLING_DISABLE) \
 
 #define ATH12K_DP_UMAC_RESET_TIMEOUT_MIN	100
 #define ATH12K_DP_UMAC_RESET_TIMEOUT_MAX	10000
@@ -839,6 +840,10 @@
 	ATH12K_CFG_INI_STRING("cumac_band_priority", \
 	0, 31, "", \
 	"CUMAC chip selection band priority (space-separated: \"2GHz 5GHz 6GHz\")")
+
+#define ATH12K_CFG_DP_UMCMN_INTR_HANDLING_DISABLE \
+	ATH12K_CFG_INI_BOOL("dp_umcmn_intr_disable", false, \
+	"Disable umcmn interrupt handling")
 
 /**
  * enum ath12k_cfg_data_type - Enum for CFG/INI types

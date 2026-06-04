@@ -418,6 +418,15 @@ ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 	return;
 }
 
+static inline bool
+ieee80211_qcn_5g_320mhz_csa_extn(struct ieee80211_sub_if_data *sdata,
+				      const struct ieee802_11_elems *elems,
+				      bool support_320,
+				      struct cfg80211_chan_def *chandef)
+{
+	return false;
+}
+
 static inline void
 ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 				  struct wireless_dev *wdev,
@@ -495,6 +504,11 @@ ieee80211_update_eht_cap_from_240mhz_nl(struct ieee80211_sub_if_data *sdata,
 
 void ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 					  struct ieee80211_conn_settings *conn);
+
+bool ieee80211_qcn_5g_320mhz_csa_extn(struct ieee80211_sub_if_data *sdata,
+				      const struct ieee802_11_elems *elems,
+				      bool support_320,
+				      struct cfg80211_chan_def *chandef);
 
 void ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 				       struct wireless_dev *wdev,

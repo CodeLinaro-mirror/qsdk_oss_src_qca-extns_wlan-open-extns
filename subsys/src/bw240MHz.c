@@ -12,6 +12,59 @@
 #include "cmn_extn.h"
 #include "qcn_elem.h"
 
+#define IEEE80211_QCN_5G_240MHZ_FLAG BIT(0)
+
+struct ieee80211_qcn_5g_320mhz_csa_oper {
+	u8 ccfs0;
+	u8 ccfs1;
+	__le16 punct_bitmap;
+	__le16 flags;
+	u8 mcs_map_320mhz[3];
+} __packed;
+
+static const struct ieee80211_qcn_5g_320mhz_csa_oper *
+ieee80211_qcn_find_5g_320mhz_csa_extn(const u8 *ies, size_t len)
+{
+	const struct ieee80211_qcn_5g_320mhz_csa_oper *fallback = NULL;
+	const struct element *elem;
+
+	for_each_element_id(elem, WLAN_EID_VENDOR_SPECIFIC, ies, len) {
+		const u8 *pos = elem->data;
+		size_t rem;
+
+		if (elem->datalen < WLAN_OUI_QCN_HEADER_LEN + 2 ||
+		    pos[0] != 0x8c || pos[1] != 0xfd || pos[2] != 0xf0 ||
+		    pos[3] != WLAN_OUI_QCN_TYPE_1)
+			continue;
+
+		pos += WLAN_OUI_QCN_HEADER_LEN;
+		rem = elem->datalen - WLAN_OUI_QCN_HEADER_LEN;
+		while (rem >= 2) {
+			u8 attr_id = pos[0];
+			u8 attr_len = pos[1];
+
+			pos += 2;
+			rem -= 2;
+			if (attr_len > rem)
+				break;
+
+			if ((attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA ||
+			     attr_id == WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP) &&
+			    attr_len == sizeof(struct ieee80211_qcn_5g_320mhz_csa_oper)) {
+				if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA)
+					return (const void *)pos;
+
+				if (!fallback)
+					fallback = (const void *)pos;
+			}
+
+			pos += attr_len;
+			rem -= attr_len;
+		}
+	}
+
+	return fallback;
+}
 
 void
 ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
@@ -287,4 +340,51 @@ void ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 {
 	if (is_5ghz)
 		conn->bw_limit = IEEE80211_CONN_BW_LIMIT_320;
+}
+
+bool ieee80211_qcn_5g_320mhz_csa_extn(struct ieee80211_sub_if_data *sdata,
+				      const struct ieee802_11_elems *elems,
+				      bool support_320,
+				      struct cfg80211_chan_def *chandef)
+{
+	const struct ieee80211_qcn_5g_320mhz_csa_oper *qcn;
+	struct cfg80211_chan_def extn_chandef;
+	u16 punct_bitmap;
+	u16 flags;
+	u8 center_idx;
+	u32 center_freq1;
+
+	if (!support_320 || !chandef->chan ||
+	    chandef->chan->band != NL80211_BAND_5GHZ ||
+	    !elems->ie_start || !elems->total_len)
+		return false;
+
+	qcn = ieee80211_qcn_find_5g_320mhz_csa_extn(elems->ie_start,
+						      elems->total_len);
+	if (!qcn)
+		return false;
+
+	flags = le16_to_cpu(qcn->flags);
+	punct_bitmap = le16_to_cpu(qcn->punct_bitmap);
+	if (!(flags & IEEE80211_QCN_5G_240MHZ_FLAG) || !punct_bitmap ||
+	    !qcn->ccfs1)
+		return false;
+
+	center_idx = qcn->ccfs1;
+	center_freq1 = ieee80211_channel_to_frequency(center_idx,
+						       chandef->chan->band);
+	if (!center_freq1)
+		return false;
+
+	extn_chandef = *chandef;
+	extn_chandef.width = NL80211_CHAN_WIDTH_320;
+	extn_chandef.center_freq1 = center_freq1;
+	extn_chandef.center_freq2 = 0;
+	extn_chandef.punctured = punct_bitmap;
+
+	if (!cfg80211_chandef_valid(&extn_chandef))
+		return false;
+
+	*chandef = extn_chandef;
+	return true;
 }

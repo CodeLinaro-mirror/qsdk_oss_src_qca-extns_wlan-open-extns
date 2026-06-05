@@ -16,6 +16,102 @@
 #include "hal_qcn9074.h"
 #include "../ath12k_cmn_extn.h"
 
+/* Allocate undecoded_meta and phyrx_abort_info if not already done.
+ * Called by both ops since either may arrive first.
+ */
+static int
+ath12k_wifi6_dp_mon_undecoded_alloc(struct ath12k_pdev_mon_dp_extn *extn)
+{
+	if (!extn->undecoded_meta) {
+		extn->undecoded_meta =
+			kzalloc(sizeof(*extn->undecoded_meta), GFP_KERNEL);
+		if (!extn->undecoded_meta) {
+			ath12k_err(NULL, "undecoded: failed to allocate undecoded_meta\n");
+			return -ENOMEM;
+		}
+	}
+	if (!extn->phyrx_abort_info) {
+		extn->phyrx_abort_info =
+			kzalloc(sizeof(*extn->phyrx_abort_info), GFP_KERNEL);
+		if (!extn->phyrx_abort_info) {
+			ath12k_err(NULL, "undecoded: failed to allocate phyrx_abort_info\n");
+			kfree(extn->undecoded_meta);
+			extn->undecoded_meta = NULL;
+			return -ENOMEM;
+		}
+	}
+	return 0;
+}
+
+static void
+ath12k_wifi6_dp_mon_undecoded_free(struct ath12k_pdev_mon_dp_extn *extn)
+{
+	kfree(extn->phyrx_abort_info);
+	extn->phyrx_abort_info = NULL;
+	kfree(extn->undecoded_meta);
+	extn->undecoded_meta = NULL;
+}
+
+static int
+ath12k_wifi6_dp_mon_rx_undecoded_metadata_capture_set(struct ath12k_pdev_dp *dp_pdev,
+						      u32 value)
+{
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
+	const struct ath12k_dp_arch_mon_ops *mon_ops;
+	int ret;
+
+	if (!dp_pdev->dp_mon_pdev)
+		return -EINVAL;
+
+	mon_dp_extn = &dp_pdev->dp_mon_pdev->pdev_mon_dp_extn;
+	mon_ops = ath12k_dp_mon_ops_get(dp_pdev->dp);
+
+	if (value) {
+		ret = ath12k_wifi6_dp_mon_undecoded_alloc(mon_dp_extn);
+		if (ret)
+			return ret;
+		mon_dp_extn->undecoded_meta->undecoded_metadata_capture = true;
+		if (mon_ops && mon_ops->rx_undecoded_metadata_config_filter)
+			mon_ops->rx_undecoded_metadata_config_filter(dp_pdev);
+	} else {
+		if (mon_dp_extn->undecoded_meta)
+			mon_dp_extn->undecoded_meta->undecoded_metadata_capture = false;
+		if (mon_ops && mon_ops->rx_undecoded_metadata_reset_filter)
+			mon_ops->rx_undecoded_metadata_reset_filter(dp_pdev);
+		ath12k_wifi6_dp_mon_undecoded_free(mon_dp_extn);
+	}
+	return 0;
+}
+
+static int
+ath12k_wifi6_dp_mon_rx_undecoded_phy_err_mask_set(struct ath12k_pdev_dp *dp_pdev,
+						  u32 mask, u32 mask_cont)
+{
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
+	const struct ath12k_dp_arch_mon_ops *mon_ops;
+	int ret;
+
+	if (!dp_pdev->dp_mon_pdev)
+		return -EINVAL;
+
+	mon_dp_extn = &dp_pdev->dp_mon_pdev->pdev_mon_dp_extn;
+
+	ret = ath12k_wifi6_dp_mon_undecoded_alloc(mon_dp_extn);
+	if (ret)
+		return ret;
+
+	mon_dp_extn->undecoded_meta->phyrx_error_mask = mask;
+	mon_dp_extn->undecoded_meta->phyrx_error_mask_cont = mask_cont;
+
+	if (!mon_dp_extn->undecoded_meta->undecoded_metadata_capture)
+		return 0;
+
+	mon_ops = ath12k_dp_mon_ops_get(dp_pdev->dp);
+	if (mon_ops && mon_ops->rx_undecoded_metadata_config_filter)
+		mon_ops->rx_undecoded_metadata_config_filter(dp_pdev);
+	return 0;
+}
+
 const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_srng_setup = ath12k_wifi6_dp_mon_rx_srng_setup,
 	.rx_srng_cleanup = ath12k_wifi6_dp_mon_rx_srng_cleanup,
@@ -40,6 +136,10 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_filter_update = ath12k_wifi6_dp_mon_rx_update_ring_filter,
 	.rx_monitor_mode_set = ath12k_wifi6_dp_mon_rx_monitor_mode_set,
 	.rx_monitor_mode_reset = ath12k_wifi6_dp_mon_rx_monitor_mode_reset,
+	.rx_undecoded_metadata_config_filter = ath12k_wifi6_dp_mon_rx_undecoded_metadata_config_filter,
+	.rx_undecoded_metadata_reset_filter = ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter,
+	.rx_undecoded_metadata_capture_set = ath12k_wifi6_dp_mon_rx_undecoded_metadata_capture_set,
+	.rx_undecoded_phy_err_mask_set = ath12k_wifi6_dp_mon_rx_undecoded_phy_err_mask_set,
 	.setup_ppdu_desc = NULL,
 	.cleanup_ppdu_desc = NULL,
 	.rx_nrp_set = NULL,
@@ -48,6 +148,7 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_enable_packet_filters = NULL,
 	.pktlog_config = NULL,
 	.htt_rx_filter_rxmon_cfg = NULL,
+	.htt_rx_phy_err_filter_cfg = ath12k_wifi6_dp_mon_rx_htt_phy_err_filter_cfg,
 };
 
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)
@@ -1710,6 +1811,106 @@ ath12k_wifi6_dp_mon_update_scan_radio_stats(struct ath12k_pdev_dp *pdev_dp,
 		ppdu_info->ppdu_info_extn.frm_type_info.rx_data_cnt;
 }
 
+/**
+ * ath12k_wifi6_dp_rx_is_valid_undecoded_frame() - Check if abort reason is
+ *     covered by the configured PHY error mask
+ * @err_mask: 64-bit combined PHY error mask
+ * @err_code: PHY abort reason code to validate
+ *
+ * Return: true if the error code is within range and set in the mask
+ */
+static inline bool
+ath12k_wifi6_dp_rx_is_valid_undecoded_frame(u64 err_mask, u8 err_code)
+{
+	if (err_code < ATH12K_WIFI6_PHYRX_ERR_MAX &&
+	    (err_mask & (1ULL << err_code)))
+		return true;
+	return false;
+}
+
+static inline bool
+ath12k_wifi6_dp_rx_mon_check_phyrx_abort(struct ath12k_pdev_dp *pdev_dp,
+					 struct hal_rx_mon_ppdu_info *ppdu_info)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = pdev_dp->dp_mon_pdev;
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
+
+	if (!dp_mon_pdev)
+		return false;
+
+	mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
+
+	if (!mon_dp_extn->undecoded_meta ||
+	    !ppdu_info->ppdu_info_extn.phyrx_abort_info)
+		return false;
+
+	return (mon_dp_extn->undecoded_meta->undecoded_metadata_capture &&
+		ppdu_info->ppdu_info_extn.phyrx_abort_info->phyrx_abort);
+}
+
+static void
+ath12k_wifi6_dp_rx_handle_ppdu_undecoded_metadata(struct ath12k_pdev_dp *pdev_dp,
+						  struct hal_rx_mon_ppdu_info *ppdu_info)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = pdev_dp->dp_mon_pdev;
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
+
+	if (!dp_mon_pdev)
+		return;
+
+	mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
+	u64 mask64;
+	u8 abort_reason;
+
+	mask64 = ((u64)mon_dp_extn->undecoded_meta->phyrx_error_mask_cont << ATH12K_WIFI6_PHYRX_ERR_MASK_CONT_SHIFT) |
+		 mon_dp_extn->undecoded_meta->phyrx_error_mask;
+	abort_reason = ppdu_info->ppdu_info_extn.phyrx_abort_info->phyrx_abort_reason;
+
+	if (!ath12k_wifi6_dp_rx_is_valid_undecoded_frame(mask64, abort_reason))
+		return;
+
+	mon_dp_extn->undecoded_meta->rx_undecoded_count++;
+	if (abort_reason < ATH12K_WIFI6_PHYRX_ERR_MAX)
+		mon_dp_extn->undecoded_meta->rx_undecoded_error[abort_reason]++;
+
+	/* TODO: Report undecoded frame metadata to userspace via cfg80211 vendor
+	 * event or Linux notifier chain. This should include:
+	 * - PHY abort reason (ppdu_info->ppdu_info_extn.phyrx_abort_reason)
+	 * - SIG/CRC fields from ppdu_info->ppdu_info_extn
+	 * - Other relevant PPDU metadata (channel, timestamp, RSSI, etc.)
+	 */
+}
+
+static inline void
+ath12k_wifi6_dp_mon_handle_ppdu_undecoded_metadata(struct ath12k_pdev_dp *pdev_dp,
+						   struct hal_rx_mon_ppdu_info *ppdu_info,
+						   struct ath12k_mon_data *pmon)
+{
+	ath12k_wifi6_dp_rx_handle_ppdu_undecoded_metadata(pdev_dp, ppdu_info);
+	pmon->mon_ppdu_status = DP_PPDU_STATUS_START;
+}
+
+void
+ath12k_wifi6_dp_mon_rx_htt_phy_err_filter_cfg(void *ptr,
+					      struct htt_rx_ring_tlv_filter *tlv_filter)
+{
+	struct htt_rx_ring_selection_cfg_cmd *cmd = ptr;
+
+	if (!tlv_filter->phy_err_filter_valid)
+		return;
+
+	cmd->info2 |= le32_encode_bits(tlv_filter->fp_phy_err,
+				       HTT_RX_RING_SELECTION_CFG_CMD_INFO2_FP_PHY_ERR);
+	cmd->info2 |= le32_encode_bits(tlv_filter->fp_phy_err_buf_src,
+				       HTT_RX_RING_SELECTION_CFG_CMD_INFO2_FP_PHY_ERR_BUF_SRC);
+	cmd->info2 |= le32_encode_bits(tlv_filter->fp_phy_err_buf_dest,
+				       HTT_RX_RING_SELECTION_CFG_CMD_INFO2_FP_PHY_ERR_BUF_DEST);
+	cmd->phy_err_mask = le32_encode_bits(tlv_filter->phy_err_mask,
+					     HTT_RX_RING_SELECTION_CFG_CMD_PHY_ERR_MASK);
+	cmd->phy_err_mask_cont = le32_encode_bits(tlv_filter->phy_err_mask_cont,
+						  HTT_RX_RING_SELECTION_CFG_CMD_PHY_ERR_MASK_CONT);
+}
+
 int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp, int mac_id,
 					     struct napi_struct *napi, int *budget)
 {
@@ -1732,18 +1933,36 @@ int ath12k_wifi6_dp_mon_rx_quad_ring_process(struct ath12k_pdev_dp *pdev_dp, int
 
 	while ((skb = __skb_dequeue(&skb_list))) {
 		ppdu_info->peer_id = HAL_INVALID_PEERID;
+		/* Restore phyrx_abort_info from per-pdev storage after per-PPDU
+		 * memset of hal_rx_mon_ppdu_info in hal_mon.c
+		 */
+		if (dp_mon_pdev) {
+			ppdu_info->ppdu_info_extn.phyrx_abort_info =
+				dp_mon_pdev->pdev_mon_dp_extn.phyrx_abort_info;
+			if (ppdu_info->ppdu_info_extn.phyrx_abort_info)
+				ppdu_info->ppdu_info_extn.phyrx_abort_info->phyrx_abort = 0;
+		} else {
+			ppdu_info->ppdu_info_extn.phyrx_abort_info = NULL;
+		}
 
 		hal_status = ath12k_wifi6_dp_mon_rx_parse_dest(pdev_dp, skb);
 
 		ath12k_wifi6_dp_mon_update_scan_radio_stats(pdev_dp, ppdu_info);
 
-		if (ar->monitor_started &&
-		    pmon->mon_ppdu_status == DP_PPDU_STATUS_START &&
-		    hal_status == HAL_TLV_STATUS_PPDU_DONE) {
-			rx_mon_stats->status_ppdu_done++;
-			pmon->mon_ppdu_status = DP_PPDU_STATUS_DONE;
-			ath12k_wifi6_dp_mon_rx_dest_process(pdev_dp, mac_id, *budget, napi);
-			pmon->mon_ppdu_status = DP_PPDU_STATUS_START;
+		if (hal_status == HAL_TLV_STATUS_PPDU_DONE) {
+			if (ath12k_wifi6_dp_rx_mon_check_phyrx_abort(pdev_dp,
+								     ppdu_info)) {
+				ath12k_wifi6_dp_mon_handle_ppdu_undecoded_metadata(pdev_dp,
+										   ppdu_info,
+										   pmon);
+			} else if (ar->monitor_started &&
+				   pmon->mon_ppdu_status == DP_PPDU_STATUS_START) {
+				rx_mon_stats->status_ppdu_done++;
+				pmon->mon_ppdu_status = DP_PPDU_STATUS_DONE;
+				ath12k_wifi6_dp_mon_rx_dest_process(pdev_dp, mac_id,
+								    *budget, napi);
+				pmon->mon_ppdu_status = DP_PPDU_STATUS_START;
+			}
 		}
 
 		dev_kfree_skb_any(skb);
@@ -1754,10 +1973,22 @@ exit:
 
 void ath12k_wifi6_dp_mon_rx_monitor_mode_set(struct ath12k_pdev_dp *dp_pdev)
 {
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn =
+		&dp_mon_pdev->pdev_mon_dp_extn;
+
 	ath12k_wifi6_dp_mon_rx_mon_mode_config_filter(dp_pdev);
+	if (mon_dp_extn->undecoded_meta &&
+	    mon_dp_extn->undecoded_meta->undecoded_metadata_capture)
+		ath12k_wifi6_dp_mon_rx_undecoded_metadata_config_filter(dp_pdev);
 }
 
 void ath12k_wifi6_dp_mon_rx_monitor_mode_reset(struct ath12k_pdev_dp *dp_pdev)
 {
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn =
+		&dp_pdev->dp_mon_pdev->pdev_mon_dp_extn;
+
+	if (mon_dp_extn->undecoded_meta)
+		ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter(dp_pdev);
 	ath12k_wifi6_dp_mon_rx_mon_mode_reset_filter(dp_pdev);
 }

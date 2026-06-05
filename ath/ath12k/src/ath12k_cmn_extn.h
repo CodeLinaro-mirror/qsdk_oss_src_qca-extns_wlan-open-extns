@@ -521,7 +521,9 @@ struct ath12k_dp_rx_scan_radio_stats {
 };
 
 /* PHY error reason codes 0-53 are valid; codes 54-63 are reserved */
-#define ATH12K_WIFI6_PHYRX_ERR_MAX 64
+#define ATH12K_WIFI6_PHYRX_ERR_MAX	64
+/* Bit shift to position the upper 32-bit half of the 64-bit PHY error mask */
+#define ATH12K_WIFI6_PHYRX_ERR_MASK_CONT_SHIFT	32
 
 /**
  * struct ath12k_wifi6_undecoded_metadata - Undecoded metadata capture state

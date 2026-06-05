@@ -9,6 +9,7 @@
 
 #include "hal_desc.h"
 #include "hal.h"
+#include "hal_mon_qcn9074.h"
 
 #define HAL_INVALID_PEERID	0x3fff
 
@@ -109,6 +110,53 @@ struct hal_rx_flow {
 struct hal_rx_rxpcu_classification_overview {
 	u32 rsvd0;
 } __packed;
+
+/* RXPCU_PPDU_END_INFO word 2 - phyrx_abort_request_info_valid at bit [28] */
+#define RXPCU_PPDU_END_INFO_2_PHYRX_ABORT_VALID_OFFSET		0x00000008
+#define RXPCU_PPDU_END_INFO_2_PHYRX_ABORT_VALID			GENMASK(28, 28)
+
+/* RXPCU_PPDU_END_INFO word 10 - phyrx_abort_request_info_details at byte offset 0x28 */
+#define RXPCU_PPDU_END_INFO_10_PHYRX_ABORT_DETAILS_OFFSET	0x00000028
+
+/* phyrx_abort_request_info field macros */
+#define PHYRX_ABORT_REQUEST_INFO_REASON				GENMASK(7, 0)
+
+static inline void
+ath12k_wifi6_hal_rx_get_phyrx_abort(const void *tlv_data,
+				    struct hal_rx_mon_ppdu_info *ppdu_info)
+{
+	struct ath12k_wifi6_phyrx_abort_info *abort_info =
+		ppdu_info->ppdu_info_extn.phyrx_abort_info;
+
+	if (!abort_info)
+		return;
+
+	if (le32_get_bits(*(__le32 *)((u8 *)tlv_data +
+				      RXPCU_PPDU_END_INFO_2_PHYRX_ABORT_VALID_OFFSET),
+			  RXPCU_PPDU_END_INFO_2_PHYRX_ABORT_VALID)) {
+		const u8 *phyrx_abort_tlv = (const u8 *)tlv_data +
+			RXPCU_PPDU_END_INFO_10_PHYRX_ABORT_DETAILS_OFFSET;
+		abort_info->phyrx_abort = 1;
+		abort_info->phyrx_abort_reason =
+			le32_get_bits(*(__le32 *)phyrx_abort_tlv,
+				      PHYRX_ABORT_REQUEST_INFO_REASON);
+	}
+}
+
+/* L_SIG_A word 0 - length and parity (802.11 standard bit positions) */
+#define L_SIG_A_INFO_0_LENGTH			GENMASK(16, 5)
+#define L_SIG_A_INFO_0_PARITY			GENMASK(17, 17)
+
+/* VHT_SIG_A word 0 - TXOP_PS_NOT_ALLOWED at bit [22] */
+#define VHT_SIG_A_INFO_0_TXOP_PS_NOT_ALLOWED	GENMASK(22, 22)
+/* VHT_SIG_A word 1 - CRC at bits [17:10] */
+#define VHT_SIG_A_INFO_1_CRC			GENMASK(17, 10)
+
+/* HE_SIG_A_SU word 1 - CRC at bits [19:16] */
+#define HE_SIG_A_SU_INFO_1_CRC			GENMASK(19, 16)
+
+/* HE_SIG_A_MU_DL word 1 - CRC at bits [19:16] */
+#define HE_SIG_A_MU_DL_INFO_1_CRC		GENMASK(19, 16)
 
 int ath12k_wifi6_hal_reo_cmd_send(struct ath12k_base *ab, struct hal_srng *srng,
 				  enum hal_reo_cmd_type type,

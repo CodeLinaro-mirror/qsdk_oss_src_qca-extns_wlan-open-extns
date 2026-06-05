@@ -252,11 +252,11 @@
 
 #define ATH12K_DP_PPE_WBM2SW_RING_SIZE_MIN	8192
 #define ATH12K_DP_PPE_WBM2SW_RING_SIZE_MAX	32768
-#define ATH12K_DP_PPE_WBM2SW_RING_SIZE_DEFAULT	32768
+#define ATH12K_DP_PPE_WBM2SW_RING_SIZE_DEFAULT	(ath12k_dp_ring_cfg->ppe_wbm2sw_ring_size)
 
 #define ATH12K_DP_TQM2PPE_RING_SIZE_MIN		8192
 #define ATH12K_DP_TQM2PPE_RING_SIZE_MAX		32768
-#define ATH12K_DP_TQM2PPE_RING_SIZE_DEFAULT	32768
+#define ATH12K_DP_TQM2PPE_RING_SIZE_DEFAULT	(ath12k_dp_ring_cfg->tqm2ppe_ring_size)
 
 #define ATH12K_DP_RXDMA_MON_STATUS_RING_SIZE_MIN 1024
 #define ATH12K_DP_RXDMA_MON_STATUS_RING_SIZE_MAX 2048
@@ -421,7 +421,7 @@
 	"Enable HTT interface logging at initialization")
 
 #define ATH12K_CFG_DP_TX_MONITOR \
-	ATH12K_CFG_INI_BOOL("dp_tx_monitor", false, \
+	ATH12K_CFG_INI_BOOL("dp_tx_monitor", ath12k_dp_ring_cfg->tx_monitor_support, \
 	"Enable dp tx monitor")
 
 #define ATH12K_CFG_DP_REO_CMD_RING_SIZE \

@@ -153,3 +153,57 @@ int ath12k_unregister_smart_ant_ops(void)
 	return 0;
 }
 EXPORT_SYMBOL(ath12k_unregister_smart_ant_ops);
+
+int ath12k_smart_ant_api_channel_change(struct ath12k *ar)
+{
+	struct ath12k_link_vif *arvif, *sa_arvif = NULL;
+	int ret;
+
+	if (!ar)
+		return -EINVAL;
+
+	if (!ath12k_smart_ant_is_enable(ar->ab))
+		return 0;
+
+	/*
+	 * Find the first started AP or STA link vif on this radio.
+	 * sa_core_init() uses the arvif only to read vdev_type, chanctx,
+	 * vdev_id, and vif->addr, all of which are stable under the wiphy
+	 * lock that the caller holds.
+	 */
+	spin_lock_bh(&ar->data_lock);
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (!arvif->is_started || !arvif->ahvif)
+			continue;
+		if (arvif->ahvif->vdev_type == WMI_VDEV_TYPE_AP ||
+		    arvif->ahvif->vdev_type == WMI_VDEV_TYPE_STA) {
+			sa_arvif = arvif;
+			break;
+		}
+	}
+	spin_unlock_bh(&ar->data_lock);
+
+	if (!sa_arvif) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_ANY,
+			   "SA channel change: no suitable vif found\n");
+		return 0;
+	}
+
+	ret = sa_core_deinit(ar, SA_NEW_RECONFIG);
+	if (ret) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_ANY,
+			   "SA channel change: deinit failed (%d)\n", ret);
+		return ret;
+	}
+
+	ret = sa_core_init(ar, sa_arvif, SA_NEW_RECONFIG);
+	if (ret) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_ANY,
+			   "SA channel change: init failed (%d)\n", ret);
+		return ret;
+	}
+
+	sa_core_notify_all_peers_connected(ar);
+
+	return 0;
+}

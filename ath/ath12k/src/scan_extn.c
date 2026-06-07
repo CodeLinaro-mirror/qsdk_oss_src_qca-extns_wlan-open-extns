@@ -6,6 +6,7 @@
 #include <linux/types.h>
 #include "../wmi.h"
 #include "ath12k_cmn_extn.h"
+#include "../core.h"
 
 /**
  * ath12k_wmi_start_scan_init_extn - Initialize scan offset in scan args
@@ -18,7 +19,18 @@
 void ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
 				     struct ath12k_wmi_scan_req_arg *arg)
 {
+	struct ieee80211_channel *channel;
+
 	arg->extn.scan_start_offset = 0;
+
+	if (!arg->num_chan || !arg->chan_list.chan)
+		return;
+
+	channel = ieee80211_get_channel(ar->ah->hw->wiphy,
+					arg->chan_list.chan[0].freq);
+	if (channel && channel->band == NL80211_BAND_5GHZ)
+		arg->scan_f_strict_passive_pch =
+			ar->radio_cfg.radio_cfg_extn.scan_f_strict_passive_pch;
 }
 
 /**

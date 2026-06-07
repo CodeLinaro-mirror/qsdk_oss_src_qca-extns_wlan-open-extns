@@ -8014,6 +8014,19 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 		memcpy(&value, params->data, sizeof(value));
 		ret = ath12k_vendor_set_regdomain(wiphy, ar, value);
 		return ret;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_SCAN_STRICT_PASSIVE_PCH:
+		if (params->data_len < sizeof(u32)) {
+			ath12k_err(NULL, "Invalid strict passive scan data len: %u\n",
+				   params->data_len);
+			return -EINVAL;
+		}
+
+		memcpy(&value, params->data, sizeof(value));
+		if (value > 1)
+			return -EINVAL;
+
+		ar->radio_cfg.radio_cfg_extn.scan_f_strict_passive_pch = value;
+		return 0;
 	default:
 		if (params->data_len < sizeof(u32)) {
 			ath12k_err(NULL, "Invalid data len: %u for radio param: %d\n",
@@ -11209,6 +11222,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_PROBE_ALL_BW:
 		*value = ar->radio_cfg.en_probe_all_bw;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_SCAN_STRICT_PASSIVE_PCH:
+		*value = ar->radio_cfg.radio_cfg_extn.scan_f_strict_passive_pch;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_SET_HW_MODE_CMDID:

@@ -20,6 +20,7 @@
 #include "../core.h"
 #include "../ce.h"
 #include "../hw.h"
+#include "../mac.h"
 #include "../debug.h"
 #include "../peer.h"
 #include "ath12k_cmn_extn.h"
@@ -1189,6 +1190,58 @@ void ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab)
 	}
 }
 
+/**
+ * ath12k_mac_dfs_violation_radar_bitmap_extn() - Build radar bitmap
+ * @wiphy: wiphy owning the channel state
+ * @chandef: operating channel definition
+ *
+ * Walk the operating channel in 20 MHz steps and mark restored NOL
+ * subchannels in the returned radar bitmap.
+ *
+ * Return: radar bitmap for restored NOL subchannels, or 0.
+ */
+static u16
+ath12k_mac_dfs_violation_radar_bitmap_extn(struct wiphy *wiphy,
+					   const struct cfg80211_chan_def *chandef)
+{
+	u32 start_freq_khz, end_freq_khz, freq_khz;
+	u16 radar_bitmap = 0;
+	int width_mhz;
+	int bit = 0;
+
+	if (!wiphy || !cfg80211_chandef_valid(chandef) || !chandef->chan)
+		return 0;
+
+	if (cfg80211_chandef_device_present(chandef) || chandef->center_freq2)
+		return 0;
+
+	width_mhz = cfg80211_chandef_get_width(chandef);
+	if (width_mhz < 0)
+		return 0;
+
+	start_freq_khz = MHZ_TO_KHZ(width_mhz <= ATH12K_CHWIDTH_20 ?
+				    chandef->center_freq1 :
+				    chandef->center_freq1 - width_mhz / 2 + 10);
+	end_freq_khz = MHZ_TO_KHZ(width_mhz <= ATH12K_CHWIDTH_20 ?
+				  chandef->center_freq1 :
+				  chandef->center_freq1 + width_mhz / 2 - 10);
+
+	for (freq_khz = start_freq_khz;
+	     freq_khz <= end_freq_khz;
+	     freq_khz += MHZ_TO_KHZ(ATH12K_CHWIDTH_20), bit++) {
+		struct ieee80211_channel *chan;
+
+		chan = ieee80211_get_channel_khz(wiphy, freq_khz);
+		if (!chan || !(chan->flags & IEEE80211_CHAN_RADAR))
+			continue;
+
+		if (chan->dfs_state == NL80211_DFS_UNAVAILABLE)
+			radar_bitmap |= BIT(bit);
+	}
+
+	return radar_bitmap;
+}
+
 void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 					    struct ieee80211_chanctx_conf *ctx)
 {
@@ -1216,6 +1269,48 @@ void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 		    arvif->vdev_id, chandef->chan->center_freq);
 
 	cfg80211_radar_event(hw->wiphy, chandef, GFP_KERNEL);
+}
+
+/**
+ * ath12k_mac_setnol_recovery_extn() - Trigger setnol DFS recovery
+ * @arvif: AP link vif
+ * @ctx: channel context
+ *
+ * Route setnol-triggered recovery through mac80211 radar handling so
+ * CAC abort and channel move follow the normal DFS path.
+ */
+void ath12k_mac_setnol_recovery_extn(struct ath12k_link_vif *arvif,
+				     struct ieee80211_chanctx_conf *ctx)
+{
+	struct ath12k *ar = arvif->ar;
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	struct cfg80211_chan_def *chandef;
+	u16 radar_bitmap;
+	int dfs_required;
+
+	if (!ctx)
+		return;
+
+	chandef = &ctx->def;
+	if (!chandef->chan)
+		return;
+
+	dfs_required = cfg80211_chandef_dfs_required(hw->wiphy, chandef,
+						     arvif->ahvif->vif->type);
+	if (dfs_required <= 0)
+		return;
+
+	arvif->pending_csa_up = false;
+	radar_bitmap = ath12k_mac_dfs_violation_radar_bitmap_extn(hw->wiphy,
+								  chandef);
+
+	if (radar_bitmap) {
+		ieee80211_radar_detected_bitmap(hw, radar_bitmap,
+						chandef->chan);
+		return;
+	}
+
+	ieee80211_radar_detected(hw, ctx);
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

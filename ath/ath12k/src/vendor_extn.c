@@ -7767,6 +7767,80 @@ static int ath12k_vendor_dump_nol_to_file_extn(struct wiphy *wiphy,
 }
 
 /**
+ * ath12k_vendor_get_started_ap_arvif_extn() - Find the first started AP link
+ * on a radio
+ * @ar: Radio instance to inspect
+ *
+ * Return: AP arvif with a valid chanctx, or %NULL if none is active.
+ */
+static struct ath12k_link_vif *
+ath12k_vendor_get_started_ap_arvif_extn(struct ath12k *ar)
+{
+	struct ath12k_link_vif *arvif;
+
+	if (!ar)
+		return NULL;
+
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (!arvif->is_started || !arvif->ahvif || !arvif->ahvif->vif)
+			continue;
+
+		if (arvif->ahvif->vif->type != NL80211_IFTYPE_AP)
+			continue;
+
+		if (!arvif->chanctx.def.chan)
+			continue;
+
+		return arvif;
+	}
+
+	return NULL;
+}
+
+/**
+ * ath12k_vendor_trigger_radar_on_nol_ap_extn() - Force DFS recovery when
+ * setnol restores NOL onto the currently operating AP channel
+ * @wiphy: Wiphy that owns the DFS channel tables
+ * @radio_idx: Radio index restored by setnol
+ *
+ * This is used to cover the case where setnol runs during CAC and mac80211
+ * later transitions the operating channel back to available on CAC completion.
+ */
+static void ath12k_vendor_trigger_radar_on_nol_ap_extn(struct wiphy *wiphy,
+						       u8 radio_idx)
+{
+	struct ieee80211_hw *hw;
+	struct ath12k_hw *ah;
+	struct ath12k *ar;
+	struct ath12k_link_vif *arvif;
+
+	if (!wiphy)
+		return;
+
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	if (!hw || !hw->priv)
+		return;
+
+	ah = hw->priv;
+	if (radio_idx >= ah->num_radio)
+		return;
+
+	ar = &ah->radio[radio_idx];
+	arvif = ath12k_vendor_get_started_ap_arvif_extn(ar);
+	if (!arvif || !cfg80211_chandef_valid(&arvif->chanctx.def))
+		return;
+
+	if (cfg80211_chandef_dfs_nol_clear(wiphy, &arvif->chanctx.def))
+		return;
+
+	ath12k_warn(arvif->ar->ab,
+		    "setnol: AP vdev %d on radio %u is operating on a restored NOL channel, triggering radar event\n",
+		    arvif->vdev_id, radio_idx);
+
+	ath12k_mac_setnol_recovery_extn(arvif, &arvif->chanctx);
+}
+
+/**
  * ath12k_vendor_set_nol_chan_list_extn() - Restore saved NOL state for a
  * radio
  * @wiphy: Wiphy that owns the DFS channel tables
@@ -7806,6 +7880,9 @@ int ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
 
 	if (num_updated)
 		*num_updated = updated;
+
+	if (updated > 0)
+		ath12k_vendor_trigger_radar_on_nol_ap_extn(wiphy, radio_idx);
 
 	wiphy_info(wiphy, "setnol: radio_idx=%u applied %d entries from %s\n",
 		   radio_idx, updated, resolved_path);

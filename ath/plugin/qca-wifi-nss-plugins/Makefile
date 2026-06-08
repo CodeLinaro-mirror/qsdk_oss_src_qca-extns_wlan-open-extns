@@ -39,5 +39,10 @@ ccflags-y += -I$(obj)/ppeds_plugins/ -DQCA_WIFI_NSS_PLUGINS_PPEDS
 qca-wifi-nss-plugins-objs += ppeds_plugins/qca_wifi_nss_plugins_ppeds.o
 endif
 
+ifeq ($(QCA_WIFI_NSS_PLUGINS_IPA_FSE),y)
+ccflags-y += -I$(obj)/ipa_plugins/ -DQCA_WIFI_NSS_PLUGINS_IPA_FSE
+qca-wifi-nss-plugins-objs += ipa_plugins/qca_wifi_nss_plugins_ipa_fse.o
+endif
+
 obj-m += qca-wifi-nss-plugins.o
 

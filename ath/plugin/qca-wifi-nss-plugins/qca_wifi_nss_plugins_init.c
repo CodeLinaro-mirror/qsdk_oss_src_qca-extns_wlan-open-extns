@@ -22,6 +22,10 @@
 #include <ppe_public.h>
 #endif /* QCA_WIFI_NSS_PLUGINS_PPEDS */
 
+#ifdef QCA_WIFI_NSS_PLUGINS_IPA_FSE
+#include <qca_wifi_nss_plugins_ipa.h>
+#endif /* QCA_WIFI_NSS_PLUGINS_IPA_FSE */
+
 /*
  * qca_wifi_nss_plugin_init_module()
  *	QCA_WIFI_PLUGIN module init function
@@ -86,10 +90,22 @@ int __init qca_wifi_nss_plugin_init_module(void)
 	}
 #endif /* QCA_WIFI_NSS_PLUGINS_ECM_NL */
 
+#ifdef QCA_WIFI_NSS_PLUGINS_IPA_FSE
+	ret = qca_wifi_nss_plugins_ipa_fse_cb_register();
+	if (ret) {
+		qca_wifi_nss_plugins_info_always("IPA_Plugin callback registration failed\n");
+		goto fail_ipa_register;
+	}
+#endif /* QCA_WIFI_NSS_PLUGINS_IPA_FSE */
 	qca_wifi_nss_plugins_info_always("QCA_WIFI_PLUGIN module loaded\n");
 	return 0;
 
+#ifdef QCA_WIFI_NSS_PLUGINS_IPA_FSE
+fail_ipa_register:
+#endif /* QCA_WIFI_NSS_PLUGINS_IPA_FSE */
+
 #ifdef QCA_WIFI_NSS_PLUGINS_ECM_NL
+	qca_wifi_nss_plugins_nl_event_stop();
 fail_nl_event_start:
 #endif /* QCA_WIFI_NSS_PLUGINS_ECM_NL */
 
@@ -131,6 +147,10 @@ fail_fse_cb_register:
  */
 static void __exit qca_wifi_nss_plugin_exit_module(void)
 {
+#ifdef QCA_WIFI_NSS_PLUGINS_IPA_FSE
+	qca_wifi_nss_plugins_ipa_fse_cb_unregister();
+#endif /* QCA_WIFI_NSS_PLUGINS_IPA_FSE */
+
 #ifdef QCA_WIFI_NSS_PLUGINS_ECM_NL
 	qca_wifi_nss_plugins_nl_event_stop();
 #endif /* QCA_WIFI_NSS_PLUGINS_ECM_NL */

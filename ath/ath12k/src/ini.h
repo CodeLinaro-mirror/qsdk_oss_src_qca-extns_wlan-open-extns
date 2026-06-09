@@ -306,6 +306,7 @@
 	ATH12K_CFG(ATH12K_CFG_SA_MODE) \
 	ATH12K_CFG(ATH12K_CFG_NOL_AUTO_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_REO_MGMT_PATH_DISABLE) \
+	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -829,6 +830,15 @@
 	ATH12K_DP_UMAC_RESET_TIMEOUT_MAX, \
 	ATH12K_DP_UMAC_RESET_TIMEOUT_DEFAULT, \
 	ATH12K_CFG_VALUE_OR_DEFAULT, "UMAC reset completion timeout in ms")
+
+/* Override the CUMAC chip selection band priority.
+ * Space-separated list of band names, e.g. "2GHz 5GHz 6GHz".
+ * When empty (default) the built-in priority order is used.
+ */
+#define ATH12K_CFG_CUMAC_BAND_PRIORITY \
+	ATH12K_CFG_INI_STRING("cumac_band_priority", \
+	0, 31, "", \
+	"CUMAC chip selection band priority (space-separated: \"2GHz 5GHz 6GHz\")")
 
 /**
  * enum ath12k_cfg_data_type - Enum for CFG/INI types

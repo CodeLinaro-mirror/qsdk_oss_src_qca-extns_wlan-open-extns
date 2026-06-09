@@ -1479,8 +1479,30 @@ void ath12k_dsb(void)
 	dsb(st);
 }
 
-dma_addr_t  ath12k_dp_rx_buffer_map(struct ath12k_dp *dp,
-				    struct ath12k_rx_desc_info *rx_sw_desc)
+#ifdef PLATFORM_SDX
+dma_addr_t ath12k_dp_rx_buffer_map(struct ath12k_dp *dp,
+				   struct ath12k_rx_desc_info *rx_sw_desc)
+{
+	dma_addr_t iova;
+
+	iova = dma_map_single(dp->dev, rx_sw_desc->vaddr,
+			      DP_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
+
+	if (unlikely(dma_mapping_error(dp->dev, iova)))
+		return DMA_MAPPING_ERROR;
+
+	return iova;
+}
+
+void ath12k_dp_rx_buffer_unmap(struct ath12k_dp *dp,
+			       struct ath12k_rx_desc_info *rx_sw_desc)
+{
+	dma_unmap_single(dp->dev, rx_sw_desc->paddr,
+			 DP_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
+}
+#else
+dma_addr_t ath12k_dp_rx_buffer_map(struct ath12k_dp *dp,
+				   struct ath12k_rx_desc_info *rx_sw_desc)
 {
 	if (unlikely(!rx_sw_desc->skb->fast_recycled))
 		ath12k_core_dmac_inv_range_no_dsb(rx_sw_desc->vaddr,
@@ -1497,6 +1519,7 @@ void ath12k_dp_rx_buffer_unmap(struct ath12k_dp *dp,
 					  rx_sw_desc->vaddr +
 					  DP_RX_BUFFER_SIZE);
 }
+#endif /* PLATFORM_SDX */
 #else
 void ath12k_dp_srng_dst_invalidate_entries(struct ath12k_dp *dp,
 					   struct hal_srng *srng,

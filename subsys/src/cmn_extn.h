@@ -8,6 +8,7 @@
 
 #include <net/mac80211.h>
 #include "../../../include/net/cfg80211.h"
+#include "dfs_extn.h"
 
 struct ieee802_11_elems;
 enum ieee80211_conn_mode;

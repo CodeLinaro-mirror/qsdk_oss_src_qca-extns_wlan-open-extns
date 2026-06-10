@@ -909,6 +909,14 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 {
 	return 0;
 }
+
+static inline bool
+ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
+					       struct ath12k_link_vif *arvif,
+					       struct ieee80211_bss_conf *link_conf)
+{
+	return false;
+}
 #else
 
 struct ath12k_dp_hw_group_extn {
@@ -1561,6 +1569,21 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
  */
 int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
 					   int len);
+
+/**
+ * ath12k_control_beaconing_bootup_cac_check_extn - Check boot-up CAC state
+ * and defer vdev_up if DFS CAC is still in progress.
+ *
+ * @ar:        ath12k radio instance
+ * @arvif:     link vif for which vdev_up is being considered
+ * @link_conf: ieee80211_bss_conf for the link
+ *
+ * Returns true if vdev_up should be deferred (CAC still running), false
+ * otherwise.
+ */
+bool ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
+						     struct ath12k_link_vif *arvif,
+						     struct ieee80211_bss_conf *link_conf);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

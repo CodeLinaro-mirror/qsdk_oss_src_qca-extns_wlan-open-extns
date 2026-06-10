@@ -697,6 +697,12 @@ ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 }
 
 static inline void
+ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
+					   struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
+static inline void
 ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
 				struct ath12k_wmi_scan_req_arg *arg)
 {
@@ -1176,6 +1182,18 @@ void ath12k_custom_tx_send(struct ieee80211_vif *vif,
 void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 					     struct ath12k_wmi_scan_req_arg *arg);
 
+/**
+ * ath12k_wmi_update_strict_passive_scan_extn - Update strict passive scan
+ *                                              setting for 5 GHz scans
+ * @ar: Pointer to the ath12k radio structure
+ * @arg: Pointer to the scan request parameters
+ *
+ * Update the strict passive scan flag in the scan request based on the
+ * userspace radio configuration. The flag is applied only when the scan
+ * request includes a 5 GHz channel.
+ */
+void ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
+						struct ath12k_wmi_scan_req_arg *arg);
 
 /**
  * ath12k_wmi_start_scan_init_extn - Initialize CBS scan offset in scan args

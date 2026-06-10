@@ -155,6 +155,8 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 							tlv_info,
 							HAL_WBM_REL_SRC_MODULE_REO);
 			if (ret) {
+				memset(prev_tlv_info, 0, sizeof(*prev_tlv_info));
+				memset(status, 0, sizeof(*status));
 				dev_kfree_skb_any(msdu);
 				return 1;
 			}

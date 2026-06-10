@@ -15,6 +15,22 @@ extern struct ath12k_smart_ant_ops __rcu *g_sa_ops;
 static struct notifier_block sa_ppdu_nb;
 static atomic_t sa_ppdu_nb_registered = ATOMIC_INIT(0);
 
+/* This is internal structure and used only from TX/RX feedback
+ * during per PPDU stats processing to carry the content for
+ * further action from iterator.
+ */
+struct sa_txrx_fb_ctx {
+	struct ath12k_sa_rx_feedback *rx;
+	struct ath12k_sa_tx_feedback *tx;
+	struct smart_ant_train_info param;
+	u8 status;
+	s8 ret;
+	u32 pdev_id;
+	u32 vdev_id;
+	u32 value;
+	u32 ant_array[SA_MAX_SA_CHAINS];
+};
+
 /*
  * Cached pointer to the hw_group (ag).
  *
@@ -266,7 +282,7 @@ void sa_get_cfg_flags(struct ath12k_base *ab, u8 *sa_en, u8 *sa_sw_test)
 /* Called within rcu_read_lock() */
 static void sa_core_peer_connect_notify(struct ath12k *ar,
 					struct ath12k_link_sta *arsta,
-					void *data)
+					struct sa_sta_ratecode_list *param)
 {
 	struct ath12k_smart_ant_ops *ops;
 	struct ieee80211_channel *chan;
@@ -274,13 +290,9 @@ static void sa_core_peer_connect_notify(struct ath12k *ar,
 	struct ath12k_link_vif *arvif;
 	struct sa_sta_extn *sa_sta;
 	struct ath12k_sa_node_info node_info = {0};
-	struct sa_sta_ratecode_list *param = data;
 
 	ops = rcu_dereference(g_sa_ops);
 	if (!ops || !ops->sa_peer_connect)
-		return;
-
-	if (!ath12k_smart_ant_is_enable(ar->ab))
 		return;
 
 	arvif = arsta->arvif;
@@ -443,9 +455,10 @@ sa_core_wmi_send_smart_ant_enable(struct ath12k *ar, u32 tx_ant, u32 rx_ant,
 	return ret;
 }
 
-static int sa_core_wmi_set_rx_antenna(struct ath12k *ar, u32 rx_antenna)
+static int sa_core_wmi_set_rx_antenna(struct ath12k_base *ab,
+				      struct ath12k_wmi_pdev *wmi, u32 pdev_id,
+				      u32 rx_antenna)
 {
-	struct ath12k_wmi_pdev *wmi = ar->wmi;
 	struct wmi_pdev_set_rx_antenna_cmd *cmd;
 	struct sk_buff *skb;
 	int ret, len;
@@ -460,13 +473,13 @@ static int sa_core_wmi_set_rx_antenna(struct ath12k *ar, u32 rx_antenna)
 		FIELD_PREP(WMI_TLV_TAG,
 			   WMI_TAG_PDEV_SMART_ANT_SET_RX_ANTENNA_CMD) |
 		FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
-	cmd->pdev_id = ar->pdev->pdev_id;
+	cmd->pdev_id = pdev_id;
 	cmd->rx_antenna = rx_antenna;
 
 	ret = ath12k_wmi_cmd_send(wmi, skb,
 				  WMI_PDEV_SMART_ANT_SET_RX_ANTENNA_CMDID);
 	if (ret) {
-		ath12k_warn(ar->ab,
+		ath12k_warn(ab,
 			    "WMI_PDEV_SMART_ANT_SET_RX_ANTENNA_CMDID failed\n");
 		dev_kfree_skb(skb);
 	}
@@ -474,10 +487,10 @@ static int sa_core_wmi_set_rx_antenna(struct ath12k *ar, u32 rx_antenna)
 	return ret;
 }
 
-static int sa_core_wmi_set_tx_antenna(struct ath12k *ar, u32 vdev_id,
+static int sa_core_wmi_set_tx_antenna(struct ath12k_base *ab,
+				      struct ath12k_wmi_pdev *wmi, u32 vdev_id,
 				      u8 *macaddr, u32 *tx_ant_series)
 {
-	struct ath12k_wmi_pdev *wmi = ar->wmi;
 	struct wmi_pdev_set_tx_antenna_cmd *cmd;
 	struct wmi_peer_set_smart_tx_ant_series_cmd *series;
 	struct wmi_tlv *tlv;
@@ -525,7 +538,7 @@ static int sa_core_wmi_set_tx_antenna(struct ath12k *ar, u32 vdev_id,
 	ret = ath12k_wmi_cmd_send(wmi, skb,
 				  WMI_PEER_SMART_ANT_SET_TX_ANTENNA_CMDID);
 	if (ret) {
-		ath12k_warn(ar->ab,
+		ath12k_warn(ab,
 			    "failed to send WMI_PEER_SMART_ANT_SET_TX_ANTENNA_CMDID\n");
 		dev_kfree_skb(skb);
 	}
@@ -533,10 +546,10 @@ static int sa_core_wmi_set_tx_antenna(struct ath12k *ar, u32 vdev_id,
 	return ret;
 }
 
-static int sa_core_wmi_set_train_info(struct ath12k *ar, u8 *macaddr,
+static int sa_core_wmi_set_train_info(struct ath12k_base *ab,
+				      struct ath12k_wmi_pdev *wmi, u8 *macaddr,
 				      struct smart_ant_train_info *param)
 {
-	struct ath12k_wmi_pdev *wmi = ar->wmi;
 	struct wmi_peer_set_smart_ant_train_ant_fixed_param_cmd *cmd;
 	struct wmi_peer_set_smart_ant_train_ant_param *train_param;
 	struct wmi_tlv *tlv;
@@ -604,7 +617,7 @@ static int sa_core_wmi_set_train_info(struct ath12k *ar, u8 *macaddr,
 
 	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PEER_SMART_ANT_SET_TRAIN_INFO_CMDID);
 	if (ret) {
-		ath12k_warn(ar->ab,
+		ath12k_warn(ab,
 			    "failed to send WMI_PEER_SMART_ANT_SET_TRAIN_INFO_CMDID\n");
 		dev_kfree_skb(skb);
 	}
@@ -612,12 +625,12 @@ static int sa_core_wmi_set_train_info(struct ath12k *ar, u8 *macaddr,
 	return ret;
 }
 
-static int sa_core_wmi_send_node_config_ops(struct ath12k_link_sta *arsta,
-					    u8 *macaddr, u32 cmd_id,
-					    u16 args_count, u32 *args_arr)
+static int
+sa_core_wmi_send_node_config_ops(struct ath12k_base *ab,
+				 struct ath12k_wmi_pdev *wmi, u32 vdev_id,
+				 u8 *macaddr, u32 cmd_id, u16 args_count,
+				 u32 *args_arr)
 {
-	struct ath12k *ar = arsta->arvif->ar;
-	struct ath12k_wmi_pdev *wmi = ar->wmi;
 	struct wmi_peer_set_smart_ant_node_config_ops_cmd *cmd;
 	struct wmi_tlv *tlv;
 	struct sk_buff *skb;
@@ -627,7 +640,7 @@ static int sa_core_wmi_send_node_config_ops(struct ath12k_link_sta *arsta,
 	u8 i;
 
 	if (!macaddr || !args_count || !args_arr) {
-		ath12k_warn(ar->ab, "Cannot send with invalid arguments");
+		ath12k_warn(ab, "Cannot send with invalid arguments");
 		return -EINVAL;
 	}
 
@@ -642,7 +655,7 @@ static int sa_core_wmi_send_node_config_ops(struct ath12k_link_sta *arsta,
 		FIELD_PREP(WMI_TLV_TAG,
 			   WMI_TAG_PEER_SMART_ANT_SET_NODE_CONFIG_OPS_CMD) |
 		FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
-	cmd->vdev_id = arsta->arvif->vdev_id;
+	cmd->vdev_id = vdev_id;
 	ether_addr_copy(cmd->macaddr.addr, macaddr);
 	cmd->cmd_id = cmd_id;
 	cmd->args_count = args_count;
@@ -659,8 +672,7 @@ static int sa_core_wmi_send_node_config_ops(struct ath12k_link_sta *arsta,
 	ret = ath12k_wmi_cmd_send(wmi, skb,
 				  WMI_PEER_SMART_ANT_SET_NODE_CONFIG_OPS_CMDID);
 	if (ret) {
-		ath12k_warn(ar->ab,
-			    "failed to send SMART_ANT_SET_NODE_CONFIG_OPS");
+		ath12k_warn(ab, "failed to send SMART_ANT_SET_NODE_CONFIG_OPS");
 		dev_kfree_skb(skb);
 	}
 
@@ -785,7 +797,12 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 					 struct sk_buff *skb)
 {
 	struct sa_sta_ratecode_list param = {0};
+	struct ath12k *ar;
+	struct ath12k_link_sta *arsta;
 	int ret;
+
+	if (!ath12k_smart_ant_is_enable(ab))
+		return;
 
 	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
 				  sa_core_wmi_peer_rc_list_ev_parser,
@@ -799,129 +816,124 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
 	if (!is_valid_ether_addr(param.mac_addr))
 		return;
 
-	if (!ath12k_arsta_itr_on_ab_by_addr_bh(ab, param.mac_addr,
-					       sa_core_peer_connect_notify,
-					       &param))
-		ath12k_err(ab, "Failed to notify peer rate list for %pM\n",
-			   param.mac_addr);
+	rcu_read_lock();
+	ar = ath12k_mac_get_ar_by_pdev_id(ab, param.pdev_id);
+	if (!ar) {
+		rcu_read_unlock();
+		return;
+	}
+	spin_lock_bh(&ar->arsta_lock);
+	arsta = ath12k_link_sta_find_by_addr(ar, param.mac_addr);
+	if (!arsta) {
+		spin_unlock_bh(&ar->arsta_lock);
+		rcu_read_unlock();
+		return;
+	}
+	sa_core_peer_connect_notify(ar, arsta, &param);
+	spin_unlock_bh(&ar->arsta_lock);
+	rcu_read_unlock();
 }
 
 /* Called within rcu_read_lock() */
-static int sa_core_trigger_training(struct ath12k_link_sta *arsta, u8 *macaddr)
+static int sa_core_get_training_info(void *sta_ctx,
+				     struct smart_ant_train_info *param,
+				     u32 vdev_id)
 {
 	struct ath12k_smart_ant_ops *ops;
-	struct ath12k *ar;
-	struct sa_sta_extn *sa_sta;
-	struct smart_ant_train_info param = {0};
 	int ret = 0;
-
-	ar = arsta->arvif->ar;
-	param.vdev_id = arsta->arvif->vdev_id;
-	sa_sta = &arsta->arsta_extn.sa_sta;
 
 	ops = rcu_dereference(g_sa_ops);
 	if (!ops)
 		return -1;
 
+	param->vdev_id = vdev_id;
+	param->minpkts = SA_INVALID_PARAM_VALUE;
+	param->per_th = SA_INVALID_PARAM_VALUE;
 	if (ops->sa_get_traininginfo)
-		ret = ops->sa_get_traininginfo(sa_sta->ctx,
-					       &param.rate_array[0],
-					       &param.antenna_array[0],
-					       &param.numpkts);
+		ret = ops->sa_get_traininginfo(sta_ctx,
+					       &param->rate_array[0],
+					       &param->antenna_array[0],
+					       &param->numpkts);
 
-	param.minpkts = SA_INVALID_PARAM_VALUE;
-	param.per_th = SA_INVALID_PARAM_VALUE;
-	if (ops->sa_get_ext_traininginfo)
-		ops->sa_get_ext_traininginfo(sa_sta->ctx,
-					     &param.minpkts,
-					     &param.per_th);
-
-	if (!ret)
-		ret = sa_core_wmi_set_train_info(ar, macaddr, &param);
-	else
-		ath12k_err(ar->ab, "Failed to get training params for STA %pM\n",
-			   macaddr);
+	if (!ret && ops->sa_get_ext_traininginfo)
+		ops->sa_get_ext_traininginfo(sta_ctx,
+					     &param->minpkts,
+					     &param->per_th);
 
 	return ret;
 }
 
 /* Called within rcu_read_lock() */
-static void sa_core_tx_feedback_notify(struct ath12k *ar,
-				       struct ath12k_link_sta *arsta,
-				       void *data)
+static void sa_core_get_txrx_fb_ctx(struct ath12k *ar,
+				    struct ath12k_link_sta *arsta,
+				    void *data)
 {
 	struct sa_sta_extn *sa_sta = &arsta->arsta_extn.sa_sta;
-	struct ath12k_sa_tx_feedback *tx = (struct ath12k_sa_tx_feedback *)data;
+	struct sa_txrx_fb_ctx *ctx = (struct sa_txrx_fb_ctx *)data;
 	struct ath12k_smart_ant_ops *ops;
-	u32 ant_array[SA_MAX_SA_CHAINS] = {0};
-	u32 value = 0;
-	u8 status = 0;
 
-	ops = rcu_dereference(g_sa_ops);
-	if (!ops || !ops->sa_update_txfeedback || !sa_sta->ctx)
-		return;
-
-	if (ops->sa_update_txfeedback(sa_sta->ctx, tx, &status)) {
-		ath12k_err(ar->ab, "Failed to update TX Feedback");
+	if (!sa_sta->ctx) {
+		ctx->ret = -1;
 		return;
 	}
 
-	if (status & SA_RX_CONFIG_REQUIRED) {
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops) {
+		ctx->ret = -1;
+		return;
+	}
+	if (ctx->tx && ops->sa_update_txfeedback) {
+		if (ops->sa_update_txfeedback(sa_sta->ctx, ctx->tx,
+					      &ctx->status)) {
+			ath12k_err(ar->ab, "Failed to update TX Feedback");
+			ctx->ret = -1;
+			return;
+		}
+	} else if (ctx->rx && ops->sa_update_rxfeedback) {
+		if (ops->sa_update_rxfeedback(sa_sta->ctx, ctx->rx,
+					      &ctx->status)) {
+			ath12k_err(ar->ab, "Failed to update RX Feedback");
+			ctx->ret = -1;
+			return;
+		}
+	} else {
+		/* No message required as it may flood the console */
+		ctx->ret = -1;
+		return;
+	}
+
+	ctx->pdev_id = ar->pdev->pdev_id;
+	ctx->vdev_id = arsta->arvif->vdev_id;
+
+	if (!ctx->status)
+		return;
+
+	if (ctx->status & SA_RX_CONFIG_REQUIRED) {
 		if (ops->sa_get_rxantenna)
-			ops->sa_get_rxantenna(ar->radio_idx, &value);
-		sa_core_wmi_set_rx_antenna(ar, value);
-	} else if (status & SA_TX_CONFIG_REQUIRED) {
+			ops->sa_get_rxantenna(ar->radio_idx, &ctx->value);
+	} else if (ctx->status & SA_TX_CONFIG_REQUIRED) {
 		if (ops->sa_get_txantenna)
-			ops->sa_get_txantenna(sa_sta->ctx, &ant_array[0]);
-		sa_core_wmi_set_tx_antenna(ar, arsta->arvif->vdev_id,
-					   arsta->addr, ant_array);
-	} else if (status & SA_TRAINING_REQUIRED) {
-		sa_core_trigger_training(arsta, arsta->addr);
-	} else if (status & SA_TX_FEEDBACK_CONFIG_REQUIRED) {
+			ops->sa_get_txantenna(sa_sta->ctx, &ctx->ant_array[0]);
+	} else if (ctx->status & SA_TRAINING_REQUIRED) {
+		ctx->ret = sa_core_get_training_info(sa_sta->ctx, &ctx->param,
+						     arsta->arvif->vdev_id);
+	} else if (ctx->status & SA_TX_FEEDBACK_CONFIG_REQUIRED) {
 		if (ops->sa_get_node_config)
 			ops->sa_get_node_config(sa_sta->ctx,
-						SA_TX_FEEDBACK_CONFIG, &value);
-		sa_core_wmi_send_node_config_ops(arsta, arsta->addr,
-						 SA_TX_FEEDBACK_CONFIG,
-						 1, &value);
+						SA_TX_FEEDBACK_CONFIG,
+						&ctx->value);
 	}
 }
 
-/* Called within rcu_read_lock() */
-static void sa_core_rx_feedback_notify(struct ath12k *ar,
-				       struct ath12k_link_sta *arsta,
-				       void *data)
-{
-	struct sa_sta_extn *sa_sta = &arsta->arsta_extn.sa_sta;
-	struct ath12k_sa_rx_feedback *rx = (struct ath12k_sa_rx_feedback *)data;
-	struct ath12k_smart_ant_ops *ops;
-	u32 value = 0;
-	u8 status = 0;
-
-	ops = rcu_dereference(g_sa_ops);
-	if (!ops || !ops->sa_update_rxfeedback || !sa_sta->ctx)
-		return;
-
-	if (ops->sa_update_rxfeedback(sa_sta->ctx, rx, &status)) {
-		ath12k_err(ar->ab, "Failed to update RX Feedback");
-		return;
-	}
-	if (status & SA_RX_CONFIG_REQUIRED) {
-		if (ops->sa_get_rxantenna)
-			ops->sa_get_rxantenna(ar->radio_idx, &value);
-		sa_core_wmi_set_rx_antenna(ar, value);
-	} else if (status & SA_TRAINING_REQUIRED) {
-		sa_core_trigger_training(arsta, arsta->addr);
-	}
-
-}
-
+/* To be called only from sa_core_ppdu_event_notify() */
 static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 {
+	struct sa_txrx_fb_ctx rx_ctx = {0};
 	struct ath12k_sa_rx_feedback rx = {0};
 	struct hal_rx_mon_ppdu_info *ppdu;
 	struct hal_rx_user_status *stats;
 	struct ath12k_base *ab;
+	struct ath12k *ar;
 	u8 i, j;
 
 	/* Quick guard: bail early if no ops registered */
@@ -937,6 +949,9 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 	if (!ab)
 		return -1;
 
+	if (!ath12k_smart_ant_is_enable(ab))
+		return -1;
+
 	if (!is_valid_ether_addr(stats->peer_mac))
 		return -1;
 
@@ -949,30 +964,47 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 		for (j = 0; j < SA_MAX_BW; j++)
 			rx.rx_rssi[i][j] = ppdu->rssi_chain[i][j];
 	rx.rx_rate_index = ppdu->bw;
+	rx_ctx.rx = &rx;
 
 	if (!ath12k_arsta_itr_on_ab_by_addr(ab, stats->peer_mac,
-					    sa_core_rx_feedback_notify,
-					    &rx))
+					    sa_core_get_txrx_fb_ctx,
+					    &rx_ctx)) {
 		ath12k_err(ab, "Failed to notify rx feedback for %pM\n",
 			   stats->peer_mac);
+		/* STA not found; NOP */
+		return 0;
+	}
+
+	if (rx_ctx.ret)
+		return -1;
+
+	if (!rx_ctx.status)
+		return 0;
+
+	ar = ath12k_mac_get_ar_by_pdev_id(ab, rx_ctx.pdev_id);
+	if (!ar)
+		return -1;
+
+	if (rx_ctx.status & SA_RX_CONFIG_REQUIRED) {
+		sa_core_wmi_set_rx_antenna(ab, ar->wmi,
+					   rx_ctx.pdev_id, rx_ctx.value);
+	} else if (rx_ctx.status & SA_TRAINING_REQUIRED) {
+		sa_core_wmi_set_train_info(ab, ar->wmi, stats->peer_mac,
+					   &rx_ctx.param);
+	}
 
 	return 0;
 }
 
-static int sa_core_get_tx_user_stats(struct htt_ppdu_user_stats *stats,
-				     struct ath12k_ppdu_tx_info *tx_info)
+/* To be called only in sa_core_ppdu_event_notify() call cotext */
+static int sa_core_get_tx_user_stats(struct ath12k_base *ab,
+				     struct htt_ppdu_user_stats *stats)
 {
-	struct ath12k_base *ab;
+	struct sa_txrx_fb_ctx tx_ctx = {0};
 	struct ath12k_sa_tx_feedback tx = {0};
+	struct ath12k *ar;
 	u32 rate_flag;
 	u8 i, chains, bw, mcs, preamble, nss;
-
-	if (tx_info->ppdu_info.frame_type != HTT_STATS_PPDU_FTYPE_DATA)
-		return -1;
-
-	ab = sa_core_get_ab_from_device_id(tx_info->device_id);
-	if (!ab)
-		return -1;
 
 	if (!is_valid_ether_addr(stats->peer_mac))
 		return -1;
@@ -1028,18 +1060,49 @@ static int sa_core_get_tx_user_stats(struct htt_ppdu_user_stats *stats,
 		if (tx.nshort_retries[tx.rate_index])
 			tx.nshort_retries[tx.rate_index] -= 1;
 	}
+	tx_ctx.tx = &tx;
 
 	if (!ath12k_arsta_itr_on_ab_by_addr(ab, stats->peer_mac,
-					    sa_core_tx_feedback_notify,
-					    &tx))
+					    sa_core_get_txrx_fb_ctx,
+					    &tx_ctx)) {
 		ath12k_err(ab, "Failed to notify tx feedback for %pM\n",
 			   stats->peer_mac);
+		/* STA not found; NOP */
+		return 0;
+	}
+
+	if (tx_ctx.ret)
+		return -1;
+
+	if (!tx_ctx.status)
+		return 0;
+
+	ar = ath12k_mac_get_ar_by_pdev_id(ab, tx_ctx.pdev_id);
+	if (!ar)
+		return -1;
+
+	if (tx_ctx.status & SA_RX_CONFIG_REQUIRED) {
+		sa_core_wmi_set_rx_antenna(ab, ar->wmi,
+					   tx_ctx.pdev_id, tx_ctx.value);
+	} else if (tx_ctx.status & SA_TX_CONFIG_REQUIRED) {
+		sa_core_wmi_set_tx_antenna(ab, ar->wmi, tx_ctx.vdev_id,
+					   stats->peer_mac, tx_ctx.ant_array);
+	} else if (tx_ctx.status & SA_TRAINING_REQUIRED) {
+		sa_core_wmi_set_train_info(ab, ar->wmi, stats->peer_mac,
+					   &tx_ctx.param);
+	} else if (tx_ctx.status & SA_TX_FEEDBACK_CONFIG_REQUIRED) {
+		sa_core_wmi_send_node_config_ops(ab, ar->wmi, tx_ctx.vdev_id,
+						 stats->peer_mac, SA_TX_FEEDBACK_CONFIG,
+						 1, &tx_ctx.value);
+	}
 
 	return 0;
 }
 
+/* To be called only from sa_core_ppdu_event_notify() */
 static int sa_core_update_tx_feedback(struct ath12k_ppdu_tx_info *tx_info)
 {
+	struct ath12k_base *ab;
 	struct htt_ppdu_stats_info *ppdu;
 	int i;
 
@@ -1047,15 +1110,25 @@ static int sa_core_update_tx_feedback(struct ath12k_ppdu_tx_info *tx_info)
 	if (!rcu_access_pointer(g_sa_ops))
 		return -1;
 
+	if (tx_info->ppdu_info.frame_type != HTT_STATS_PPDU_FTYPE_DATA)
+		return -1;
+
+	ab = sa_core_get_ab_from_device_id(tx_info->device_id);
+	if (!ab)
+		return -1;
+
+	if (!ath12k_smart_ant_is_enable(ab))
+		return -1;
+
 	ppdu = &tx_info->ppdu_info;
 	for (i = 0; (i < ppdu->ppdu_stats.common.num_users) &&
 	     (i < HTT_PPDU_STATS_MAX_USERS); i++)
-		sa_core_get_tx_user_stats(&ppdu->ppdu_stats.user_stats[i],
-					  tx_info);
+		sa_core_get_tx_user_stats(ab, &ppdu->ppdu_stats.user_stats[i]);
 
 	return 0;
 }
 
+/* This Linux notifier is call within RCU lock held. */
 static int sa_core_ppdu_event_notify(struct notifier_block *nb,
                                      unsigned long action, void *data)
 {
@@ -1171,19 +1244,23 @@ int sa_core_get_configs(struct ath12k *ar, u32 *params)
 		/* ath12k_link_sta_find_by_addr() requires rcu_read_lock(),
 		 * which is already held above — no need to nest it again.
 		 */
+		spin_lock_bh(&ar->arsta_lock);
 		arsta = ath12k_link_sta_find_by_addr(ar, mac);
 		if (!arsta) {
 			ath12k_err(ar->ab, "STA not found %pM\n", mac);
+			spin_unlock_bh(&ar->arsta_lock);
 			rcu_read_unlock();
 			return -EPERM;
 		}
 		sa_sta = &arsta->arsta_extn.sa_sta;
 		if (!sa_sta->ctx) {
 			ath12k_err(ar->ab, "Invalid context for STA %pM\n", mac);
+			spin_unlock_bh(&ar->arsta_lock);
 			rcu_read_unlock();
 			return -EPERM;
 		}
 		sa_params.ccp = sa_sta->ctx;
+		spin_unlock_bh(&ar->arsta_lock);
 	}
 	ret = ops->sa_get_param(&sa_params);
 	rcu_read_unlock();
@@ -1196,12 +1273,14 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 {
 	struct ath12k_smart_ant_ops *ops;
 	struct ath12k_sa_config_params sa_params = {0};
+	struct smart_ant_train_info t_param = {0};
 	struct sa_sta_extn *sa_sta = NULL;
 	struct ath12k_link_sta *arsta = NULL;
 	u32 value = 0;
 	u32 ant_array[SA_MAX_SA_CHAINS] = {0};
 	u8 mac[ETH_ALEN] = {0};
 	int ret = 0;
+	u32 vdev_id = 0;
 
 	if (!ar || !ar->ab || !params)
 		return -EINVAL;
@@ -1233,26 +1312,34 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 		/* ath12k_link_sta_find_by_addr() requires rcu_read_lock(),
 		 * which is already held above — no need to nest it again.
 		 */
+		spin_lock_bh(&ar->arsta_lock);
 		arsta = ath12k_link_sta_find_by_addr(ar, mac);
 		if (!arsta) {
 			ath12k_err(ar->ab, "STA not found %pM\n", mac);
+			spin_unlock_bh(&ar->arsta_lock);
 			rcu_read_unlock();
 			return -EPERM;
 		}
 		sa_sta = &arsta->arsta_extn.sa_sta;
 		if (!sa_sta->ctx) {
 			ath12k_err(ar->ab, "Invalid context for STA %pM\n", mac);
+			spin_unlock_bh(&ar->arsta_lock);
 			rcu_read_unlock();
 			return -EPERM;
 		}
 		sa_params.ccp = sa_sta->ctx;
+		if (arsta->arvif)
+			vdev_id = arsta->arvif->vdev_id;
+		spin_unlock_bh(&ar->arsta_lock);
 	}
+
 	ret = ops->sa_set_param(&sa_params);
 	rcu_read_unlock();
 	if (ret > 0) {
 		if (ret & SA_RX_CONFIG_REQUIRED) {
 			sa_core_get_rxantenna(ar->radio_idx, &value);
-			sa_core_wmi_set_rx_antenna(ar, value);
+			sa_core_wmi_set_rx_antenna(ar->ab, ar->wmi,
+						   ar->pdev->pdev_id, value);
 		} else if (ret & SA_DEFAULT_TX_CONFIG_REQUIRED) {
 			sa_core_get_txdefaultantenna(ar->radio_idx, &value);
 			ath12k_wmi_pdev_set_param(ar,
@@ -1268,14 +1355,18 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 							sa_params.param_value);
 		} else if ((ret & SA_TX_CONFIG_REQUIRED) && sa_sta) {
 			sa_core_get_txantenna(sa_sta->ctx, &ant_array[0]);
-			sa_core_wmi_set_tx_antenna(ar, arsta->arvif->vdev_id,
-						   mac, ant_array);
+			sa_core_wmi_set_tx_antenna(ar->ab, ar->wmi,
+						   vdev_id, mac, ant_array);
 		} else if ((ret & SA_TRAINING_REQUIRED) && sa_sta) {
-			sa_core_trigger_training(arsta, mac);
+			if (!sa_core_get_training_info(sa_sta->ctx, &t_param,
+						       vdev_id))
+				sa_core_wmi_set_train_info(ar->ab, ar->wmi, mac,
+							   &t_param);
 		} else if ((ret & SA_TX_FEEDBACK_CONFIG_REQUIRED) && sa_sta) {
 			sa_core_get_node_config(sa_sta->ctx,
 						SA_TX_FEEDBACK_CONFIG, &value);
-			sa_core_wmi_send_node_config_ops(arsta, mac,
+			sa_core_wmi_send_node_config_ops(ar->ab, ar->wmi,
+							 vdev_id, mac,
 							 SA_TX_FEEDBACK_CONFIG,
 							 1, &value);
 		}
@@ -1396,13 +1487,14 @@ int sa_core_init(struct ath12k *ar,
 			ath12k_warn(ab, "SA PPDU registration failed:%d\n",
 				    ret);
 	} else {
-		sa_core_wmi_set_rx_antenna(ar, rx_antenna);
+		sa_core_wmi_set_rx_antenna(ab, ar->wmi, ar->pdev->pdev_id,
+					   rx_antenna);
 	}
 
 	for (i = 0; i < WMI_SMART_ANT_MAX_RATE_SERIES; i++)
 		tx_ant[i] = tx_defaultant;
 
-	sa_core_wmi_set_tx_antenna(ar, arvif->vdev_id,
+	sa_core_wmi_set_tx_antenna(ab, ar->wmi, arvif->vdev_id,
 				   ahvif->vif->addr, tx_ant);
 
 	return 0;

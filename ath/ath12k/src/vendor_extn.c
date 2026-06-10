@@ -148,7 +148,7 @@ static u32 ath12k_vendor_get_radio_band_info(struct ath12k *ar)
 	return ath12k_vendor_classify_radio_band(low_freq, high_freq);
 }
 
-#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
+#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 1023
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
 #define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
 #define ATH12K_CONFIG_MAX_TX_ENCAP_TYPE 2
@@ -2892,8 +2892,8 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
-		if (value > ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE) {
-			ath12k_err(NULL, "Valid AMPDU Aggregation Size is in the range 0-255");
+		if (value > (ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE+1) || (value < 0)) {
+			ath12k_err(NULL, "Valid AMPDU Aggregation Size is in the range 0-1024");
 			return -EINVAL;
 		} else {
 			ret = ath12k_set_ampdu_aggr_size_arvif(arvif, value);

@@ -54,6 +54,7 @@ static void ath12k_reset_raw_pkt_ctx(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 	/* Clear tracking array */
 	memset(raw_pkt_ctx->tracked_skbs, 0, sizeof(raw_pkt_ctx->tracked_skbs));
 	raw_pkt_ctx->num_tracked_skbs = 0;
+	memset(raw_pkt_ctx->frame_id, 0, sizeof(raw_pkt_ctx->frame_id));
 }
 
 /**
@@ -1053,7 +1054,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	uint8_t tx_bf = 0;
 	char *buf;
 	struct nlattr *frame;
-	unsigned int attrsize = QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX * sizeof(struct nlattr *);
+	unsigned int attrsize = (QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX + 1) * sizeof(struct nlattr *);
 	struct sk_buff *skb;
 	struct ieee80211_tx_info *info;
 	struct ath12k_skb_cb *skb_cb;
@@ -1073,6 +1074,8 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	u32 beacon_interval = 100;
 	u32 timeout_ms;
 	u8 effective_link_id;
+	u8 frame_idx;
+	u8 cur_frame_id;
 
 	/* Common setup for both TX and RX functions */
 	ah = ath12k_hw_to_ah(hw);
@@ -1231,6 +1234,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		return -EINVAL;
 	}
 
+	frame_idx = 0;
 	nla_for_each_nested(frame, offchan_frame, rem) {
 		memset(tb, 0, attrsize);
 		ret = nla_parse_nested(tb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX,
@@ -1241,7 +1245,11 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return ret;
 		}
-
+		/* Parse frame_id for this frame; commit only after successful SKB allocation */
+		cur_frame_id = (u8)-1;
+		if (frame_idx < ATH12K_MAX_CUSTOM_TX_PKT &&
+		    tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_ID])
+			cur_frame_id = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_ID]);
 		if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_NSS])
 			nss = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_NSS]);
 		if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_PREAMBLE])
@@ -1275,6 +1283,11 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return -ENOMEM;
 		}
+
+		/* Commit frame_id and advance index only after successful SKB allocation */
+		if (frame_idx < ATH12K_MAX_CUSTOM_TX_PKT)
+			raw_pkt_ctx->frame_id[frame_idx] = cur_frame_id;
+		frame_idx++;
 
 		skb_put_data(skb, buf, buf_len);
 
@@ -1565,7 +1578,6 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 						      struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	struct sk_buff *skb;
-	uint32_t data_len;
 	struct ath12k_offchan_stat *stats = NULL;
 	int i;
 
@@ -1579,15 +1591,19 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		return -EINVAL;
 	}
 
-	/* Calculate the data length */
-	data_len = sizeof(struct ath12k_offchan_stat) + (ATH12K_MAX_CUSTOM_TX_PKT * sizeof(u32));
-
-	/* Allocate an skb for the vendor event */
-	skb = cfg80211_vendor_event_alloc(wdev->wiphy, wdev, data_len + 200,
+	skb = cfg80211_vendor_event_alloc(wdev->wiphy, wdev, NLMSG_DEFAULT_SIZE,
 		QCA_NL80211_VENDOR_SUBCMD_WLAN_HOME_OFFCHAN_TX_RX_INDEX, GFP_KERNEL);
 	if (!skb) {
 		ath12k_err(NULL, "Failed to allocate skb for vendor event\n");
 		return -ENOMEM;
+	}
+
+	/* Add interface index so userspace can identify the wdev */
+	if (wdev->netdev &&
+	    nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_TX_IFINDEX, wdev->netdev->ifindex)) {
+		ath12k_err(NULL, "Failed to put ifindex\n");
+		kfree_skb(skb);
+		return -EINVAL;
 	}
 
 	/* Add transaction ID for correlation */
@@ -1657,14 +1673,29 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		}
 		/* Add status for all frames sent from application */
 		for (i = 0; i < raw_pkt_ctx->num_frames && i < ATH12K_MAX_CUSTOM_TX_PKT; i++) {
-			ath12k_dbg(NULL, ATH12K_DBG_WMI,
-				   "Packet %d status: %u\n", i, raw_pkt_ctx->custom_tx_status[i]);
-			/* Add packet status as indexed attribute within the nest */
-			if (nla_put_u8(skb, i, (u8)raw_pkt_ctx->custom_tx_status[i])) {
-				ath12k_err(NULL, "Failed to put packet %d status\n", i);
+			struct nlattr *status_entry;
+			status_entry = nla_nest_start(skb, i + 1);
+			if (!status_entry) {
+				ath12k_err(NULL, "Failed to create nested attribute for status entry\n");
 				kfree_skb(skb);
 				return -EINVAL;
 			}
+			/* Add packet status id */
+			if (nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_PKT_STATUS_ID, raw_pkt_ctx->frame_id[i])) {
+				ath12k_err(NULL, "Failed to put packet %d status id\n", i);
+				kfree_skb(skb);
+				return -EINVAL;
+			}
+
+			ath12k_dbg(NULL, ATH12K_DBG_WMI,
+				   "Packet %d status: %u\n", i, raw_pkt_ctx->custom_tx_status[i]);
+			/* Add packet status result */
+			if (nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_PKT_STATUS_RESULT, (u8)raw_pkt_ctx->custom_tx_status[i])) {
+				ath12k_err(NULL, "Failed to put packet %d status result\n", i);
+				kfree_skb(skb);
+				return -EINVAL;
+			}
+			nla_nest_end(skb, status_entry);
 		}
 		nla_nest_end(skb, pkt_status_nest);
 	}

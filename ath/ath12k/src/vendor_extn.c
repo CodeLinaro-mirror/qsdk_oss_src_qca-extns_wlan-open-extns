@@ -11399,11 +11399,14 @@ static inline u8 ath12k_5g_chan_to_ieee_num(struct ieee80211_channel *chan)
 
 static int ath12k_display_5ghz_chan_info(struct ath12k *ar)
 {
+	struct wiphy *wiphy = ar->ah->hw->wiphy;
 	struct ieee80211_supported_band *sband;
 	int i;
 
-	sband = &ar->mac.sbands[NL80211_BAND_5GHZ];
-	if (!sband->channels || !sband->n_channels) {
+	lockdep_assert_wiphy(wiphy);
+
+	sband = wiphy->bands[NL80211_BAND_5GHZ];
+	if (!sband || !sband->channels || !sband->n_channels) {
 		ath12k_err(ar->ab,
 			   "get_5ghz_chan_info: no 5GHz channels for radio %d\n",
 			   ar->pdev_idx);

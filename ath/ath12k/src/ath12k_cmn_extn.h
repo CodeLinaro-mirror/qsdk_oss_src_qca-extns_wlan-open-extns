@@ -639,6 +639,8 @@ int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
 					      const u8 *pos,
 					      const u8 *end);
 
+bool ath12k_is_beacon_report_elem(u8 action_code, const u8 *buf, const u8 *end);
+
 struct ath12k_radio_cfg_extn {
 	u8 scan_f_strict_passive_pch;
 };
@@ -651,6 +653,12 @@ int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
 					      const u8 *end)
 {
 	return 0;
+}
+
+bool ath12k_is_beacon_report_elem(u8 action_code, const u8 *buf,
+				  const u8 *end)
+{
+	return false;
 }
 
 static inline void

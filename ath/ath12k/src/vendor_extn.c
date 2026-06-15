@@ -6518,6 +6518,41 @@ void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
 	}
 }
 
+static int ath12k_vendor_set_bssid_extn(struct wireless_dev *wdev,
+					struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+
+	if (!params->data || params->data_len != ETH_ALEN)
+		return -EINVAL;
+
+	if (is_broadcast_ether_addr(params->data) ||
+	    is_multicast_ether_addr(params->data))
+		return -EINVAL;
+
+	if (wdev->iftype != NL80211_IFTYPE_STATION)
+		return -EOPNOTSUPP;
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif)
+		return -EINVAL;
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+
+	spin_lock_bh(&ahvif->ath12k_vif_extn.data_lock);
+	if (is_zero_ether_addr(params->data)) {
+		eth_zero_addr(ahvif->ath12k_vif_extn.bssid);
+		ahvif->ath12k_vif_extn.bssid_set = false;
+	} else {
+		ether_addr_copy(ahvif->ath12k_vif_extn.bssid, params->data);
+		ahvif->ath12k_vif_extn.bssid_set = true;
+	}
+	spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
+
+	return 0;
+}
+
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
 {
@@ -6649,6 +6684,13 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 		}
 		enable = !!*(u8 *)wifi_params->data;
 		ieee80211_set_allow_scan_on_dfs_chan_extn(local, enable);
+		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_BSSID:
+		ret = ath12k_vendor_set_bssid_extn(wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set BSSID\n");
+			return ret;
+		}
 		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");

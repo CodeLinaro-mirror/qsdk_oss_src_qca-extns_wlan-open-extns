@@ -5,36 +5,115 @@
 #include "sa_api.h"
 #include "../debug.h"
 
-struct ath12k_smart_ant_ops *g_sa_ops;
-atomic_t ag_sa_init;
+struct ath12k_smart_ant_ops __rcu *g_sa_ops;
 static DEFINE_MUTEX(sa_ops_lock);
+
+bool ath12k_smart_ant_is_enable(struct ath12k_base *ab)
+{
+	struct sa_base_extn *sa_base;
+
+	if (!ab)
+		return false;
+	sa_base = &ab->ath12k_base_extn.sa_base;
+
+	return sa_base->sa_enable;
+}
+
+int ath12k_vendor_get_wiphy_sa_configs(struct wiphy *wiphy,
+				       struct ath12k_wifi_generic_params *params,
+				       u32 *value)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar = NULL;
+	u32 configs[4] = {0};
+	int ret;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params || !value || !params->data) {
+		ath12k_err(NULL, "Invalid Parameters\n");
+		return -EINVAL;
+	}
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index\n");
+		return -EINVAL;
+	}
+	ar = &ah->radio[params->radio_idx];
+
+	configs[0] = params->value;
+	configs[1] = get_unaligned_le32(params->data);
+	configs[2] = params->length;
+
+	ret = sa_core_get_configs(ar, configs);
+	if (ret) {
+		ath12k_err(ar->ab, "Operation failed; %d\n", ret);
+		return -EOPNOTSUPP;
+	}
+
+	*value = configs[3];
+
+	return 0;
+}
+
+int ath12k_vendor_set_wiphy_sa_configs(struct wiphy *wiphy,
+				       struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar = NULL;
+	u32 configs[4] = {0};
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params || !params->data) {
+		ath12k_err(NULL, "Invalid Parameters\n");
+		return -EINVAL;
+	}
+	if (params->radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index\n");
+		return -EINVAL;
+	}
+	ar = &ah->radio[params->radio_idx];
+
+	configs[0] = params->value;
+	configs[1] = get_unaligned_le32(params->data);
+	configs[2] = params->length;
+	configs[3] = params->flags;
+
+	return sa_core_set_configs(ar, configs);
+}
 
 bool ath12k_smart_ant_enable(struct ath12k_base *ab)
 {
 	u8 wmi_sa_sw, wmi_sa_hw;
-	bool sa_enable;
 	u8 en_sa = 0, sa_sw_test = 0;
+	struct sa_base_extn *sa_base;
 
 	if (!ab)
 		return false;
 
+	sa_base = &ab->ath12k_base_extn.sa_base;
 	wmi_sa_sw =
 		test_bit(WMI_TLV_SERVICE_SMART_ANTENNA_SW_SUPPORT, ab->wmi_ab.svc_map);
 	wmi_sa_hw =
 		test_bit(WMI_TLV_SERVICE_SMART_ANTENNA_HW_SUPPORT, ab->wmi_ab.svc_map);
 	sa_get_cfg_flags(ab, &en_sa, &sa_sw_test);
 
-	sa_enable = (en_sa && wmi_sa_sw && wmi_sa_hw) || (sa_sw_test && wmi_sa_sw);
-	if (sa_enable)
+	if ((en_sa && wmi_sa_sw && wmi_sa_hw) || (sa_sw_test && wmi_sa_sw)) {
+		sa_base->sa_enable = true;
+		ath12k_info(ab, "SA enabled; Host: en:%d test:%d  FW: sw:%d "
+			    "hw:%d\n", en_sa, sa_sw_test, wmi_sa_sw, wmi_sa_hw);
+	} else {
 		ath12k_dbg(ab, ATH12K_DBG_ANY,
-			   "SA enabled; Host: en:%d test:%d  FW: sw:%d hw:%d\n",
+			   "SA disabled; Host: en:%d test:%d FW: sw:%d hw:%d\n",
 			   en_sa, sa_sw_test, wmi_sa_sw, wmi_sa_hw);
-	else
-		ath12k_dbg(ab, ATH12K_DBG_ANY,
-			   "SA disabled; Host: en:%d test:%d  FW: sw:%d hw:%d\n",
-			   en_sa, sa_sw_test, wmi_sa_sw, wmi_sa_hw);
+		sa_base->sa_enable = false;
+	}
+	sa_base->sa_support = en_sa;
+	sa_base->sa_sw_test = sa_sw_test;
 
-	return sa_enable;
+	return sa_base->sa_enable;
 }
 
 int ath12k_register_smart_ant_ops(struct ath12k_smart_ant_ops *ops)
@@ -43,13 +122,12 @@ int ath12k_register_smart_ant_ops(struct ath12k_smart_ant_ops *ops)
 		return -EINVAL;
 
 	mutex_lock(&sa_ops_lock);
-	if (g_sa_ops) {
+	if (rcu_access_pointer(g_sa_ops)) {
 		mutex_unlock(&sa_ops_lock);
 		return -EBUSY;
 	}
 
-	atomic_set(&ag_sa_init, 0);
-	g_sa_ops = ops;
+	rcu_assign_pointer(g_sa_ops, ops);
 	mutex_unlock(&sa_ops_lock);
 
 	return 0;
@@ -58,15 +136,20 @@ EXPORT_SYMBOL(ath12k_register_smart_ant_ops);
 
 int ath12k_unregister_smart_ant_ops(void)
 {
-	int ret = 0;
-
 	mutex_lock(&sa_ops_lock);
-	if (atomic_read(&ag_sa_init) == 0)
-		g_sa_ops = NULL;
-	else
-		ret = -EBUSY;
+	rcu_assign_pointer(g_sa_ops, NULL);
 	mutex_unlock(&sa_ops_lock);
 
-	return ret;
+	/*
+	 * Wait for all in-flight RCU read-side critical sections (i.e. any
+	 * ongoing sa_core callbacks that are currently executing code inside
+	 * the sa_test module) to complete before returning.  Once this call
+	 * returns the caller's module_exit() will proceed and the kernel will
+	 * unmap the module text, so it is essential that no CPU is still
+	 * executing a function pointer that lives in that module.
+	 */
+	synchronize_rcu();
+
+	return 0;
 }
 EXPORT_SYMBOL(ath12k_unregister_smart_ant_ops);

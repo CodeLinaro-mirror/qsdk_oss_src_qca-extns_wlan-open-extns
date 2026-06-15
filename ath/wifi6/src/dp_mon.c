@@ -456,6 +456,9 @@ int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 m
 	struct dp_srng *ring = &dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[srng_id];
 	int ret;
 
+	if (!ath12k_dp_mon_rxdma1_enable(dp))
+		return 0;
+
 	ret = ath12k_dp_srng_setup(ab, ring,
 				   HAL_RXDMA_MONITOR_DST,
 				   0, srng_id,
@@ -474,6 +477,9 @@ void ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup(struct ath12k_pdev_dp *dp_pdev)
 	struct ath12k_base *ab = dp->ab;
 	int i;
 
+	if (!ath12k_dp_mon_rxdma1_enable(dp))
+		return;
+
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++)
 		ath12k_dp_srng_cleanup(ab, &dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[i]);
 }
@@ -485,6 +491,9 @@ int ath12k_wifi6_dp_mon_pdev_rx_htt_srng_setup(struct ath12k_pdev_dp *dp_pdev, u
 	int srng_id = ath12k_hw_mac_id_to_srng_id(ab->hw_params, mac_id);
 	u32 ring_id = dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[srng_id].ring_id;
 	int ret;
+
+	if (!ath12k_dp_mon_rxdma1_enable(dp))
+		return 0;
 
 	ret = ath12k_dp_tx_htt_srng_setup(ab, ring_id, srng_id, HAL_RXDMA_MONITOR_DST);
 	if (ret) {

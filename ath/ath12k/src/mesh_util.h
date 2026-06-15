@@ -91,15 +91,11 @@ int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb,
 				bool *checkhdr);
 
 void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
-				     struct ath12k_dp_link_peer *peer,
+				     struct ath12k_dp_peer *peer,
 				     struct sk_buff *skb,
-				     struct ath12k_vif *ahvif,
-				     struct hal_rx_desc_data *rx_desc_data,
-				     struct hal_rx_desc *rx_desc);
+				     struct hal_rx_spd_data *rx_spd);
 
 bool ath12k_dp_mesh_rx_filter_mesh_packets(struct ath12k_base *ab,
-					  struct ath12k_vif *ahvif,
-					  struct hal_rx_desc_data *rx_desc_data,
-					  struct hal_rx_desc *rx_desc);
-
+					   struct ath12k_dp_peer *peer,
+					   struct hal_rx_spd_data *rx_spd);
 #endif /* __MESH_UTIL_H__ */

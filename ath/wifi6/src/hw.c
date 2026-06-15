@@ -26,6 +26,7 @@
 #include "../../dp_peer.h"
 #include "../../dp_tx.h"
 #include "hal_qcn9074.h"
+#include "hal_qcn9160.h"
 #include "../../cfr.h"
 #include "../../dp_stats.h"
 
@@ -61,7 +62,6 @@ static bool ath12k_wifi6_dp_srng_is_comp_ring_qcn9074(int ring_num)
 
 	return false;
 }
-
 
 void ath12k_hw_qcn9074_fill_cfr_hdr_info(struct ath12k *ar,
 					 struct ath12k_csi_cfr_header *header,
@@ -124,6 +124,14 @@ static const struct ath12k_hw_ops qcn9074_ops = {
 	.fill_cfr_hdr_info = ath12k_hw_qcn9074_fill_cfr_hdr_info,
 };
 
+static const struct ath12k_hw_ops qcn9160_ops = {
+	.get_hw_mac_from_pdev_id = ath12k_wifi6_hw_qcn9074_mac_from_pdev_id,
+	.mac_id_to_pdev_id = ath12k_wifi6_hw_mac_id_to_pdev_id_qcn9074,
+	.mac_id_to_srng_id = ath12k_wifi6_hw_mac_id_to_srng_id_qcn9074,
+	.rxdma_ring_sel_config = ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9160,
+	.get_ring_selector = ath12k_wifi6_hw_get_ring_selector_qcn9074,
+	.dp_srng_is_tx_comp_ring = ath12k_wifi6_dp_srng_is_comp_ring_qcn9074,
+};
 
 #define ATH12K_TX_RING_MASK_0 0x1
 #define ATH12K_TX_RING_MASK_1 0x2
@@ -294,6 +302,42 @@ static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9074 = {
 	},
 };
 
+static struct ath12k_hw_ring_mask ath12k_wifi6_hw_ring_mask_qcn9160 = {
+	.tx  = {
+		ATH12K_TX_RING_MASK_0,
+		0,
+		ATH12K_TX_RING_MASK_2,
+		0,
+		ATH12K_TX_RING_MASK_4,
+	},
+	.rx_mon_status = {
+		0, 0, 0,
+		ATH12K_RX_MON_STATUS_RING_MASK_0,
+	},
+	.rx = {
+		0, 0, 0, 0, 0,
+		ATH12K_RX_RING_MASK_0,
+		ATH12K_RX_RING_MASK_1,
+		ATH12K_RX_RING_MASK_2,
+		ATH12K_RX_RING_MASK_3,
+	},
+	.rx_err = {
+		0, ATH12K_RX_ERR_RING_MASK_0,
+	},
+	.rx_wbm_rel = {
+		0, ATH12K_RX_WBM_REL_RING_MASK_0,
+	},
+	.reo_status = {
+		0, ATH12K_REO_STATUS_RING_MASK_0,
+	},
+
+	.rx_mon_dest = {
+	},
+
+	.host2rxdma = {
+	},
+};
+
 static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 	{
 		.name = "qcn9074 hw1.0",
@@ -378,7 +422,8 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		.support_fse = false,
 		.alloc_cacheable_memory = true,
 		.spectral = {
-			.fft_sz = 2,
+			.fft_sz = 7,
+			.fft_bin_sz = 2,
 			.fft_pad_sz = 0,
 			.summary_pad_sz = 16,
 			.fft_hdr_len = 24,
@@ -406,6 +451,115 @@ static struct ath12k_hw_params ath12k_wifi6_hw_params[] = {
 		.quad_ring_monitor_support = true,
 		.board_magic = "QCA-ATH11K-BOARD",
 		.ext_irq_grp_num_max = ATH12K_EXT_IRQ_GRP_NUM_MAX,
+	},
+	{
+		.name = "qcn9160 hw1.0",
+		.hw_rev = ATH12K_HW_QCN9160_HW10,
+		.fw = {
+			.dir = "QCN9160/hw1.0",
+			.board_size = 256 * 1024,
+			.cal_offset = 128 * 1024,
+			.m3_loader = ath12k_m3_fw_loader_remoteproc,
+		},
+		.max_radios = 1,
+		.single_pdev_only = false,
+		.qmi_service_ins_id = ATH12K_QMI_WLFW_SERVICE_INS_ID_V01_QCN9160,
+		.internal_sleep_clock = false,
+
+		.hw_ops = &qcn9160_ops,
+		.ring_mask = &ath12k_wifi6_hw_ring_mask_qcn9160,
+
+		.host_ce_config = ath12k_wifi6_host_ce_config_qcn9074,
+		.ce_count = 6,
+		.target_ce_config = ath12k_wifi6_target_ce_config_wlan_qcn9074,
+		.target_ce_count = 9,
+		.svc_to_ce_map =
+			ath12k_wifi6_target_service_to_ce_map_wlan_qcn9074,
+		.svc_to_ce_map_len = 18,
+
+		.rxdma1_enable = false,
+		.num_rxdma_per_pdev = 1,
+		.num_rxdma_dst_ring = 1,
+		.rx_mac_buf_ring = true,
+		.vdev_start_delay = false,
+
+		.interface_modes = BIT(NL80211_IFTYPE_STATION) |
+					BIT(NL80211_IFTYPE_AP) |
+					BIT(NL80211_IFTYPE_MESH_POINT),
+		.supports_monitor = true,
+
+		.idle_ps = false,
+		.cold_boot_calib = true,
+		.download_calib = true,
+		.supports_suspend = false,
+		.reoq_lut_support = false,
+		.supports_shadow_regs = false,
+		.num_tcl_banks = 48,
+		.max_tx_ring = 3,
+
+		.mhi_config = &ath12k_wifi6_mhi_config_qcn9074,
+
+		.wmi_init = ath12k_wifi6_wmi_init_qcn9074,
+
+		.hal_ops = &hal_qcn9160_ops,
+
+		.qmi_cnss_feature_bitmap = BIT(CNSS_QDSS_CFG_MISS_V01),
+
+		.rfkill_pin = 0,
+		.rfkill_cfg = 0,
+		.rfkill_on_level = 0,
+
+		.rddm_size = 0x600000,
+
+		.def_num_link = 0,
+		.max_mlo_peer = 256,
+
+		.otp_board_id_register = QCN9274_QFPROM_RAW_RFA_PDET_ROW13_LSB,
+
+		.supports_sta_ps = false,
+
+		.acpi_guid = NULL,
+		.supports_dynamic_smps_6ghz = false,
+
+		.iova_mask = 0,
+
+		.supports_aspm = false,
+
+		.current_cc_support = false,
+
+		.ce_ie_addr = NULL,
+		.ce_remap = NULL,
+		.handle_beacon_miss = true,
+		.en_qdsslog = false,
+		.support_fse = false,
+		.alloc_cacheable_memory = true,
+		.spectral = {
+			.fft_sz = 7,
+			.fft_bin_sz = 2,
+			.fft_pad_sz = 0,
+			.summary_pad_sz = 16,
+			.fft_hdr_len = 24,
+			.max_fft_bins = 1024,
+			.fragment_160mhz = false,
+		},
+		.supports_ap_ps = true,
+		.ftm_responder = true,
+		.credit_flow = false,
+		.is_plink_preferable = true,
+		.support_umac_reset = false,
+		.umac_irq_line_reset = false,
+		.umac_reset_ipc = 0,
+		.cfr_support = true,
+		.cfr_dma_hdr_size = sizeof(struct ath12k_cfir_enh_dma_hdr),
+		.cfr_num_stream_bufs = 255,
+		/* sizeof (ath12k_csi_cfr_header) + max cfr header(200 bytes) +
+		 * max cfr payload(16384 bytes)
+		 */
+		.cfr_stream_buf_size = 16716,
+		.mlo_3_link_tx_support = false,
+		.quad_ring_monitor_support = true,
+		.board_magic = "QCA-ATH11K-BOARD",
+		.ext_irq_grp_num_max = 9,
 	},
 };
 

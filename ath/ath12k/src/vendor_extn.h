@@ -12,6 +12,35 @@
 #define ATH12K_VENDOR_NOL_PERSIST_PATH_FALLBACK_FMT  "/tmp/ath12k_nol_radio%u.bin"
 #define ATH12K_VENDOR_NOL_BIN_MAGIC                  "ATHNOL1"
 
+#define ATH12K_VENDOR_BW_80_MHZ 80
+#define ATH12K_VENDOR_BW_160_MHZ 160
+#define ATH12K_VENDOR_CHAN_STEP 4
+#define ATH12K_VENDOR_5G_BW80_SPAN 12
+#define ATH12K_VENDOR_5G_BW80_CENTER_OFFSET 6
+#define ATH12K_VENDOR_5G_BW160_SPAN 28
+#define ATH12K_VENDOR_5G_BW160_CENTER_OFFSET 14
+#define ATH12K_VENDOR_6G_MIN_CHAN 1
+#define ATH12K_VENDOR_6G_MAX_CHAN 233
+#define ATH12K_VENDOR_6G_BW80_BLOCK_SIZE 16
+#define ATH12K_VENDOR_6G_BW80_MAX_START_CHAN 209
+#define ATH12K_VENDOR_6G_BW160_BLOCK_SIZE 32
+#define ATH12K_VENDOR_6G_BW160_MAX_START_CHAN 193
+#define ATH12K_VENDOR_6G_BW320_BLOCK_SIZE 32
+#define ATH12K_VENDOR_6G_BW320_MAX_START_CHAN 161
+#define ATH12K_VENDOR_6G_BW320_SPAN 60
+#define ATH12K_VENDOR_6G_BW320_CENTER_OFFSET 30
+#define ATH12K_VENDOR_CAP_BUF_LEN 192
+
+#define ATH12K_SUPER_CHAN_STATE_DISABLED	0
+#define ATH12K_SUPER_CHAN_STATE_NO_IR		1
+#define ATH12K_SUPER_CHAN_STATE_RADAR		2
+#define ATH12K_SUPER_CHAN_STATE_ENABLED		3
+
+#define ATH12K_SUPER_CHAN_POWER_MODE_NONE	0
+#define ATH12K_SUPER_CHAN_POWER_MODE_LPI	1
+#define ATH12K_SUPER_CHAN_POWER_MODE_STANDARD	2
+#define ATH12K_SUPER_CHAN_POWER_MODE_VLP	3
+
 struct ath12k_vendor_nol_bin_hdr {
 	u8 magic[8];
 	__le16 version;
@@ -28,6 +57,51 @@ struct ath12k_vendor_nol_bin_entry {
 	__le32 bw_mhz;
 	__le32 reserved;
 } __packed;
+
+struct ath12k_vendor_chan_caps {
+	u16 chan_num;
+	u16 center80;
+	u16 center160;
+	u16 center320_1;
+	u16 center320_2;
+	bool has_80;
+	bool has_160;
+	bool has_320;
+	bool ht40_plus;
+	bool ht40_minus;
+	char dir;
+};
+
+enum qca_vendor_supported_bands {
+	QCA_WLAN_VENDOR_SUPPORTED_BAND_2GHZ = 0x1,
+	QCA_WLAN_VENDOR_SUPPORTED_BAND_5GHZ = 0x2,
+	QCA_WLAN_VENDOR_SUPPORTED_BAND_6GHZ = 0x4,
+};
+
+enum ath12k_vendor_fixed_rate_mode {
+	ATH12K_VENDOR_FIXED_RATE_LEGACY_HT = 0,
+	ATH12K_VENDOR_FIXED_RATE_VHT_MCS = 1,
+	ATH12K_VENDOR_FIXED_RATE_HE_MCS = 2,
+	ATH12K_VENDOR_FIXED_RATE_EHT_MCS = 3,
+};
+
+enum ath12k_vendor_ul_fixed_rate_mode {
+	ATH12K_VENDOR_UL_FIXED_RATE_HE = 0,
+	ATH12K_VENDOR_UL_FIXED_RATE_EHT = 1,
+};
+
+#define ATH12K_VENDOR_FIXED_RATE_HT_MCS_BIT			BIT(7)
+#define ATH12K_VENDOR_FIXED_RATE_HT_NSS_MASK			GENMASK(6, 3)
+#define ATH12K_VENDOR_FIXED_RATE_HT_NSS_SHIFT			3
+#define ATH12K_VENDOR_FIXED_RATE_LEGACY_CCK_BIT			BIT(4)
+#define ATH12K_VENDOR_FIXED_RATE_RATE_IDX_MASK			GENMASK(2, 0)
+#define ATH12K_VENDOR_FIXED_RATE_CCK_1MBPS_IDX			0x3
+#define ATH12K_VENDOR_FIXED_RATE_CCK_SHORT_PREAMBLE_BIT		BIT(2)
+
+struct ath12k_band_desc {
+	u32 mask;
+	const char *token;
+};
 
 extern const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1];
@@ -61,6 +135,12 @@ ath12k_rrop_info_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
 
 extern const struct nla_policy
 ath12k_vendor_dcs_sim_policy[QCA_WLAN_VENDOR_ATTR_DCS_SIM_MAX + 1];
+
+extern const struct nla_policy
+ath12k_vendor_scan_policy[QCA_WLAN_VENDOR_ATTR_SCAN_MAX + 1];
+
+extern const struct nla_policy
+ath12k_vendor_split_scan_params_policy[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX + 1];
 
 extern const struct nla_policy
 ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
@@ -179,6 +259,11 @@ static inline void ath12k_vendor_send_event(struct ath12k_base *ab,
 					    u8 event_flag)
 {
 
+}
+
+static inline void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
+						      struct wmi_scan_event *scan_ev)
+{
 }
 
 int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
@@ -331,7 +416,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy,
 					   struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
 {
-    return -1;
+	return -1;
 }
 
 /**
@@ -395,6 +480,25 @@ void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 						 struct sk_buff *skb)
 {
 }
+
+/* CAC timeout override is unavailable when QCN extensions are disabled. */
+static inline void ath12k_set_current_cac_timeout(struct ath12k *ar,
+						  s32 cac_timeout_ms)
+{
+}
+
+/* No regulatory CAC timeout adjustment is needed without QCN extensions. */
+static inline void
+ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
+				   struct ieee80211_regdomain *regd)
+{
+}
+
+static inline void
+ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
+				 struct ieee80211_regdomain *regd)
+{
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -441,6 +545,9 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag);
 
+void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
+				       struct wmi_scan_event *scan_ev);
+
 int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
 					struct ath12k_wifi_generic_params *params);
 
@@ -481,6 +588,11 @@ int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 				  struct wireless_dev *wdev,
 				  const void *data,
 				  int data_len);
+
+int ath12k_vendor_parse_cbs_scan_params(struct wiphy *wiphy,
+					struct wireless_dev *wdev,
+					const void *data,
+					int data_len);
 
 int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
@@ -528,6 +640,17 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 				       int data_len);
 
 /**
+ * ath12k_vendor_send_hw_blocklist_update_event_extn - Send unsolicited vendor
+ * NL event carrying the complete HW blocklist state once the last WMI fragment
+ * is received.
+ * @ab - ath12k_base pointer
+ * @phy_id - pdev index of the radio whose blocklist was updated
+ * Return 0 on success and -ve on failure
+ */
+int ath12k_vendor_send_hw_blocklist_update_event_extn(struct ath12k_base *ab,
+						      u8 phy_id);
+
+/**
  * ath12k_vendor_get_hw_blocked_chans_extn - Get hardware blocked channels command handler
  * @wiphy - WIPHY pointer
  * @wdev - Wireless dev pointer
@@ -545,6 +668,12 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 
 int ath12k_vendor_set_nol_chan_list_extn(struct wiphy *wiphy, u8 radio_idx,
 					 const char *path, u32 *num_updated);
+
+int ath12k_vendor_nol_dump_to_file_extn(struct wiphy *wiphy, u8 radio_idx,
+					const char *path, u32 *dump_len);
+
+int ath12k_vendor_nol_restore_from_file_extn(struct wiphy *wiphy, u8 radio_idx,
+					     const char *path, u32 *num_updated);
 
 bool ath12k_vendor_nol_chan_matches_radio(struct wiphy *wiphy,
 					  struct ieee80211_channel *chan,
@@ -605,6 +734,30 @@ void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
 void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 						 struct nlattr **tb,
 						 struct sk_buff *skb);
+
+/**
+ * ath12k_set_current_cac_timeout - Save the radio CAC timeout override
+ * @ar: ath12k radio instance
+ * @cac_timeout_ms: CAC timeout override in milliseconds, or NO_CAC_OVERRIDE
+ */
+void ath12k_set_current_cac_timeout(struct ath12k *ar, s32 cac_timeout_ms);
+
+/**
+ * ath12k_update_regd_cac_timeout_ext - Apply CAC timeout override to regdomain
+ * @ar: ath12k radio instance
+ * @regd: regulatory domain copy to update
+ *
+ * Update dfs_cac_ms for each DFS regulatory rule (NL80211_RRF_DFS) whose
+ * frequency range overlaps the radio's configured frequency range.
+ *
+ */
+void
+ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
+				   struct ieee80211_regdomain *regd);
+
+void
+ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
+				 struct ieee80211_regdomain *regd);
 
 enum ath12k_chan_144_state {
 	CHAN_144_DIS = 0,

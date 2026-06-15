@@ -147,7 +147,8 @@ void cfg80211_intf_notify_extn(struct wiphy *wiphy, struct ath12k *ar, u16 type,
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
 			   "Checking arvif: is_started=%d ahvif=%p\n",
 			   arvif->is_started, arvif->ahvif);
-		if (!tmp_arvif && arvif->is_started) {
+		if (!tmp_arvif && (arvif->ahvif->vdev_type == WMI_VDEV_TYPE_AP)
+		    && arvif->is_started) {
 			tmp_arvif = arvif;
 			break;
 		}
@@ -488,9 +489,13 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	struct wmi_dcs_wlan_interference_stats wlan_info = {};
 	struct wmi_dcs_wlan_interference_stats *prev, *curr;
 	struct dcs_wlan_intr_metrics metrics = {};
+	struct ath12k_mac_get_any_chanctx_conf_arg cca;
+	struct ath12k_hw *ah;
 	struct ath12k *ar;
 	int ret;
 	u32 cycle_count_den, tsf_den;
+	u32 wlan_bitmap = ATH12K_DCS_SEG_PRI20, full_bw_bitmap;
+	u16 bw, num_sub;
 
 	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
 				  ath12k_wmi_dcs_event_parser,
@@ -555,28 +560,20 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	metrics.cycle_count_delta = curr->reg_cycle_cnt - prev->reg_cycle_cnt;
 
 	/* Avoid divide by 0 after shift */
-	if ((metrics.cycle_count_delta >> 8) == 0) {
+	if ((metrics.cycle_count_delta >> 8) == 0 || (metrics.reg_tsf_delta >> 8) == 0) {
 		ath12k_dbg(ab, ATH12K_DBG_WMI, "DCS: cycle_count_delta too small");
 		goto rollover_exit;
 	}
 
 	/* Compute channel utilization percentages */
 	cycle_count_den = (u32)(metrics.cycle_count_delta >> 8);
-	if (!cycle_count_den) {
-		metrics.reg_total_cu = 0;
-		metrics.reg_tx_cu = 0;
-		metrics.reg_rx_cu = 0;
-	} else {
-		metrics.reg_total_cu = div_u64(((u64)(metrics.rxclr_delta >> 8) * 100), cycle_count_den);
-		metrics.reg_tx_cu = div_u64(((u64)(metrics.tx_frame_delta >> 8) * 100), cycle_count_den);
-		metrics.reg_rx_cu = (u32)div_u64(((u64)(metrics.rx_frame_delta >> 8) * 100), cycle_count_den);
-	}
-
 	tsf_den = (u32)(metrics.reg_tsf_delta >> 8);
-	if (!tsf_den)
-		metrics.rx_time_cu = 0;
-	else
-		metrics.rx_time_cu = div_u64(((u64)(curr->rx_time >> 8) * 100), tsf_den);
+
+	metrics.reg_total_cu = div_u64(((u64)(metrics.rxclr_delta >> 8) * 100), cycle_count_den);
+	metrics.reg_tx_cu = div_u64(((u64)(metrics.tx_frame_delta >> 8) * 100), cycle_count_den);
+	metrics.reg_rx_cu = (u32)div_u64(((u64)(metrics.rx_frame_delta >> 8) * 100), cycle_count_den);
+
+	metrics.rx_time_cu = div_u64(((u64)(curr->rx_time >> 8) * 100), tsf_den);
 
 	if (metrics.rx_time_cu > metrics.reg_rx_cu)
 		metrics.rx_time_cu = metrics.reg_rx_cu;
@@ -641,8 +638,41 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	if (ar->ar_extn.intf_detect_cnt >= dcs_get_intr_detection_thr(ar)) {
 		ar->ar_extn.intf_detect_cnt = 0;
 		ar->ar_extn.samp_cnt = 0;
+		/*
+		 * Fetch the current channel context so we can build a bitmap
+		 * that covers the full operating bandwidth (e.g. 160 MHz),
+		 * not just the primary 20 MHz sub-channel.  Hostapd uses this
+		 * bitmap together with cur_chan_params to drive find_random_channel();
+		 * sending only ATH12K_DCS_SEG_PRI20 causes it to treat the
+		 * channel as 20 MHz wide and pick a wrong/narrow replacement.
+		 */
+		cca.ar = ar;
+		cca.chanctx_conf = NULL;
+		ah = ar->ah;
+
+		ieee80211_iter_chan_contexts_atomic(ah->hw,
+						   ath12k_mac_get_any_chanctx_conf_iter,
+						   &cca);
+		if (cca.chanctx_conf) {
+			bw = ath12k_mac_nlwidth_to_chwidth(
+					cca.chanctx_conf->def.width);
+			num_sub = bw / ATH12K_CHWIDTH_20;
+			/*
+			 * Build a bitmap with all sub-channel bits set
+			 * for the operating bandwidth, then transform it
+			 * to the host-side segment ordering.  This tells
+			 * hostapd the full channel is affected, matching
+			 * what the OBSS handler does.
+			 */
+			full_bw_bitmap = num_sub ?
+				(BIT(num_sub) - 1) : ATH12K_DCS_SEG_PRI20;
+			wlan_bitmap = ath12k_transform_intf_bitmap(full_bw_bitmap,
+								   &cca.chanctx_conf->def);
+			if (!wlan_bitmap)
+				wlan_bitmap = ATH12K_DCS_SEG_PRI20;
+		}
 		ath12k_vendor_send_intf_notify_extn(ar, WMI_DCS_WLAN_INTF,
-						    ATH12K_DCS_SEG_PRI20);
+						    wlan_bitmap);
 	} else if (!ar->ar_extn.intf_detect_cnt ||
 		ar->ar_extn.samp_cnt >= dcs_get_sample_size(ar)) {
 		ar->ar_extn.intf_detect_cnt = 0;

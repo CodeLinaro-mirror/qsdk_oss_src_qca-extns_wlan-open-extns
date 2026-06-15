@@ -74,6 +74,10 @@
 /* Rx feedback enable mask */
 #define SA_RX_FEEDBACK_MASK		0x20
 
+/* Maximum GPIO pins */
+#define SA_MAX_GPIO_PINS		4
+/* Maximum GPIO Functions */
+#define SA_MAX_GPIO_FUNCS		4
 
 /**
  * struct ath12k_sa_config - Smart Antenna configuration.
@@ -93,6 +97,16 @@ struct ath12k_sa_config {
 	u8 bss_mode;
 	u8 nss;
 	u8 txrx_chainmask;
+};
+
+/**
+ * struct ath12k_sa_gpio_config - Smart Antenna GPIO configuration
+ * @gpio_pin: Platform specific GPIO numbers
+ * @gpio_func: GPIO fucntions
+ */
+struct ath12k_sa_gpio_config {
+	u32 gpio_pin[SA_MAX_GPIO_PINS];
+	u32 gpio_func[SA_MAX_GPIO_FUNCS];
 };
 
 /**
@@ -196,7 +210,7 @@ struct ath12k_sa_rx_feedback {
  * @radio_id: Radio ID
  * @param_type: 0 - radio config param; 1 - node config param
  * @param_id: custom configuared parameter id
- * @param_value: custom configuared parameter value
+ * @param_value: custom configured parameter value
  * @ccp: node specific configuration, for radio config params set to NULL
  */
 struct ath12k_sa_config_params {
@@ -224,12 +238,13 @@ struct ath12k_sa_config_params {
  * @sa_get_param: Get a configuration parameter (radio or node specific).
  * @sa_get_node_config: Get per-node smart antenna configuration by ID.
  * @sa_get_ext_traininginfo: Get extended training parameters (minimum packets, PER threshold).
+ * @sa_get_gpio_config: Get GPIO configuration for smart antenna enablement
  */
 struct ath12k_smart_ant_ops {
 	int (*sa_algo_init)(struct ath12k_sa_config *sa_config, int new_init);
 	int (*sa_algo_deinit)(u8 radio_id);
 	int (*sa_peer_connect)(void **ccp, struct ath12k_sa_node_info *node_info);
-	int (*sa_peer_disconnect)(void *ccp);
+	int (*sa_peer_disconnect)(void **ccp);
 	int (*sa_update_txfeedback)(void *ccp, struct ath12k_sa_tx_feedback *fb, u8 *status);
 	int (*sa_update_rxfeedback)(void *ccp, struct ath12k_sa_rx_feedback *fb, u8 *status);
 	int (*sa_get_txantenna)(void *ccp, u32 *antenna_array);
@@ -241,6 +256,7 @@ struct ath12k_smart_ant_ops {
 	int (*sa_get_param)(struct ath12k_sa_config_params *params);
 	int (*sa_get_node_config)(void *ccp, u32 id, u32 *config);
 	int (*sa_get_ext_traininginfo)(void *ccp, u16 *minpkts, u16 *per_th);
+	int (*sa_get_gpio_config)(u8 radio_id, struct ath12k_sa_gpio_config *gpio_cfg);
 };
 
 #endif /* ATH12K_SA_API_DEFS_H */

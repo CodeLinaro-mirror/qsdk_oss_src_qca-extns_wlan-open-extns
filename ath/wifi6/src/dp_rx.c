@@ -90,6 +90,40 @@ int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9074(struct ath12k_base *ab)
 	return ret;
 }
 
+int ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9160(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct htt_rx_ring_tlv_filter tlv_filter = {0};
+	u32 ring_id;
+	int ret;
+	u32 hal_rx_desc_sz = ab->hal.hal_desc_sz;
+
+	ring_id = dp->rx_mac_buf_ring[0].ring_id;
+
+	tlv_filter.rx_filter = HTT_RX_TLV_FLAGS_RXDMA_RING;
+	tlv_filter.rxmon_disable = true;
+	tlv_filter.enable_fp = 0;
+	tlv_filter.fp_ctrl_filter = 0;
+	tlv_filter.fp_data_filter = 0;
+	tlv_filter.offset_valid = true;
+	tlv_filter.rx_packet_offset = hal_rx_desc_sz;
+	tlv_filter.rx_mpdu_end_offset = __cpu_to_le16(offsetof
+			(struct hal_rx_desc_qcn9160, mpdu_end_tag));
+	tlv_filter.rx_mpdu_start_offset = __cpu_to_le16(offsetof
+			(struct hal_rx_desc_qcn9160, mpdu_start_tag));
+	tlv_filter.rx_msdu_end_offset = __cpu_to_le16(offsetof
+			(struct hal_rx_desc_qcn9160, msdu_end_tag));
+	tlv_filter.rx_msdu_start_offset = __cpu_to_le16(offsetof
+			(struct hal_rx_desc_qcn9160, msdu_start_tag));
+
+	ret = ath12k_dp_tx_htt_rx_filter_setup(ab, ring_id, 0,
+			HAL_RXDMA_BUF,
+			DP_RX_BUFFER_SIZE,
+			ATH12K_PKTLOG_DISABLED,
+			&tlv_filter);
+	return ret;
+}
+
 void ath12k_wifi6_dp_rx_process_reo_status(struct ath12k_dp *dp)
 {
 }
@@ -107,6 +141,19 @@ int ath12k_wifi6_dp_rx_htt_setup(struct ath12k_base *ab)
 		ath12k_warn(ab, "failed to configure rx_refill_buf_ring %d\n",
 			    ret);
 		return ret;
+	}
+
+	if (ab->hw_params->rx_mac_buf_ring) {
+		for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
+			ring_id = dp->rx_mac_buf_ring[i].ring_id;
+			ret = ath12k_dp_tx_htt_srng_setup(ab, ring_id,
+					i, HAL_RXDMA_BUF);
+			if (ret) {
+				ath12k_warn(ab, "failed to configure rx_mac_buf_ring%d %d\n",
+						i, ret);
+				return ret;
+			}
+		}
 	}
 
 	for (i = 0; i < ab->hw_params->num_rxdma_dst_ring; i++) {
@@ -298,6 +345,20 @@ int ath12k_wifi6_dp_rx_ring_setup(struct ath12k_base *ab)
 	if (ret) {
 		ath12k_warn(ab, "failed to setup rx_refill_buf_ring\n");
 		return ret;
+	}
+
+	if (ab->hw_params->rx_mac_buf_ring) {
+		for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
+			ret = ath12k_dp_srng_setup(ab,
+					&dp->rx_mac_buf_ring[i],
+					HAL_RXDMA_BUF, 1,
+					i, DP_RX_MAC_BUF_RING_SIZE);
+			if (ret) {
+				ath12k_warn(ab, "failed to setup rx_mac_buf_ring %d\n",
+						i);
+				return ret;
+			}
+		}
 	}
 
 	for (i = 0; i < ab->hw_params->num_rxdma_dst_ring; i++) {

@@ -18,6 +18,7 @@
 #include "../mac.h"
 #include "../net/mac80211/ieee80211_i.h"
 #include "reg_extn.h"
+#include "vendor_extn.h"
 
 int ath12k_reg_chan_list_cc_ext_parse_extn(struct ath12k_base *ab,
 					   const void *next_tlv,
@@ -190,7 +191,7 @@ __ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 
 void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 						int pdev_idx,
-						enum wmi_reg_6g_ap_type pwr_type)
+						u32 pwr_type)
 {
 	spin_lock_bh(&ab->base_lock);
 	__ath12k_reg_hw_blocklist_free_for_mode_extn(ab, pdev_idx, pwr_type);
@@ -581,6 +582,18 @@ ath12k_wmi_parse_hw_blocklist_chan_data_extn(struct ath12k_base *ab,
 	return 0;
 }
 
+static int ath12k_wmi_hw_blocklist_chan_data_iter_extn(struct ath12k_base *ab,
+						      u16 tag, u16 len,
+						      const void *ptr, void *data)
+{
+	struct ath12k_hw_blocklist_update *upd = data;
+
+	if (tag == WMI_TAG_HW_BLACKLIST_CHAN_DATA)
+		return ath12k_wmi_parse_hw_blocklist_chan_data_extn(ab, ptr, len, upd);
+
+	return 0;
+}
+
 static int ath12k_wmi_hw_blocklist_elem_parse_extn(struct ath12k_base *ab, u16 tag,
 						   u16 len, const void *ptr,
 						   void *data)
@@ -593,6 +606,12 @@ static int ath12k_wmi_hw_blocklist_elem_parse_extn(struct ath12k_base *ab, u16 t
 		break;
 	case WMI_TAG_HW_BLACKLIST_CHAN_DATA:
 		return ath12k_wmi_parse_hw_blocklist_chan_data_extn(ab, ptr, len, upd);
+	case WMI_TAG_ARRAY_STRUCT:
+		if (len == 0)
+			return 0;
+		return ath12k_wmi_tlv_iter(ab, ptr, len,
+					   ath12k_wmi_hw_blocklist_chan_data_iter_extn,
+					   data);
 	default:
 		break;
 	}
@@ -851,6 +870,37 @@ free_and_return:
 	return true;
 }
 
+bool ath12k_wmi_handle_afc_continuation_hwbl_extn(struct ath12k_base *ab,
+						  struct sk_buff *skb,
+						  struct ath12k_afc_info *afc_info)
+{
+	struct ath12k_hw_blocklist_update upd = {};
+	bool mid_sequence;
+	u8 phy_id;
+
+	/* AFC continuation frames may leave pdev_id unset; get phy_id from
+	 * HWBL TLVs. No valid HWBL data means this isn't a continuation.
+	 */
+	ath12k_wmi_pull_hw_blocklist_update_extn(ab, skb, &upd);
+	if (!upd.valid)
+		return false;
+
+	phy_id = upd.phy_id;
+	kfree(upd.chans);
+
+	if (phy_id >= ab->num_radios)
+		return false;
+
+	spin_lock_bh(&ab->base_lock);
+	mid_sequence = ab->ath12k_base_extn.hw_bl_afc_info[phy_id] != NULL;
+	spin_unlock_bh(&ab->base_lock);
+
+	if (!mid_sequence)
+		return false;
+
+	return ath12k_wmi_handle_afc_power_info_hwbl_extn(ab, skb, afc_info);
+}
+
 static bool
 ath12k_wmi_handle_reg_chan_list_hwbl_more_extn(struct ath12k_base *ab, u8 phy_id,
 					       bool is_first,
@@ -954,11 +1004,18 @@ bool ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
 int ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
 					    struct sk_buff *skb)
 {
-	struct ath12k_hw_blocklist_update hw_blocklist;
+	struct ath12k_hw_blocklist_update hw_blocklist = {};
 	int ret;
 	u8 phy_id;
 
-	ath12k_wmi_pull_hw_blocklist_update_extn(ab, skb, &hw_blocklist);
+	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
+				  ath12k_wmi_hw_blocklist_elem_parse_extn,
+				  &hw_blocklist);
+	if (ret) {
+		ath12k_warn(ab, "Failed to parse HW blocklist event\n");
+		return ret;
+	}
+
 	if (!hw_blocklist.valid) {
 		ath12k_warn(ab, "Invalid HW blocklist");
 		return -EINVAL;
@@ -979,6 +1036,14 @@ int ath12k_wmi_hw_blocklist_chan_event_extn(struct ath12k_base *ab,
 	}
 
 	kfree(hw_blocklist.chans);
+
+	if (!hw_blocklist.more) {
+		ret = ath12k_vendor_send_hw_blocklist_update_event_extn(ab, phy_id);
+		if (ret)
+			ath12k_warn(ab, "Failed to send HW blocklist vendor event: %d\n",
+				    ret);
+	}
+
 	return 0;
 }
 
@@ -1792,7 +1857,7 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 		bss_conf = wiphy_dereference(hw->wiphy, vif->link_conf[link_id]);
 		if (bss_conf) {
 			ath12k_mac_get_6ghz_power_mode_decision(ar, arvif,
-								bss_conf,
+								power_type,
 								&decision);
 			if (decision.ap_repeater_sp_client)
 				return 0;

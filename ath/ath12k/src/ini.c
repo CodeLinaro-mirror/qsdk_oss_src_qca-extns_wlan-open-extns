@@ -864,8 +864,7 @@ ath12k_cfg_get_pdev_band_type(struct ath12k_base *ab, u32 pdev_idx)
  * @pdev_idx: pdev index
  * Return: void
  */
-#if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
-static void
+static __maybe_unused void
 ath12k_cfg_parse_256m_band_section(struct ath12k_base *ab,
 				    char *ini_buf,
 				    u32 pdev_idx)
@@ -916,8 +915,7 @@ ath12k_cfg_parse_256m_band_section(struct ath12k_base *ab,
  * @pdev_idx: pdev index
  * Return: void
  */
-#elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
-static void
+static __maybe_unused void
 ath12k_cfg_parse_512m_band_section(struct ath12k_base *ab,
 				    char *ini_buf,
 				    u32 pdev_idx)
@@ -960,7 +958,7 @@ ath12k_cfg_parse_512m_band_section(struct ath12k_base *ab,
 		ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
 	}
 }
-#endif
+
 
 /**
  * ath12k_cfg_parse_generic_band_section - Parse generic band section
@@ -1023,12 +1021,28 @@ static void ath12k_cfg_parse_section_store(struct ath12k_base *ab,
 {
 #if defined(CONFIG_ATH12K_MEM_PROFILE_256M) || defined(CPTCFG_ATH12K_MEM_PROFILE_256M)
 	ath12k_dbg(ab, ATH12K_DBG_INI,
-			"Parsing memory section: %s\n", ATH12K_CFG_256M_SECTION);
+		   "Parsing memory section: %s\n", ATH12K_CFG_256M_SECTION);
 	ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_256M_SECTION);
 #elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
 	ath12k_dbg(ab, ATH12K_DBG_INI,
-			"Parsing memory section: %s\n", ATH12K_CFG_512M_SECTION);
+		   "Parsing memory section: %s\n", ATH12K_CFG_512M_SECTION);
 	ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_512M_SECTION);
+#else
+	/* Runtime profile detection via kernel cmdline mem-profile= */
+	if (ath12k_active_mem_profile == ATH12K_MEM_PROFILE_OPTIMIZED) {
+		ath12k_dbg(ab, ATH12K_DBG_INI,
+			   "Parsing memory section (runtime 256M): %s\n",
+			   ATH12K_CFG_256M_SECTION);
+		ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_256M_SECTION);
+	} else if (ath12k_active_mem_profile == ATH12K_MEM_PROFILE_BALANCED) {
+		ath12k_dbg(ab, ATH12K_DBG_INI,
+			   "Parsing memory section (runtime 512M): %s\n",
+			   ATH12K_CFG_512M_SECTION);
+		ath12k_cfg_section_parse_to_store(ab, ini_buf, ATH12K_CFG_512M_SECTION);
+	} else {
+		ath12k_dbg(ab, ATH12K_DBG_INI,
+			   "No memory profile section to parse (default 1G)\n");
+	}
 #endif
 }
 
@@ -1172,6 +1186,7 @@ int ath12k_cfg_get_ini_file_name(u32 target_type, struct ath12k_ini_file *ini)
 		ini->internal = "QCN6432_i.ini";
 		break;
 	case ATH12K_HW_QCN9625_HW10:
+	case ATH12K_HW_QCN9625_HW20:
 		ini->external = "QCN9625.ini";
 		ini->internal = "QCN9625_i.ini";
 		break;
@@ -1458,6 +1473,12 @@ void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 		ath12k_cfg_parse_256m_band_section(ab, ini_buf, i);
 #elif defined(CONFIG_ATH12K_MEM_PROFILE_512M) || defined(CPTCFG_ATH12K_MEM_PROFILE_512M)
 		ath12k_cfg_parse_512m_band_section(ab, ini_buf, i);
+#else
+		/* Runtime profile detection via kernel cmdline mem-profile= */
+		if (ath12k_active_mem_profile == ATH12K_MEM_PROFILE_OPTIMIZED)
+			ath12k_cfg_parse_256m_band_section(ab, ini_buf, i);
+		else if (ath12k_active_mem_profile == ATH12K_MEM_PROFILE_BALANCED)
+			ath12k_cfg_parse_512m_band_section(ab, ini_buf, i);
 #endif
 	}
 }

@@ -11,6 +11,7 @@
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
 #include "rropinfo.h"
 #include "sa_api.h"
+#include "cbs_extn.h"
 
 struct ath12k_base;
 struct ath12k_hw_blocklist_state;
@@ -21,10 +22,23 @@ struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
 struct ath12k_vif;
 struct ath12k_vif_sysfs_entry;
+struct ath12k_link_vif;
+struct wmi_chan_info_event;
+struct ath12k_wmi_scan_req_arg;
+enum wmi_tlv_event_id;
+struct wmi_start_scan_cmd;
+struct ath12k_wmi_vdev_create_arg;
+struct ath12k_wmi_peer_assoc_arg;
+struct ath12k_wmi_mgmt_rx_arg;
+enum hal_ring_type;
+struct hal_srng_params;
+struct ath12k_link_sta;
+struct ath12k_hw;
 struct ath12k_skb_cb;
 struct ath12k_sta;
 struct ath12k_wmi_resource_config_params;
 struct ath12k_wmi_resource_config_arg;
+struct wmi_scan_event;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -51,6 +65,7 @@ struct ath12k_dp_vif_extn {
 	uint32_t rx_filter; /* mesh rx filter */
 	bool mesh_tx; /*  drop disassocition frames if configured */
 #endif
+	bool allow_3addr_mc;
 };
 
 /**
@@ -222,6 +237,46 @@ struct ath12k_raw_pkt_ctx {
 
 #define DCS_TX_MAX_CU          30
 
+
+/**
+ * struct ath12k_sta_extn - per-STA extension state
+ * @primary_soc_id: PSOC id of the primary link chosen for this STA.
+ * @avg_link_rssi: Averaged RSSI across the STA's links used for primary
+ * link selection.
+ */
+struct ath12k_sta_extn {
+	s8 primary_soc_id;
+	s8 avg_link_rssi;
+};
+
+/**
+ * struct ath12k_link_sta_extn - per-link STA extension state
+ * @rssi_assoc: RSSI captured during association for this link; used as the base
+ *		RSSI when deriving per-link averages and primary link selection.
+ * @sa_sta: Smart Antenna extention for STA
+ */
+struct ath12k_link_sta_extn {
+	s8 rssi_assoc;
+	struct sa_sta_extn sa_sta;
+};
+
+struct wmi_dcs_wlan_interference_stats {
+	u32 reg_tsf32;
+	u32 last_ack_rssi;
+	u32 tx_waste_time;
+	u32 rx_time;
+	u32 phyerr_cnt;
+	u32 listen_time;
+	u32 reg_tx_frame_cnt;
+	u32 reg_rx_frame_cnt;
+	u32 reg_rxclr_cnt;
+	u32 reg_cycle_cnt;
+	u32 reg_rxclr_ext_cnt;
+	u32 reg_ofdm_phyerr_cnt;
+	u32 reg_cck_phyerr_cnt;
+	s32 chan_nf;
+	u32 my_bss_rx_cycle_count;
+};
 /* DCS user-configured thresholds (from hostapd_cli),
  * fallback to macros in dcs_extn.h when not set.
  */
@@ -244,25 +299,10 @@ struct wlan_intf_extn {
 	struct dcs_wlan_intr_user_cfg dcs_cfg;
 };
 
-/**
- * struct ath12k_sta_extn - per-STA extension state
- * @primary_soc_id: PSOC id of the primary link chosen for this STA.
- * @avg_link_rssi: Averaged RSSI across the STA's links used for primary
- * link selection.
- */
-struct ath12k_sta_extn {
-	s8 primary_soc_id;
-	s8 avg_link_rssi;
-};
-
-/**
- * struct ath12k_link_sta_extn - per-link STA extension state
- * @rssi_assoc: RSSI captured during association for this link; used as the base
- *		RSSI when deriving per-link averages and primary link selection.
- */
-struct ath12k_link_sta_extn {
-	s8 rssi_assoc;
-};
+#define ATH12K_MSEC_PER_SEC		1000
+#define ATH12K_MAX_CAC_TIMEOUT_MS	(24 * 60 * 60 * ATH12K_MSEC_PER_SEC)
+#define ATH12K_MAX_CAC_TIMEOUT_SEC	(ATH12K_MAX_CAC_TIMEOUT_MS / ATH12K_MSEC_PER_SEC)
+#define NO_CAC_OVERRIDE		-1
 
 /**
  * struct ath12k_extn - ath12k driver private extensions
@@ -270,6 +310,11 @@ struct ath12k_link_sta_extn {
  * @raw_pkt_ctx:   raw packet home/off-channel context.
  * @radio_kobj:    pointer to radio kernel object.
  * @vifs_kobj:     Pointer to vifs kernel object.
+ * @block_dfs_channels: 1:DFS channels disabled by blockdfslist command,
+ *   0: DFS channel are not disabled by blockdfslist command
+ * @cac_timeout_override_ms: Custom CAC timeout override in ms.
+ *	NO_CAC_OVERRIDE = no override set (use regulatory domain CAC timeout).
+ *	Any positive value = override in ms.
  * @vif_entries:   Pointer to 17 sysfs vif entries.
  * @dcs_config_bitmap: Bitmap of DCS enablement mode.
  * @rtplinst:      Representative tx power list instances for ATH12K_NUM_CHANS
@@ -282,6 +327,7 @@ struct ath12k_link_sta_extn {
  * @he_mcs_12_13_peer_tx_cap: Intersected peer HE MCS 12/13 TX capability.
  *   Interpretation is same as @he_mcs_12_13_peer_rx_cap.
  * @he_mcs_12_13_radio_cap: Radio capability for HE MCS 12/13 support.
+ * @sa_ar: Smart Antenna extention for radio
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -290,6 +336,8 @@ struct ath12k_extn {
 	/* sysfs entries under ieee80211: radioX */
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
+	bool block_dfs_channels;
+	s32 cac_timeout_override_ms;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;
 	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
@@ -299,6 +347,12 @@ struct ath12k_extn {
 	u16 he_mcs_12_13_peer_rx_cap;
 	u16 he_mcs_12_13_peer_tx_cap;
 	u16 he_mcs_12_13_radio_cap;
+
+	/* Smart Antenna Specific */
+	struct sa_ar_extn sa_ar;
+
+	/* Continuous Background Scan structure */
+	struct ath12k_cbs cbs;
 };
 
 /**
@@ -356,6 +410,14 @@ struct ath12k_home_offchan_params {
 };
 
 /**
+ * struct ath12k_wmi_scan_req_arg_extn - Extension parameters for scan request
+ * @scan_start_offset: scan start offset
+ */
+struct ath12k_wmi_scan_req_arg_extn {
+	u32 scan_start_offset;
+};
+
+/**
  * struct hal_rx_frm_type_info - Per-PPDU 802.11 frame type counters
  * @rx_mgmt_cnt: Number of 802.11 management frames decoded for this PPDU
  * @rx_ctrl_cnt: Number of 802.11 control frames decoded for this PPDU
@@ -365,6 +427,11 @@ struct hal_rx_frm_type_info {
 	u8 rx_mgmt_cnt;
 	u8 rx_ctrl_cnt;
 	u8 rx_data_cnt;
+};
+
+struct ath12k_wsi_remap_work {
+    struct work_struct work;
+    struct ath12k_base *ab;
 };
 
 /**
@@ -439,7 +506,25 @@ struct ath12k_mgmt_wifi8_extn {
 	struct mgmt_srng_extn reo_dst_highpri_rx_ring;
 };
 
+
+int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
+					      u8 catagory,
+					      const u8 *pos,
+					      const u8 *end);
+
+struct ath12k_radio_cfg_extn {
+	u8 scan_f_strict_passive_pch;
+};
+
 #ifndef CPTCFG_QCN_EXTN
+static inline void
+int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
+					      u8 catagory,
+					      const u8 *pos,
+					      const u8 *end)
+{
+	return 0;
+}
 
 static inline void
 ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -495,7 +580,35 @@ ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 {
 }
 
+static inline void
+ath12k_mac_setnol_recovery_extn(struct ath12k_link_vif *arvif,
+				struct ieee80211_chanctx_conf *ctx)
+{
+}
+
 static inline void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)
+{
+}
+
+static inline void
+ath12k_core_nol_extn_auto_dump_all_radios(struct ath12k_base *ab)
+{
+}
+
+static inline void
+ath12k_core_nol_extn_auto_dump_radio_locked(struct ath12k *ar,
+					     u8 radio_idx,
+					     const char *reason)
+{
+}
+
+static inline void
+ath12k_core_nol_extn_auto_restore_radio_locked(struct ath12k *ar, u8 radio_idx)
+{
+}
+
+static inline void
+ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab)
 {
 }
 
@@ -579,7 +692,26 @@ ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
 
 static inline void
 ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
-						struct ath12k_wmi_scan_req_arg *arg)
+					struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
+static inline void
+ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
+					   struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
+static inline void
+ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
+				struct ath12k_wmi_scan_req_arg *arg)
+{
+}
+
+static inline void
+ath12k_wmi_send_scan_start_cmd_extn(struct ath12k *ar,
+				    struct wmi_start_scan_cmd *cmd,
+				    struct ath12k_wmi_scan_req_arg *arg)
 {
 }
 
@@ -663,6 +795,20 @@ void ath12k_wifi8_mgmt_rx_ring_free_extn(struct ath12k_base *ab)
 {
 }
 
+static inline bool
+ath12k_cbs_skip_scan_event_and_send_scan_complete(
+	struct ath12k *ar,
+	const struct wmi_scan_event *scan_ev)
+{
+	return false;
+}
+
+static inline bool
+ath12k_is_cbs_vendor_event(struct ath12k *ar)
+{
+	return false;
+}
+
 int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt,
 					    struct ath12k *partner_ar,
 					    struct sk_buff *mmpdu, u32 pkt_type)
@@ -725,7 +871,7 @@ ath12k_wmi_set_hw_blocklist_service_support_extn(
 
 static inline void
 ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab, int pdev_idx,
-					   enum wmi_reg_6g_ap_type pwr_type)
+					   u32 pwr_type)
 {
 }
 
@@ -747,6 +893,14 @@ ath12k_wmi_handle_afc_power_info_hwbl_extn(
 }
 
 static inline bool
+ath12k_wmi_handle_afc_continuation_hwbl_extn(
+		struct ath12k_base *ab, struct sk_buff *skb,
+		struct ath12k_afc_info *afc_info)
+{
+	return false;
+}
+
+static inline bool
 ath12k_wmi_handle_reg_chan_list_hwbl_extn(struct ath12k_base *ab,
 					  struct ath12k_reg_info **reg_info)
 {
@@ -760,6 +914,14 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 				      enum ieee80211_ap_reg_power power_type)
 {
 	return 0;
+}
+
+static inline bool
+ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
+					       struct ath12k_link_vif *arvif,
+					       struct ieee80211_bss_conf *link_conf)
+{
+	return false;
 }
 #else
 
@@ -806,6 +968,8 @@ struct ath12k_base_extn {
 	u32 rx_buf_cnt;
 	dma_addr_t mem_pa;
 #endif
+	/* Smart Antenna Specific */
+	struct sa_base_extn sa_base;
 };
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -931,8 +1095,18 @@ void ath12k_mac_setup_extn(struct ath12k *ar);
 
 void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 					    struct ieee80211_chanctx_conf *ctx);
+void ath12k_mac_setnol_recovery_extn(struct ath12k_link_vif *arvif,
+				     struct ieee80211_chanctx_conf *ctx);
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar);
+
+void ath12k_core_nol_extn_auto_dump_all_radios(struct ath12k_base *ab);
+void ath12k_core_nol_extn_auto_dump_radio_locked(struct ath12k *ar,
+						  u8 radio_idx,
+						  const char *reason);
+void ath12k_core_nol_extn_auto_restore_radio_locked(struct ath12k *ar,
+						     u8 radio_idx);
+void ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab);
 
 
 void ath12k_sysfs_init_extn(struct ath12k *ar);
@@ -1014,8 +1188,44 @@ void ath12k_custom_tx_send(struct ieee80211_vif *vif,
  * custom txrx.
  */
 void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
-						     struct ath12k_wmi_scan_req_arg *arg);
+					     struct ath12k_wmi_scan_req_arg *arg);
 
+/**
+ * ath12k_wmi_update_strict_passive_scan_extn - Update strict passive scan
+ *                                              setting for 5 GHz scans
+ * @ar: Pointer to the ath12k radio structure
+ * @arg: Pointer to the scan request parameters
+ *
+ * Update the strict passive scan flag in the scan request based on the
+ * userspace radio configuration. The flag is applied only when the scan
+ * request includes a 5 GHz channel.
+ */
+void ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
+						struct ath12k_wmi_scan_req_arg *arg);
+
+/**
+ * ath12k_wmi_start_scan_init_extn - Initialize CBS scan offset in scan args
+ * @ar: Pointer to the ath12k radio structure
+ * @arg: Pointer to the scan parameter
+ *
+ * This function initializes the scan_start_offset field in the scan request
+ * argument for CBS support.
+ */
+void ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
+				     struct ath12k_wmi_scan_req_arg *arg);
+
+/**
+ * ath12k_wmi_send_scan_start_cmd_extn - Copy CBS scan offset into WMI command
+ * @ar: Pointer to the ath12k radio structure
+ * @cmd: Pointer to the WMI start scan command
+ * @arg: Pointer to the scan parameter
+ *
+ * This function copies the scan_start_offset from the scan request argument
+ * into the WMI start scan command for CBS support.
+ */
+void ath12k_wmi_send_scan_start_cmd_extn(struct ath12k *ar,
+					 struct wmi_start_scan_cmd *cmd,
+					 struct ath12k_wmi_scan_req_arg *arg);
 
                    int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arvif,
 						     struct ath12k_wmi_vdev_create_arg *arg);
@@ -1042,8 +1252,13 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
                                          unsigned long valid_links,
                                          u8 *primary_link_id);
 
-void ath12k_mgmt_rx_event_extn(struct ath12k_base *ab, struct ieee80211_hdr *hdr,
+void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
+
+bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
+	struct ath12k *ar,
+	const struct wmi_scan_event *scan_ev);
+bool ath12k_is_cbs_vendor_event(struct ath12k *ar);
 
 /**
  * ath12k_reg_chan_list_cc_ext_parse_extn - Helper function to parse extn TLVs
@@ -1075,7 +1290,7 @@ void ath12k_reg_handle_chan_list_extn(struct ath12k_base *ab,
  */
 void ath12k_reg_hw_blocklist_free_for_mode_extn(struct ath12k_base *ab,
 						int pdev_idx,
-						enum wmi_reg_6g_ap_type pwr_type);
+						u32 pwr_type);
 
 /**
  * ath12k_reg_hw_blocklist_free_extn - Free all HW blocklist entries
@@ -1113,6 +1328,22 @@ bool ath12k_change_6g_txpow_sta_mode_validate_extn(struct ath12k *ar,
 bool ath12k_wmi_handle_afc_power_info_hwbl_extn(struct ath12k_base *ab,
 						struct sk_buff *skb,
 						struct ath12k_afc_info *afc_info);
+
+/**
+ * ath12k_wmi_handle_afc_continuation_hwbl_extn - Handle AFC continuation HWBL
+ * @ab: ath12k base
+ * @skb: WMI event SKB
+ * @afc_info: parsed AFC info
+ *
+ * FW does not set event_type on continuation frames of a multi-event HWBL
+ * update; they fall to the default arm of the AFC event_type switch. This
+ * handler processes them if a first-fragment afc_info is cached for the pdev.
+ *
+ * Return: true if consumed as HWBL continuation, false otherwise.
+ */
+bool ath12k_wmi_handle_afc_continuation_hwbl_extn(struct ath12k_base *ab,
+						  struct sk_buff *skb,
+						  struct ath12k_afc_info *afc_info);
 
 /**
  * ath12k_debugfs_register_hw_blocklist_extn - Register HW blocklist debugfs entries
@@ -1356,6 +1587,21 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
  */
 int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
 					   int len);
+
+/**
+ * ath12k_control_beaconing_bootup_cac_check_extn - Check boot-up CAC state
+ * and defer vdev_up if DFS CAC is still in progress.
+ *
+ * @ar:        ath12k radio instance
+ * @arvif:     link vif for which vdev_up is being considered
+ * @link_conf: ieee80211_bss_conf for the link
+ *
+ * Returns true if vdev_up should be deferred (CAC still running), false
+ * otherwise.
+ */
+bool ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
+						     struct ath12k_link_vif *arvif,
+						     struct ieee80211_bss_conf *link_conf);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

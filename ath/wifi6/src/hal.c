@@ -17,6 +17,10 @@ const struct ath12k_hw_version_map ath12k_wifi6_hw_ver_map[] = {
 		.hal_params = &ath12k_wifi6_hw_hal_params_qcn9074,
 		.hw_regs = &qcn9074_regs,
 	},
+	[ATH12K_HW_QCN9160_HW10] = {
+		.hal_params = &ath12k_wifi6_hw_hal_params_qcn9160,
+		.hw_regs = &qcn9160_regs,
+	},
 };
 
 static unsigned int ath12k_hal_reo1_ring_id_offset(struct ath12k_hal *hal)

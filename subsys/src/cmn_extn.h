@@ -8,6 +8,7 @@
 
 #include <net/mac80211.h>
 #include "../../../include/net/cfg80211.h"
+#include "dfs_extn.h"
 
 struct ieee802_11_elems;
 enum ieee80211_conn_mode;
@@ -30,6 +31,7 @@ struct ieee80211_bss_conf;
 struct ieee80211_hw;
 struct ieee80211_sta;
 extern unsigned int mmeshsim;
+struct notifier_block;
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define MESH_CAPS_VER1 0x8000
@@ -321,6 +323,12 @@ ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 	return;
 }
 
+static inline void
+ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool enable)
+{
+	return;
+}
+
 #else
 
 u8 *
@@ -384,6 +392,8 @@ void ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 
 void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 				       u32 *hw_reconf_flags);
+
+void ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool enable);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);
@@ -538,5 +548,86 @@ struct ieee80211_ops_extn {
 					  struct ieee80211_link_sta *link_sta);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
+
+/**
+ * enum ieee80211_ext_mon_event_type_extn: event type pre/post rtap
+ *
+ * @IEEE80211_EXT_MON_PRE_RTAP: event type pre rtap addition
+ * @IEEE80211_EXT_MON_POST_RTAP: event type post rtap addition
+ */
+enum ieee80211_ext_mon_event_type_extn {
+	IEEE80211_EXT_MON_PRE_RTAP,
+	IEEE80211_EXT_MON_POST_RTAP,
+};
+
+/**
+ * struct ieee80211_ext_mon_rx_event_extn - Extended monitor RX notifier event
+ * @mpdu: The raw MPDU SKB as captured by the driver.
+ *        No radiotap header is prepended by the driver. The rx_status
+ *        is stored in the SKB's control buffer (cb) and can be accessed
+ *        via IEEE80211_SKB_RXCB(mpdu). If the listener forwards the
+ *        frame to mac80211 via ieee80211_rx_ni(), mac80211 reads the
+ *        rx_status from the cb and prepends the radiotap header.
+ *
+ *        The driver frees this SKB after srcu_notifier_call_chain()
+ *        returns. Listeners that need to retain the frame MUST call
+ *        skb_clone() inside the callback and take ownership of the
+ *        clone; they must NOT free or hold a reference to @mpdu itself.
+ *
+ * @hw: Pointer to the ieee80211_hw instance this frame arrived on.
+ *      This pointer is valid ONLY for the duration of the notifier
+ *      callback. Listeners MUST NOT store this pointer in any global
+ *      or persistent context for use after the callback returns -- doing
+ *      so results in undefined behaviour as the hardware may be torn
+ *      down at any time.
+ *
+ *      If a listener needs to reference the hardware beyond the
+ *      callback lifetime (e.g. from a deferred work item), it must
+ *      extract hw->wiphy->perm_addr during the callback and use that
+ *      MAC address to look up the corresponding wiphy/ieee80211_hw
+ *      safely at the point of use.
+ *
+ * Passed to every registered callback on the ext_mon RX SRCU notifier
+ * chain. The chain fires from rxmon workqueue (process) context;
+ * callbacks may sleep.
+ */
+struct ieee80211_ext_mon_rx_event_extn {
+	struct sk_buff *mpdu;
+	struct ieee80211_hw *hw;
+};
+
+#ifndef CPTCFG_QCN_EXTN
+static inline int
+ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb)
+{
+	return -1;
+}
+
+static inline int
+ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb)
+{
+	return -1;
+}
+
+static inline bool
+ieee80211_ext_mon_rx_notifier_has_listeners_extn(void)
+{
+	return false;
+}
+
+static inline int
+ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn type,
+					struct ieee80211_ext_mon_rx_event_extn *event)
+{
+	return -1;
+}
+#else
+int ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb);
+int ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb);
+bool ieee80211_ext_mon_rx_notifier_has_listeners_extn(void);
+int
+ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn type,
+					struct ieee80211_ext_mon_rx_event_extn *event);
+#endif /* CPTCFG_QCN_EXTN */
 
 #endif /* CMN_EXTN_H */

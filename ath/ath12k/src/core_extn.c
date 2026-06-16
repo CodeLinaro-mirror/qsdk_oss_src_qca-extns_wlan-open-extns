@@ -52,21 +52,120 @@ static int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 static int ath12k_get_total_stations_ab(struct ath12k_base *ab);
 static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab);
 
-void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
+static void ath12k_mgmt_rx_inject_hidden_ssid(struct ath12k *ar,
+					      struct sk_buff *skb,
+					      struct ath12k_wmi_mgmt_rx_arg *rx_ev)
+{
+	struct ath12k_link_vif *arvif;
+	struct ath12k_vif *ahvif;
+	struct ieee80211_mgmt *mgmt;
+	u8 *ssid_ie;
+	u8 ssid[IEEE80211_MAX_SSID_LEN];
+	u8 ssid_len;
+	int offset;
+	int ssid_offset;
+
+	arvif = ar->scan.arvif;
+	if (!arvif || !arvif->ahvif) {
+		return;
+	}
+
+	mgmt = (struct ieee80211_mgmt *)skb->data;
+	ahvif = arvif->ahvif;
+	spin_lock_bh(&ahvif->ath12k_vif_extn.data_lock);
+	if (!ahvif->ath12k_vif_extn.ssid_len ||
+	    !ahvif->ath12k_vif_extn.bssid_set ||
+	    !ether_addr_equal(ahvif->ath12k_vif_extn.bssid, mgmt->bssid)) {
+		spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
+		return;
+	}
+
+	ssid_len = ahvif->ath12k_vif_extn.ssid_len;
+	memcpy(ssid, ahvif->ath12k_vif_extn.ssid, ssid_len);
+	spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
+
+	if (ieee80211_is_beacon(mgmt->frame_control))
+		offset = offsetof(struct ieee80211_mgmt, u.beacon.variable);
+	else if (ieee80211_is_probe_resp(mgmt->frame_control))
+		offset = offsetof(struct ieee80211_mgmt, u.probe_resp.variable);
+	else {
+		ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
+			   "unsupported frame for hidden SSID injection for BSSID %pM ssid='%.*s'\n",
+			   mgmt->bssid, ssid_len, ssid);
+		return;
+	}
+
+	if (skb->len < offset) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
+			   "skb len %u smaller than offset %d for BSSID %pM ssid='%.*s'\n",
+			   skb->len, offset, mgmt->bssid,
+			   ssid_len, ssid);
+		return;
+	}
+
+	ssid_ie = (u8 *)cfg80211_find_ie(WLAN_EID_SSID, skb->data + offset,
+					 skb->len - offset);
+	if (!ssid_ie || ssid_ie[1] != 0) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
+			   "SSID IE not present or existing SSID is not hidden for BSSID %pM ssid='%.*s'\n",
+			   mgmt->bssid, ssid_len, ssid);
+		return;
+	}
+
+	ssid_offset = ssid_ie - skb->data;
+	if (skb_tailroom(skb) < ssid_len &&
+	    pskb_expand_head(skb, 0, ssid_len, GFP_ATOMIC))
+		return;
+
+	mgmt = (struct ieee80211_mgmt *)skb->data;
+	ssid_ie = skb->data + ssid_offset;
+	skb_put(skb, ssid_len);
+	memmove(ssid_ie + 2 + ssid_len,
+		ssid_ie + 2,
+		skb_tail_pointer(skb) - (ssid_ie + 2 + ssid_len));
+
+	ssid_ie[1] = ssid_len;
+	memcpy(ssid_ie + 2, ssid, ssid_len);
+	rx_ev->buf_len = skb->len;
+	ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
+		   "successful injection for BSSID %pM ssid='%.*s' buf_len %u\n",
+		   mgmt->bssid, ssid_len, ssid,
+		   rx_ev->buf_len);
+}
+
+void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct sk_buff *skb,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev)
 {
 	struct ath12k_link_sta *arsta;
+	struct ieee80211_hdr *hdr;
 	struct ieee80211_channel *channel;
 	struct cfg80211_inform_bss bss_meta = {};
 	struct cfg80211_bss *cbss;
 	s32 signal_dbm;
 
-	if (ar && ar->ar_extn.cbs.cbs_enable &&
+	if (!ar || !skb)
+		return;
+
+	if (skb->len < sizeof(*hdr))
+		return;
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	channel = ieee80211_get_channel(ar->ah->hw->wiphy,
+					rx_ev->chan_freq);
+
+	if (ar->radio_cfg.radio_cfg_extn.scan_f_strict_passive_pch) {
+		if (channel && channel->band == NL80211_BAND_5GHZ &&
+		    (ieee80211_is_beacon(hdr->frame_control) ||
+		     ieee80211_is_probe_resp(hdr->frame_control))) {
+			ath12k_mgmt_rx_inject_hidden_ssid(ar, skb, rx_ev);
+			hdr = (struct ieee80211_hdr *)skb->data;
+		}
+	}
+
+	if (ar->ar_extn.cbs.cbs_enable &&
 	    (ieee80211_is_beacon(hdr->frame_control) ||
 	     ieee80211_is_probe_resp(hdr->frame_control) ||
 	     ieee80211_is_s1g_beacon(hdr->frame_control))) {
-		channel = ieee80211_get_channel(ar->ah->hw->wiphy,
-						rx_ev->chan_freq);
 		if (channel) {
 			bss_meta.chan = channel;
 			bss_meta.boottime_ns = ktime_get_boottime_ns();

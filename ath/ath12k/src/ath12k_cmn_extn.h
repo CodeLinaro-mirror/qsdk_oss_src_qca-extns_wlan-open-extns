@@ -39,6 +39,7 @@ struct ath12k_sta;
 struct ath12k_wmi_resource_config_params;
 struct ath12k_wmi_resource_config_arg;
 struct wmi_scan_event;
+struct sk_buff;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -1252,7 +1253,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
                                          unsigned long valid_links,
                                          u8 *primary_link_id);
 
-void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
+void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct sk_buff *skb,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
 
 bool ath12k_cbs_skip_scan_event_and_send_scan_complete(

@@ -2640,6 +2640,175 @@ static int ath12k_vendor_get_ul_fixed_rate(struct ath12k_link_vif *arvif,
 	return 0;
 }
 
+static int ath12k_vendor_validate_he_or_eht_mode(struct ath12k_link_vif *arvif)
+{
+	struct ieee80211_bss_conf *bss_conf;
+
+	/* Allow pre-config before vdev is brought up. */
+	if (!arvif->is_up)
+		return 0;
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (!bss_conf)
+		return 0;
+
+	if (!bss_conf->he_support && !bss_conf->eht_support) {
+		ath12k_err(arvif->ar->ab,
+			   "HE autorate GI/LTF is not allowed in current mode\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int ath12k_vendor_set_he_ltf(struct ath12k_link_vif *arvif,
+					    u32 value, bool ul_ltf)
+{
+	struct ath12k *ar = arvif->ar;
+	u32 param = ul_ltf ? WMI_VDEV_PARAM_UL_HE_LTF : WMI_VDEV_PARAM_HE_LTF;
+	int ret;
+
+	ret = ath12k_vendor_validate_he_eht_mode(arvif, false);
+	if (ret)
+		return ret;
+
+	if (value > IEEE80211_HE_LTF_4X) {
+		ath12k_err(ar->ab,
+			   "HE LTF value should be less than or equal to 0x%x\n",
+			   IEEE80211_HE_LTF_4X);
+		return -EINVAL;
+	}
+
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id, param, value);
+	if (ret) {
+		ath12k_err(ar->ab, "Failed to send HE LTF param %u to firmware\n",
+			   param);
+		return ret;
+	}
+
+	if (ul_ltf)
+		arvif->vap_cfg.he_ul_ltf = value;
+	else
+		arvif->vap_cfg.he_ltf = value;
+
+	return 0;
+}
+
+static int ath12k_vendor_send_he_ar_cfg(struct ath12k_link_vif *arvif)
+{
+	struct ath12k *ar = arvif->ar;
+	u32 value = arvif->vap_cfg.he_ar_gi_ltf;
+	int ret;
+
+	if (arvif->vap_cfg.he_ar_ldpc != IEEE80211_HE_AR_LDPC_DEFAULT)
+		value |= arvif->vap_cfg.he_ar_ldpc << IEEE80211_HE_AR_LDPC_SHIFT;
+
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					    WMI_VDEV_PARAM_AUTORATE_MISC_CFG,
+					    value);
+	if (ret)
+		ath12k_err(ar->ab,
+			   "Failed to send WMI_VDEV_PARAM_AUTORATE_MISC_CFG to firmware\n");
+
+	return ret;
+}
+
+static int ath12k_vendor_set_he_ar_gi_ltf(struct ath12k_link_vif *arvif,
+						 u32 value)
+{
+	u32 he_ar_ltf;
+	u32 he_ar_sgi;
+	int ret;
+
+	ret = ath12k_vendor_validate_he_or_eht_mode(arvif);
+	if (ret)
+		return ret;
+
+	if (!value || value & ~(IEEE80211_HE_AR_LTF_MASK | IEEE80211_HE_AR_SGI_MASK)) {
+		ath12k_err(arvif->ar->ab, "Invalid HE autorate GI/LTF value 0x%x\n",
+			   value);
+		return -EINVAL;
+	}
+
+	he_ar_ltf = value & IEEE80211_HE_AR_LTF_MASK;
+	he_ar_sgi = value & IEEE80211_HE_AR_SGI_MASK;
+	if (!(he_ar_ltf | he_ar_sgi)) {
+		ath12k_err(arvif->ar->ab,
+			   "HE autorate GI and LTF masks cannot both be zero\n");
+		return -EINVAL;
+	}
+
+	if (he_ar_ltf)
+		arvif->vap_cfg.he_ar_gi_ltf =
+			(arvif->vap_cfg.he_ar_gi_ltf & ~IEEE80211_HE_AR_LTF_MASK) |
+			he_ar_ltf;
+
+	if (he_ar_sgi)
+		arvif->vap_cfg.he_ar_gi_ltf =
+			(arvif->vap_cfg.he_ar_gi_ltf & ~IEEE80211_HE_AR_SGI_MASK) |
+			he_ar_sgi;
+
+	return ath12k_vendor_send_he_ar_cfg(arvif);
+}
+
+static int ath12k_vendor_set_he_ar_ldpc(struct ath12k_link_vif *arvif,
+					       u32 value)
+{
+	int ret;
+
+	ret = ath12k_vendor_validate_he_eht_mode(arvif, false);
+	if (ret)
+		return ret;
+
+	if (value > 1) {
+		ath12k_err(arvif->ar->ab, "HE autorate LDPC should be 0 or 1\n");
+		return -EINVAL;
+	}
+
+	arvif->vap_cfg.he_ar_ldpc = value;
+
+	return ath12k_vendor_send_he_ar_cfg(arvif);
+}
+
+static int ath12k_vendor_set_he_rts_threshold(struct ath12k_link_vif *arvif,
+						     u32 value)
+{
+	struct ath12k *ar = arvif->ar;
+	struct ieee80211_bss_conf *bss_conf;
+	u32 heop = 0;
+	int ret;
+
+	ret = ath12k_vendor_validate_he_eht_mode(arvif, false);
+	if (ret)
+		return ret;
+
+	if (value > IEEE80211_HEOP_RTS_THRESHOLD_DISABLED) {
+		ath12k_err(ar->ab,
+			   "HE RTS threshold should be less than or equal to 0x%x\n",
+			   IEEE80211_HEOP_RTS_THRESHOLD_DISABLED);
+		return -EINVAL;
+	}
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	if (bss_conf)
+		heop = bss_conf->he_oper.params;
+
+	heop &= ~IEEE80211_HE_OPERATION_RTS_THRESHOLD_MASK;
+	heop |= (value << IEEE80211_HE_OPERATION_RTS_THRESHOLD_OFFSET) &
+		IEEE80211_HE_OPERATION_RTS_THRESHOLD_MASK;
+
+	ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+					    WMI_VDEV_PARAM_HEOPS_0_31, heop);
+	if (ret) {
+		ath12k_err(ar->ab, "Failed to send WMI_VDEV_PARAM_HEOPS_0_31 to firmware\n");
+		return ret;
+	}
+
+	arvif->vap_cfg.he_rtsthrshld = value;
+
+	return 0;
+}
+
 static void ath12k_wsi_bypass_workfn(struct work_struct *work)
 {
 	struct ath12k_wsi_remap_work *w =
@@ -3184,6 +3353,29 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_FIXED_RATE:
 		ret = ath12k_vendor_set_ul_fixed_rate(arvif, value,
 						      ATH12K_VENDOR_UL_FIXED_RATE_EHT);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_MCS:
+		ret = ath12k_vendor_set_ul_fixed_rate(arvif, value,
+						      ATH12K_VENDOR_UL_FIXED_RATE_HE);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_MCS:
+		ret = ath12k_vendor_set_ul_fixed_rate(arvif, value,
+						      ATH12K_VENDOR_UL_FIXED_RATE_EHT);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_LTF:
+		ret = ath12k_vendor_set_he_ltf(arvif, value, true);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_LTF:
+		ret = ath12k_vendor_set_he_ltf(arvif, value, false);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_AR_GI_LTF:
+		ret = ath12k_vendor_set_he_ar_gi_ltf(arvif, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_AR_LDPC:
+		ret = ath12k_vendor_set_he_ar_ldpc(arvif, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_RTSTHRSHLD:
+		ret = ath12k_vendor_set_he_rts_threshold(arvif, value);
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LDPC:
 		if (value < 0 || value > 1) {
@@ -5226,6 +5418,15 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
                          ar->radio_cfg.cck_enable = value;
                  } else {
                          ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_CCK_TX_ENABLE to firmware");
+                 }
+                break;
+        case QCA_WLAN_VENDOR_RADIO_PARAM_CAL_VER_CHECK:
+		value = !!value;
+                 ret = ath12k_wmi_send_pdev_check_cal_version_cmd(ar);
+                 if (!ret) {
+                         ar->radio_cfg.cal_ver_check = value;
+                 } else {
+                         ath12k_err(NULL, "Failed to send WMI_PDEV_CHECK_CAL_VERSION to firmware");
                  }
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_EQUAL_RU_ALLOCATION_ENABLE:
@@ -10163,6 +10364,36 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 						      ATH12K_VENDOR_UL_FIXED_RATE_EHT,
 						      value);
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_MCS:
+		ret = ath12k_vendor_get_ul_fixed_rate(arvif,
+						      ATH12K_VENDOR_UL_FIXED_RATE_HE,
+						      value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_MCS:
+		ret = ath12k_vendor_get_ul_fixed_rate(arvif,
+						      ATH12K_VENDOR_UL_FIXED_RATE_EHT,
+						      value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_LTF:
+		*value = arvif->vap_cfg.he_ul_ltf;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_LTF:
+		*value = arvif->vap_cfg.he_ltf;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_AR_GI_LTF:
+		*value = arvif->vap_cfg.he_ar_gi_ltf;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_AR_LDPC:
+		*value = arvif->vap_cfg.he_ar_ldpc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_RTSTHRSHLD:
+		*value = arvif->vap_cfg.he_rtsthrshld;
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_LDPC:
 		*value = arvif->vap_cfg.eht_ul_ldpc;
 		ret = 0;
@@ -11659,6 +11890,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_CCK_TX_ENABLE:
                 *value = ar->radio_cfg.cck_enable;
+                ret = 0;
+                break;
+        case QCA_WLAN_VENDOR_RADIO_PARAM_CAL_VER_CHECK:
+                *value = ar->radio_cfg.cal_ver_check;
                 ret = 0;
                 break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_EQUAL_RU_ALLOCATION_ENABLE:

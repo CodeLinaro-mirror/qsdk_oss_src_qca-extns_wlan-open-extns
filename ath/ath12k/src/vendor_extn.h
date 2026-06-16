@@ -499,6 +499,12 @@ ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
 				 struct ieee80211_regdomain *regd)
 {
 }
+
+static inline int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
+					const struct ath12k_wmi_nfcal_power_event *param)
+{
+	return -1;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -763,6 +769,10 @@ enum ath12k_chan_144_state {
 	CHAN_144_DIS = 0,
 	CHAN_144_EN = 1,
 };
+
+int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
+				    const struct ath12k_wmi_nfcal_power_event *param);
+
 #endif /* CPTCFG_QCN_EXTN */
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

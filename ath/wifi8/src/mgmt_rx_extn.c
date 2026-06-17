@@ -57,7 +57,7 @@ void ath12k_wifi8_mgmt_highpri_service_srng_extn(struct ath12k_base *ab,
 }
 
 #if LINUX_VERSION_IS_GEQ(6, 13, 0)
-void ath12k_wifi8_mgmt_highpri_workqueue_extn(struct work_struct *w)
+void ath12k_wifi8_mgmt_highpri_workqueue_extn(struct work_struct *work)
 {
 	struct ath12k_mgmt_irq_grp *irq_grp = from_work(irq_grp, work, intr_wq);
 	struct ath12k_base *ab = irq_grp->ab;

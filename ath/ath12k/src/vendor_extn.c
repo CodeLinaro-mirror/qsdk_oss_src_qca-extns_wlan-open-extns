@@ -18,6 +18,7 @@
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 #include "../core.h"
+#include "../peer.h"
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
 #include "../net/wireless/core.h"
@@ -12223,6 +12224,337 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	}
 
 	return 0;
+}
+
+#define WMI_STA_MAX_LIMIT 40
+
+const struct nla_policy
+ath12k_sta_max_pwr_table_policy[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_RADIO_INDEX] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_NUM_PEERS]   = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_DATA]        = { .type = NLA_BINARY },
+};
+
+/**
+ * ath12k_vendor_sta_max_pwr_table - Set per-STA maximum TX power table.
+ * @wiphy: pointer to wiphy
+ * @wdev: wireless wdev
+ * @data: NL vendor data
+ * @data_len: length of data
+ *
+ * Receives one batch of up to WMI_STA_MAX_LIMIT (40) peer entries from
+ * acfgtool and sends them to firmware via WMI_PEER_BULK_SET_CMDID with
+ * WMI_PEER_USE_FIXED_PWR.  The DATA blob is a flat packed array of
+ * 10-byte entries: 6-byte MAC address followed by s32 power limit (LE).
+ *
+ * A RADIO_INDEX attribute selects which radio (pdev) to target.
+ */
+static int ath12k_wmi_send_peer_bulk_pwr_cmd(struct ath12k *ar,
+					     struct ath12k_sta_peer_table_entry *peers,
+					     u32 num_peers)
+{
+	struct ath12k_wmi_pdev *wmi = ar->wmi;
+	struct wmi_peer_bulk_set_cmd *cmd;
+	struct wmi_peer_list *peer_entry;
+	struct wmi_tlv *tlv;
+	struct sk_buff *skb;
+	u32 peers_len, total_len;
+	u8 *ptr;
+	int ret, i;
+
+	peers_len = num_peers * sizeof(*peer_entry);
+	total_len = sizeof(*cmd) + TLV_HDR_SIZE + peers_len;
+
+	skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, total_len);
+	if (!skb)
+		return -ENOMEM;
+
+	ptr = skb->data;
+
+	cmd = (struct wmi_peer_bulk_set_cmd *)ptr;
+	cmd->tlv_header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_PEER_BULK_SET_CMD_FIXED_PARAM) |
+			  FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+	cmd->vdev_var = 0;
+	ptr += sizeof(*cmd);
+
+	tlv = (struct wmi_tlv *)ptr;
+	tlv->header = ath12k_wmi_tlv_hdr(WMI_TAG_ARRAY_STRUCT, peers_len);
+	ptr += TLV_HDR_SIZE;
+
+	peer_entry = (struct wmi_peer_list *)ptr;
+	for (i = 0; i < num_peers; i++) {
+		peer_entry->tlv_header =
+			FIELD_PREP(WMI_TLV_TAG, WMI_TAG_PEER_LIST) |
+			FIELD_PREP(WMI_TLV_LEN, sizeof(*peer_entry) - TLV_HDR_SIZE);
+		ether_addr_copy(peer_entry->peer_macaddr.addr,
+				peers[i].peer_macaddr);
+		peer_entry->param_id    = cpu_to_le32(WMI_PEER_USE_FIXED_PWR);
+		peer_entry->param_value = cpu_to_le32((u32)peers[i].peer_pwr_limit);
+
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "sta_max_pwr_table: peer[%d] mac=%pM pwr_limit=%d\n",
+			   i, peers[i].peer_macaddr,
+			   peers[i].peer_pwr_limit);
+
+		peer_entry++;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "sta_max_pwr_table: sending WMI_PEER_BULK_SET_CMDID num_peers=%u pdev_id=%d\n",
+		   num_peers, ar->pdev->pdev_id);
+
+	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PEER_BULK_SET_CMDID);
+	if (ret) {
+		ath12k_warn(ar->ab, "failed to send WMI_PEER_BULK_SET_CMDID: %d\n",
+			    ret);
+		dev_kfree_skb(skb);
+	}
+
+	return ret;
+}
+
+int ath12k_vendor_sta_max_pwr_table(struct wiphy *wiphy,
+				    struct wireless_dev *wdev,
+				    const void *data,
+				    int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_MAX + 1];
+	struct ath12k_sta_peer_table_entry *peers;
+	struct ath12k_sta_peer_table_entry *valid_peers;
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar;
+	u32 num_peers, num_valid, j;
+	u8 radio_id;
+	int ret;
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_MAX,
+		      data, data_len, ath12k_sta_max_pwr_table_policy, NULL)) {
+		ath12k_err(NULL, "Failed to parse sta_max_pwr_table attributes\n");
+		return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_RADIO_INDEX] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_NUM_PEERS] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_DATA]) {
+		ath12k_err(NULL, "sta_max_pwr_table: missing required attributes\n");
+		return -EINVAL;
+	}
+
+	radio_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_RADIO_INDEX]);
+	if (radio_id >= ah->num_radio) {
+		ath12k_err(NULL, "sta_max_pwr_table: invalid radio_id %u\n", radio_id);
+		return -EINVAL;
+	}
+	ar = &ah->radio[radio_id];
+
+	num_peers = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_NUM_PEERS]);
+	if (!num_peers || num_peers > WMI_STA_MAX_LIMIT) {
+		ath12k_err(ar->ab,
+			   "sta_max_pwr_table: invalid num_peers %u (max %d)\n",
+			   num_peers, WMI_STA_MAX_LIMIT);
+		return -EINVAL;
+	}
+
+	if (nla_len(tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_DATA]) !=
+	    (int)(num_peers * sizeof(struct ath12k_sta_peer_table_entry))) {
+		ath12k_err(ar->ab,
+			   "sta_max_pwr_table: data length mismatch (got %d, expected %zu)\n",
+			   nla_len(tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_DATA]),
+			   num_peers * sizeof(struct ath12k_sta_peer_table_entry));
+		return -EINVAL;
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "sta_max_pwr_table: radio_id=%u num_peers=%u\n",
+		   radio_id, num_peers);
+
+	peers = nla_data(tb[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_DATA]);
+
+	/*
+	 * Filter to only associated peers before building the WMI buffer.
+	 * Sending WMI_PEER_BULK_SET_CMDID for a peer not in firmware's peer
+	 * table causes a firmware assert.
+	 */
+	valid_peers = kcalloc(num_peers, sizeof(*valid_peers), GFP_KERNEL);
+	if (!valid_peers)
+		return -ENOMEM;
+
+	num_valid = 0;
+	spin_lock_bh(&ar->arsta_lock);
+	for (j = 0; j < num_peers; j++) {
+		if (ath12k_link_sta_find_by_addr(ar, peers[j].peer_macaddr)) {
+			valid_peers[num_valid++] = peers[j];
+		} else {
+			ath12k_warn(ar->ab,
+				    "sta_max_pwr_table: skipping %pM — not associated on radio %u\n",
+				    peers[j].peer_macaddr, radio_id);
+		}
+	}
+	spin_unlock_bh(&ar->arsta_lock);
+
+	if (!num_valid) {
+		kfree(valid_peers);
+		return 0;
+	}
+
+	ret = ath12k_wmi_send_peer_bulk_pwr_cmd(ar, valid_peers, num_valid);
+
+	kfree(valid_peers);
+	return ret;
+}
+
+const struct nla_policy
+ath12k_power_table_policy[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_RADIO_INDEX]    = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_FREQ_BAND]      = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_IS_EXT]         = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_TARGET_TYPE]    = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_SUB_BAND]       = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_END_OF_UPDATE]  = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_LENGTH]         = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_DATA]           = { .type = NLA_BINARY,
+							      .len = MAX_PWTAB_SIZE },
+};
+
+/**
+ * ath12k_vendor_power_table - Set rate-to-power (R2P) table.
+ * @wiphy: pointer to wiphy
+ * @wdev: wireless wdev
+ * @data: NL vendor data
+ * @data_len: length of data
+ *
+ * Sends one sub-band slice of the rate-to-power table to firmware via
+ * WMI_PDEV_SET_TGTR2P_TABLE_CMDID.  acfgtool loops over sub-bands and
+ * sets end_of_update=1 on the last message for each frequency band.
+ *
+ * The RADIO_INDEX attribute selects the target pdev.
+ * The DATA blob contains s8 power values in units of 0.25 dBm.
+ */
+static int ath12k_wmi_send_pdev_tgtr2p_cmd(struct ath12k *ar,
+					    u32 freq_band, u32 sub_band,
+					    u32 is_ext, u32 target_type,
+					    u32 pwr_len, u32 end_of_update,
+					    const int8_t *pwr_data)
+{
+	struct ath12k_wmi_pdev *wmi = ar->wmi;
+	struct wmi_pdev_set_tgtr2p_table_cmd *cmd;
+	struct wmi_tlv *tlv;
+	struct sk_buff *skb;
+	u32 pwr_tlv_len, total_len;
+	u8 *ptr;
+	int ret;
+
+	pwr_tlv_len = TLV_HDR_SIZE + roundup(pwr_len, sizeof(u32));
+	total_len = sizeof(*cmd) + pwr_tlv_len;
+
+	skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, total_len);
+	if (!skb)
+		return -ENOMEM;
+
+	ptr = skb->data;
+	cmd = (struct wmi_pdev_set_tgtr2p_table_cmd *)ptr;
+	cmd->tlv_header =
+		FIELD_PREP(WMI_TLV_TAG, WMI_TAG_PDEV_SET_TGTR2P_TABLE_CMD_FIXED_PARAM) |
+		FIELD_PREP(WMI_TLV_LEN, sizeof(*cmd) - TLV_HDR_SIZE);
+	cmd->pdev_id              = cpu_to_le32(ar->pdev->pdev_id);
+	cmd->freq_band            = cpu_to_le32(freq_band);
+	cmd->sub_band             = cpu_to_le32(sub_band);
+	cmd->is_ext               = cpu_to_le32(is_ext);
+	cmd->target_type          = cpu_to_le32(target_type);
+	cmd->r2p_array_len        = cpu_to_le32(pwr_len);
+	cmd->end_of_r2ptable_update = cpu_to_le32(end_of_update);
+
+	ptr += sizeof(*cmd);
+
+	tlv = (struct wmi_tlv *)ptr;
+	tlv->header = ath12k_wmi_tlv_hdr(WMI_TAG_ARRAY_BYTE, pwr_len);
+	ptr += TLV_HDR_SIZE;
+	memcpy(ptr, pwr_data, pwr_len);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "power_table: sending WMI_PDEV_SET_TGTR2P_TABLE_CMDID pdev_id=%d "
+		   "band=%u sub_band=%u len=%u eou=%u\n",
+		   ar->pdev->pdev_id, freq_band, sub_band, pwr_len, end_of_update);
+
+	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PDEV_SET_TGTR2P_TABLE_CMDID);
+	if (ret) {
+		ath12k_warn(ar->ab,
+			    "failed to send WMI_PDEV_SET_TGTR2P_TABLE_CMDID: %d\n", ret);
+		dev_kfree_skb(skb);
+	}
+
+	return ret;
+}
+
+int ath12k_vendor_power_table(struct wiphy *wiphy,
+			      struct wireless_dev *wdev,
+			      const void *data,
+			      int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_MAX + 1];
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	struct ath12k *ar;
+	const int8_t *pwr_data;
+	u32 freq_band, sub_band, is_ext, target_type, end_of_update, pwr_len;
+	u8 radio_id;
+
+	if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_POWER_TABLE_MAX,
+		      data, data_len, ath12k_power_table_policy, NULL)) {
+		ath12k_err(NULL, "Failed to parse power_table attributes\n");
+		return -EINVAL;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_RADIO_INDEX] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_FREQ_BAND] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_IS_EXT] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_TARGET_TYPE] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_SUB_BAND] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_END_OF_UPDATE] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_LENGTH] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_DATA]) {
+		ath12k_err(NULL, "power_table: missing required attributes\n");
+		return -EINVAL;
+	}
+
+	radio_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_RADIO_INDEX]);
+	if (radio_id >= ah->num_radio) {
+		ath12k_err(NULL, "power_table: invalid radio_id %u\n", radio_id);
+		return -EINVAL;
+	}
+	ar = &ah->radio[radio_id];
+
+	freq_band      = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_FREQ_BAND]);
+	is_ext         = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_IS_EXT]);
+	target_type    = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_TARGET_TYPE]);
+	sub_band       = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_SUB_BAND]);
+	end_of_update  = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_END_OF_UPDATE]);
+	pwr_len        = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_LENGTH]);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "power_table: radio_id=%u band=%u sub_band=%u is_ext=%u "
+		   "target_type=0x%x pwr_len=%u end_of_update=%u\n",
+		   radio_id, freq_band, sub_band, is_ext, target_type,
+		   pwr_len, end_of_update);
+
+	if (freq_band > 2) {
+		ath12k_err(ar->ab, "power_table: invalid freq_band %u\n", freq_band);
+		return -EINVAL;
+	}
+
+	if (!pwr_len || pwr_len > MAX_PWTAB_SIZE ||
+	    nla_len(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_DATA]) < (int)pwr_len) {
+		ath12k_err(ar->ab, "power_table: invalid pwr_len %u\n", pwr_len);
+		return -EINVAL;
+	}
+
+	pwr_data = nla_data(tb[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_DATA]);
+
+	return ath12k_wmi_send_pdev_tgtr2p_cmd(ar, freq_band, sub_band,
+						is_ext, target_type,
+						pwr_len, end_of_update,
+						pwr_data);
 }
 
 int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,

@@ -2252,28 +2252,32 @@ int ath12k_wifi6_dp_ext_mon_validate_request(struct ath12k_pdev_dp *dp_pdev,
 	if (req->cmd_type == ATH12K_EXT_MON_CMD_TYPE_SET_FILTER &&
 	    !req->filter.disable) {
 		if (ath12k_dp_ext_mon_is_mode_enabled(&req->filter.all_peer) ||
-		    ath12k_dp_ext_mon_is_mode_enabled(&req->filter.all_neighbor) ||
 		    ath12k_dp_ext_mon_is_mode_enabled(&req->filter.target_peer)) {
 			ath12k_warn(dp_pdev->dp,
-				    "only MD (target_neighbor) filter type is supported\n");
+				    "FP (all_peer) and FPMO (target_peer) filter types are not supported\n");
 			return -EINVAL;
 		}
-		if (!ath12k_dp_ext_mon_is_mode_enabled(&req->filter.target_neighbor)) {
+		if (!ath12k_dp_ext_mon_is_mode_enabled(&req->filter.target_neighbor) &&
+		    !ath12k_dp_ext_mon_is_mode_enabled(&req->filter.all_neighbor)) {
 			ath12k_warn(dp_pdev->dp,
-				    "no MD (target_neighbor) filter specified\n");
+				    "no MD (target_neighbor) or MO (all_neighbor) filter specified\n");
 			return -EINVAL;
 		}
 
-		/* Only full packet length is supported for MD filter now. */
-		if (req->filter.target_neighbor.len[ATH12K_EXT_MON_FRAME_MGMT] !=
-			ATH12K_EXT_MON_LEN_FULL_PKT ||
-		    req->filter.target_neighbor.len[ATH12K_EXT_MON_FRAME_CTRL] !=
-			ATH12K_EXT_MON_LEN_FULL_PKT ||
-		    req->filter.target_neighbor.len[ATH12K_EXT_MON_FRAME_DATA] !=
-			ATH12K_EXT_MON_LEN_FULL_PKT) {
-			ath12k_warn(dp_pdev->dp,
-				    "only full packet length is supported\n");
-			return -EINVAL;
+		/* Only full packet length is supported now. */
+		for (i = 0; i < ATH12K_EXT_MON_FRAME_MAX; i++) {
+			if (ath12k_dp_ext_mon_is_mode_enabled(&req->filter.all_neighbor) &&
+				req->filter.all_neighbor.len[i] != ATH12K_EXT_MON_LEN_FULL_PKT) {
+				ath12k_warn(dp_pdev->dp,
+                                            "only full packet length is supported\n");
+				return -EINVAL;
+			}
+			if (ath12k_dp_ext_mon_is_mode_enabled(&req->filter.target_neighbor) &&
+				req->filter.target_neighbor.len[i] != ATH12K_EXT_MON_LEN_FULL_PKT) {
+				ath12k_warn(dp_pdev->dp,
+					    "only full packet length is supported\n");
+				return -EINVAL;
+			}
 		}
 	}
 
@@ -2363,7 +2367,8 @@ ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
 	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
 	struct ath12k_dp_rx_ext_mon *rx_ext_mon;
 	struct ath12k_ext_mon_filter_config rollback_config = {0};
-	int ret = 0;
+	bool already_enabled;
+	int ret = 0, orig_ret = 0;
 
 	if (unlikely(!dp_mon_pdev)) {
 		ath12k_warn(dp_pdev->dp, "monitor pdev is null\n");
@@ -2384,8 +2389,10 @@ ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
 		return -EINVAL;
 	}
 
-	/* Store current active MD filter for disable rollback. */
+	already_enabled = rx_ext_mon->enable;
+	/* Store current active filters for disable rollback. */
 	rollback_config.target_neighbor = rx_ext_mon->md;
+	rollback_config.all_neighbor = rx_ext_mon->mo;
 	spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
 
 	if (new_config->disable) {
@@ -2412,21 +2419,31 @@ ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
 			ath12k_wifi6_dp_ext_mon_remove_all_rx_peers(dp_pdev);
 		}
 	} else {
-		/* Disable monitor mode before enabling ext-mon filters */
-		ath12k_wifi6_dp_mon_rx_monitor_mode_reset(dp_pdev);
-		/* Enabling: arm MD filters from new_config then push to HW */
+		/* Reset current filter state before applying new config */
+		if (already_enabled)
+			ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, NULL);
+		else
+			ath12k_wifi6_dp_mon_rx_monitor_mode_reset(dp_pdev);
+		/* Enabling: arm ext-mon filters from new_config then push to HW */
 		ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, new_config);
 		ret = ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev);
 		if (ret) {
+			orig_ret = ret;
 			ath12k_warn(dp_pdev->dp,
 				    "failed to update ring filter: %d\n", ret);
-			/* Reset EXT_MON slot and restore monitor mode */
+			/* Reset EXT_MON slot */
 			ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, NULL);
-			ath12k_wifi6_dp_mon_rx_monitor_mode_set(dp_pdev);
-			if (ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev))
+			if (already_enabled)
+				/*Revert to the older filter setting*/
+				ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, &rollback_config);
+			else
+				/*restore monitor mode*/
+				ath12k_wifi6_dp_mon_rx_monitor_mode_set(dp_pdev);
+			ret = ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev);
+			if (ret)
 				ath12k_warn(dp_pdev->dp,
-					    "failed to rollback to monitor mode\n");
-			return ret;
+					    "failed to rollback to monitor mode: %d\n", ret);
+			return orig_ret;
 		}
 		/* Commit config only after HW update succeeds */
 		ath12k_wifi6_dp_ext_mon_update_rx_config(dp_mon_pdev, new_config);

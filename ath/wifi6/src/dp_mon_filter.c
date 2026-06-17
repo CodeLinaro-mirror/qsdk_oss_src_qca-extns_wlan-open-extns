@@ -207,19 +207,45 @@ ath12k_wifi6_dp_mon_setup_ext_mon_filter(struct dp_mon_rx_filter *filter,
 	tlv_filter->drop_threshold_valid = true;
 	tlv_filter->rx_drop_threshold = HTT_RX_RING_TLV_DROP_THRESHOLD_VALUE;
 
-	if (config && ath12k_dp_ext_mon_is_mode_enabled(&config->target_neighbor)) {
-		tlv_filter->enable_md = 1;
-		tlv_filter->md_mgmt_filter =
-			config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_MGMT];
-		tlv_filter->md_ctrl_filter =
-			config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_CTRL];
-		tlv_filter->md_data_filter =
-			config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_DATA];
+	if (config) {
+		if (ath12k_dp_ext_mon_is_mode_enabled(&config->target_neighbor)) {
+			tlv_filter->enable_md = 1;
+			tlv_filter->md_mgmt_filter =
+				config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_MGMT];
+			tlv_filter->md_ctrl_filter =
+				config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_CTRL];
+			tlv_filter->md_data_filter =
+				config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_DATA];
+		} else {
+			tlv_filter->enable_md = 0;
+			tlv_filter->md_mgmt_filter = 0;
+			tlv_filter->md_ctrl_filter = 0;
+			tlv_filter->md_data_filter = 0;
+		}
+
+		if (ath12k_dp_ext_mon_is_mode_enabled(&config->all_neighbor)) {
+			tlv_filter->enable_mo = 1;
+			tlv_filter->mo_mgmt_filter =
+				config->all_neighbor.filter[ATH12K_EXT_MON_FRAME_MGMT];
+			tlv_filter->mo_ctrl_filter =
+				config->all_neighbor.filter[ATH12K_EXT_MON_FRAME_CTRL];
+			tlv_filter->mo_data_filter =
+				config->all_neighbor.filter[ATH12K_EXT_MON_FRAME_DATA];
+		} else {
+			tlv_filter->enable_mo = 0;
+			tlv_filter->mo_mgmt_filter = 0;
+			tlv_filter->mo_ctrl_filter = 0;
+			tlv_filter->mo_data_filter = 0;
+		}
 	} else {
 		tlv_filter->enable_md = 0;
 		tlv_filter->md_mgmt_filter = 0;
 		tlv_filter->md_ctrl_filter = 0;
 		tlv_filter->md_data_filter = 0;
+		tlv_filter->enable_mo = 0;
+		tlv_filter->mo_mgmt_filter = 0;
+		tlv_filter->mo_ctrl_filter = 0;
+		tlv_filter->mo_data_filter = 0;
 	}
 }
 

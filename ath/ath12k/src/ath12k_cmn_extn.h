@@ -6,6 +6,7 @@
 #ifndef ATH12K_CMN_EXTN_H
 #define ATH12K_CMN_EXTN_H
 
+#include <linux/if_ether.h>
 #include <linux/mhi.h>
 #include <linux/uuid.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
@@ -51,6 +52,8 @@ struct mgmt_srng;
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
 	spinlock_t data_lock;
+	u8 bssid[ETH_ALEN];
+	bool bssid_set;
 };
 
 struct ath12k_dp_vif_extn {

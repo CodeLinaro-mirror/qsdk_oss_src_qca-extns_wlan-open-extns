@@ -9,19 +9,40 @@
 #include "../core.h"
 
 /**
- * ath12k_wmi_update_strict_passive_scan_extn - Update strict passive scan
- *                                              setting for 5 GHz scans
+ * ath12k_wmi_prepare_scan_req_extn - Prepare scan request extension data
  * @ar: Pointer to the ath12k radio structure
  * @arg: Pointer to the scan request parameters
+ * @ssid: Pointer to the scan request SSID
+ * @ssid_len: Length of the scan request SSID
  *
- * Update the strict passive scan flag in the scan request based on the
- * userspace radio configuration. The flag is applied only when the scan
- * request includes a 5 GHz channel.
+ * Store scan request SSID information for the scan vif and update strict
+ * passive scan parameter from userspace radio configuration when applicable.
  */
-void ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
-						struct ath12k_wmi_scan_req_arg *arg)
+void ath12k_wmi_prepare_scan_req_extn(struct ath12k *ar,
+				      struct ath12k_wmi_scan_req_arg *arg,
+				      const u8 *ssid,
+				      u8 ssid_len)
 {
+	struct ath12k_link_vif *arvif;
+	struct ath12k_vif *ahvif;
 	struct ieee80211_channel *channel;
+
+	arvif = ar->scan.arvif;
+	if (arvif) {
+		ahvif = arvif->ahvif;
+		if (!ssid)
+			ssid_len = 0;
+		else if (ssid_len > IEEE80211_MAX_SSID_LEN)
+			ssid_len = IEEE80211_MAX_SSID_LEN;
+
+		spin_lock_bh(&ahvif->ath12k_vif_extn.data_lock);
+		ahvif->ath12k_vif_extn.ssid_len = ssid_len;
+		memset(ahvif->ath12k_vif_extn.ssid, 0,
+		       sizeof(ahvif->ath12k_vif_extn.ssid));
+		if (ssid_len)
+			memcpy(ahvif->ath12k_vif_extn.ssid, ssid, ssid_len);
+		spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
+	}
 
 	if (!arg->chan_list.num_chan || !arg->chan_list.chan)
 		return;

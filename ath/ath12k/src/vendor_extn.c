@@ -10563,7 +10563,7 @@ static int ath12k_vendor_build_bw_str(enum nl80211_band band,
 	for (i = 0; i < ARRAY_SIZE(bw_table); i++) {
 		if (band < bw_table[i].min_band)
 			continue;
-		if (chan->flags & bw_table[i].flag)
+		if ((chan->flags & bw_table[i].flag) == bw_table[i].flag)
 			continue;
 		len += scnprintf(buf + len, buf_len - len,
 				 "%s%u", sep, bw_table[i].bw);

@@ -28,6 +28,14 @@ ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
 {
 }
 
+static inline void
+ieee80211_bootup_cac_handle_skip_extn(struct ieee80211_sub_if_data *sdata,
+				      struct ieee80211_link_data *link,
+				      const struct cfg80211_chan_def *chandef,
+				      u32 residual_cac_ms, bool skip_cac)
+{
+}
+
 #else /* CPTCFG_QCN_EXTN */
 
 /**
@@ -61,6 +69,23 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
  * returns false and vdev_up is issued.
  */
 void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx);
+
+/**
+ * ieee80211_bootup_cac_handle_skip_extn - handle skip_cac flag during boot-up CAC.
+ * @sdata: the sub-interface data
+ * @link: the link data for the link being started
+ * @chandef: the channel definition for the link
+ * @skip_cac: whether the user space requested CAC to be skipped
+ *
+ * When @skip_cac is true, sends a dummy NL80211_RADAR_CAC_FINISHED event so
+ * that hostapd resets its boot-up CAC state and continues as if CAC completed
+ * immediately.  When @skip_cac is false, falls through to the normal
+ * ieee80211_bootup_cac_start_timer_extn() path.
+ */
+void ieee80211_bootup_cac_handle_skip_extn(struct ieee80211_sub_if_data *sdata,
+					   struct ieee80211_link_data *link,
+					   const struct cfg80211_chan_def *chandef,
+					   u32 residual_cac_ms, bool skip_cac);
 
 #endif /* CPTCFG_QCN_EXTN */
 

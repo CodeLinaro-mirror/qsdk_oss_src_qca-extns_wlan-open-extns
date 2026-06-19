@@ -49,14 +49,14 @@ struct ipa_header {
 
 #define ATH12K_IPA_TCL_SW_RING 0
 
-#define MAX_IPA_IFACE                       7
+#define MAX_IPA_IFACE                       16
 #define ATH12K_IPA_MAX_IFACE                MAX_IPA_IFACE
 #define ATH12K_IPA_MAX_SYSBAM_PIPE          4
 #define WLAN_IPA_WLAN_HDR_DES_MAC_OFFSET    0
 #define WLAN_IPA_UC_WLAN_HDR_DES_MAC_OFFSET \
 	(sizeof(struct frag_header) + sizeof(struct ipa_header))
 
-#define ATH12K_IPA_MAX_SESSION              MAX_IPA_IFACE //7
+#define ATH12K_IPA_MAX_SESSION              MAX_IPA_IFACE
 
 #define ATH12K_IPA_RX_PIPE                  (ATH12K_IPA_MAX_SYSBAM_PIPE - 1)
 #define ATH12K_IPA_ENABLE_MASK              BIT(0)

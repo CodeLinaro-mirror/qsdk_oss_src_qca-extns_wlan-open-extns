@@ -18,7 +18,8 @@ struct ieee80211_chanctx;
 static inline void
 ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 				      struct ieee80211_link_data *link,
-				      const struct cfg80211_chan_def *chandef)
+				      const struct cfg80211_chan_def *chandef,
+				      u32 residual_cac_ms)
 {
 }
 
@@ -35,14 +36,17 @@ ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
  * @sdata: the sub-interface data
  * @link: the link data for the link being started
  * @chandef: the channel definition for the link
+ * @residual_cac_ms: residual CAC time in milliseconds, or 0 for full CAC
  *
  * If this is the first BSS being started on a 5G DFS channel, starts the
- * per-chanctx dfs_cac_timer with the regulatory CAC time.  Subsequent
- * calls on the same chanctx inherit the timing state.
+ * per-chanctx dfs_cac_timer with the residual CAC time when valid, otherwise
+ * with the regulatory CAC time. Subsequent calls on the same chanctx inherit
+ * the timing state.
  */
 void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 					   struct ieee80211_link_data *link,
-					   const struct cfg80211_chan_def *chandef);
+					   const struct cfg80211_chan_def *chandef,
+					   u32 residual_cac_ms);
 
 /**
  * ieee80211_bootup_cac_mesh_vdev_up_extn - trigger vdev_up for mesh vdevs

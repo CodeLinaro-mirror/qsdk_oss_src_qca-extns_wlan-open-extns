@@ -18,7 +18,8 @@
  */
 void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 					   struct ieee80211_link_data *link,
-					   const struct cfg80211_chan_def *chandef)
+					   const struct cfg80211_chan_def *chandef,
+					   u32 residual_cac_ms)
 {
 	struct ieee80211_local *local = sdata->local;
 	unsigned int link_id = link->link_id;
@@ -33,16 +34,25 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 		return;
 
 	if (!hrtimer_is_queued(&chanctx->dfs_cac_timer)) {
-		unsigned int cac_time_ms;
+		unsigned int cac_time_ms, full_cac_time_ms;
 
-		cac_time_ms = cfg80211_chandef_dfs_cac_time(local->hw.wiphy,
-							    chandef,
-							    false, false);
-		if (WARN_ON(!cac_time_ms))
-			cac_time_ms = IEEE80211_DFS_MIN_CAC_TIME_MS;
+		full_cac_time_ms = cfg80211_chandef_dfs_cac_time(local->hw.wiphy,
+								 chandef,
+								 false, false);
+		if (WARN_ON(!full_cac_time_ms))
+			full_cac_time_ms = IEEE80211_DFS_MIN_CAC_TIME_MS;
 
-		pr_debug("mac80211: boot-up CAC: starting %ums timer on chanctx for %s link %u\n",
-			 cac_time_ms, sdata->name, link_id);
+		cac_time_ms = full_cac_time_ms;
+		/* Dependent repeater FH AP residual CAC: userspace passes
+		 * remaining CAC time; root AP passes 0 and uses full CAC.
+		 */
+		if (residual_cac_ms && residual_cac_ms < full_cac_time_ms)
+			cac_time_ms = residual_cac_ms;
+
+		pr_debug("mac80211: boot-up CAC: starting %ums timer on chanctx for %s "
+			 "link %u full_cac_ms=%u residual_cac_ms=%u\n",
+			 cac_time_ms, sdata->name, link_id, full_cac_time_ms,
+			 residual_cac_ms);
 		hrtimer_start(&chanctx->dfs_cac_timer,
 			      ms_to_ktime(cac_time_ms),
 			      HRTIMER_MODE_REL);

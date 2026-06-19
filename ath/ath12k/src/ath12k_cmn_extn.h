@@ -538,6 +538,11 @@ static inline void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab)
 	return;
 }
 
+static inline void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab)
+{
+	return;
+}
+
 static inline void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 {
 	return;
@@ -976,6 +981,8 @@ void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 			  const struct ieee80211_ops_extn *ops_extn);
 
 void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
+
+void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
 
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif);
 

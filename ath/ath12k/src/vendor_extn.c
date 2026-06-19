@@ -8238,6 +8238,13 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 		memcpy(&value, params->data, sizeof(value));
 		ret = ath12k_vendor_set_regdomain(wiphy, ar, value);
 		return ret;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_GET_NFCAL_POWER:
+		ret = ath12k_wmi_send_pdev_get_nfcal_power_cmd(ar);
+		if (ret)
+			ath12k_warn(ar->ab,
+				    "failed to send WMI_PDEV_GET_NFCAL_POWER cmd: %d\n",
+				    ret);
+		return ret;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_SCAN_STRICT_PASSIVE_PCH:
 		if (params->data_len < sizeof(u32)) {
 			ath12k_err(NULL, "Invalid strict passive scan data len: %u\n",
@@ -12537,6 +12544,75 @@ int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
  * @event_flag: Vendor-defined recovery event type
  * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
  */
+
+/**
+ * ath12k_vendor_nfcal_power_event - Send a noise floor calibration power
+ * vendor NL80211 event to userspace.
+ * @ar: Pointer to the ath12k radio context
+ * @param: Pointer to the parsed nfcal power event data
+ *
+ * Sends QCA_NL80211_VENDOR_SUBCMD_WLAN_NFCAL_POWER_EVENT carrying nfdbr,
+ * nfdbm and freqnum arrays as binary attributes.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
+				    const struct ath12k_wmi_nfcal_power_event *param)
+{
+	struct wiphy *wiphy;
+	struct sk_buff *skb;
+	u8 hw_link_id;
+
+	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return -EINVAL;
+
+	wiphy = ar->ah->hw->wiphy;
+	hw_link_id = ar->hw_link_id;
+
+	skb = cfg80211_vendor_event_alloc(wiphy, NULL,
+					  NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_WLAN_NFCAL_POWER_EVENT_INDEX,
+					  GFP_ATOMIC);
+	if (!skb)
+		return -ENOMEM;
+
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_HW_LINK_ID,
+		       hw_link_id))
+		goto err;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NFDBR,
+		    param->num_nfdbr_dbm * sizeof(s8), param->nfdbr))
+		goto err;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NFDBM,
+		    param->num_nfdbr_dbm * sizeof(s8), param->nfdbm))
+		goto err;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_FREQNUM,
+		    param->num_freq * sizeof(u32), param->freqnum))
+		goto err;
+
+	if (nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NUM_NFDBR_DBM,
+			param->num_nfdbr_dbm))
+		goto err;
+
+	if (nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NUM_FREQ,
+			param->num_freq))
+		goto err;
+
+	cfg80211_vendor_event(skb, GFP_ATOMIC);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "nfcal power vendor event sent: hw_link_id=%u num_nfdbr_dbm=%u num_freq=%u\n",
+		   hw_link_id, param->num_nfdbr_dbm, param->num_freq);
+
+	return 0;
+
+err:
+	kfree_skb(skb);
+	return -EINVAL;
+}
+
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag)
 {

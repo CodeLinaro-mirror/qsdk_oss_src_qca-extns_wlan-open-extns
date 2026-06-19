@@ -13776,12 +13776,12 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 					      struct wireless_dev *wdev,
 					      const void *data, int data_len)
 {
-	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
-	struct ath12k_hw *ah = hw->priv;
+	struct ieee80211_vif *vif;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif;
 	struct ath12k *ar;
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1];
 	struct ath12k_tdma_sched_info sched = {0};
-	u32 radio_index = 0;
 	int ret;
 
 	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX, data, data_len,
@@ -13791,20 +13791,30 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 		return ret;
 	}
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX])
-		radio_index = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX]);
+	 vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif) {
+                ath12k_err(NULL, "vif is NULL for TDMA schedule config\n");
+                return -EINVAL;
+        }
 
-	if (radio_index >= ah->num_radio) {
-		ath12k_err(NULL, "Invalid radio index %u for TDMA schedule config\n",
-			   radio_index);
-		return -EINVAL;
-	}
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif) {
+                ath12k_err(NULL, "ahvif is NULL for TDMA schedule config\n");
+                return -EINVAL;
+        }
+        /* VAP (vdev) interface is used as the entry point for user commands since
+         * wlanconfig operates on netdev interfaces (wlanX).
+         * The driver internally maps the given vdev to the corresponding pdev (radio)
+         * and issues the required pdev-level WMI command to firmware.
+         * This ensures correct radio selection and maintains proper driver abstraction.
+         */
+        arvif = &ahvif->deflink;
+        if (!arvif || !arvif->ar) {
+                ath12k_err(NULL, "arvif or ar is NULL for TDMA schedule config\n");
+                return -EINVAL;
+        }
 
-	ar = &ah->radio[radio_index];
-	if (!ar) {
-		ath12k_err(NULL, "ar is NULL for radio index %u\n", radio_index);
-		return -EINVAL;
-	}
+        ar = arvif->ar;
 
 	sched.pdev_id = ar->pdev->pdev_id;
 

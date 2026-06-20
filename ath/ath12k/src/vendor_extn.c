@@ -3474,7 +3474,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.eht_dl_ofdma_txbf;
 			arvif->vap_cfg.eht_dl_ofdma_txbf_configured = true;
 			arvif->vap_cfg.eht_dl_ofdma_txbf = !!value;
-			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			ret = ath12k_mac_set_eht_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.eht_dl_ofdma_txbf = old_ofdma_val;
 				arvif->vap_cfg.eht_dl_ofdma_txbf_configured = false;
@@ -3491,7 +3491,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.eht_dl_ofdma;
 			arvif->vap_cfg.eht_dl_ofdma_configured = true;
 			arvif->vap_cfg.eht_dl_ofdma = !!value;
-			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			ret = ath12k_mac_set_eht_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.eht_dl_ofdma = old_ofdma_val;
 				arvif->vap_cfg.eht_dl_ofdma_configured = false;
@@ -3508,7 +3508,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.eht_ul_ofdma;
 			arvif->vap_cfg.eht_ul_ofdma_configured = true;
 			arvif->vap_cfg.eht_ul_ofdma = !!value;
-			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			ret = ath12k_mac_set_eht_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.eht_ul_ofdma = old_ofdma_val;
 				arvif->vap_cfg.eht_ul_ofdma_configured = false;
@@ -3526,7 +3526,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.he_dl_ofdma_txbf;
 			arvif->vap_cfg.he_dl_ofdma_txbf_configured = true;
 			arvif->vap_cfg.he_dl_ofdma_txbf = !!value;
-			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			ret = ath12k_mac_set_he_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.he_dl_ofdma_txbf = old_ofdma_val;
 				arvif->vap_cfg.he_dl_ofdma_txbf_configured = false;
@@ -3543,7 +3543,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.he_dl_ofdma;
 			arvif->vap_cfg.he_dl_ofdma_configured = true;
 			arvif->vap_cfg.he_dl_ofdma = !!value;
-			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			ret = ath12k_mac_set_he_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.he_dl_ofdma = old_ofdma_val;
 				arvif->vap_cfg.he_dl_ofdma_configured = false;
@@ -3560,7 +3560,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.he_ul_ofdma;
 			arvif->vap_cfg.he_ul_ofdma_configured = true;
 			arvif->vap_cfg.he_ul_ofdma = !!value;
-			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			ret = ath12k_mac_set_he_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.he_ul_ofdma = old_ofdma_val;
 				arvif->vap_cfg.he_ul_ofdma_configured = false;

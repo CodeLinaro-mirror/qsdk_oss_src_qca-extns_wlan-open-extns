@@ -10311,6 +10311,32 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		}
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TLV_LOGGER_MODE:
+		struct ath12k_pdev_dp *dp_pdev;
+		struct ath12k_pdev_mon_dp_extn *mon_extn = NULL;
+		bool rx_en, tx_en;
+
+		if (arvif->ahvif->vif->type != NL80211_IFTYPE_MONITOR) {
+			ath12k_err(NULL, "requested interface is not a monitor interface!\n");
+			return -EINVAL;
+		}
+		dp_pdev = &ar->dp;
+		*value = ATH12K_TLV_LOGGER_DISABLED;
+
+		if (dp_pdev->dp_mon_pdev)
+			mon_extn = &dp_pdev->dp_mon_pdev->pdev_mon_dp_extn;
+		if (mon_extn) {
+			rx_en = mon_extn->rx_tlv_log &&
+				mon_extn->rx_tlv_log->tlv_logging_enable;
+			tx_en = mon_extn->tx_tlv_log &&
+				mon_extn->tx_tlv_log->tlv_logging_enable;
+			if (rx_en)
+				*value |= ATH12K_TLV_LOGGER_RX_ENABLED;
+			if (tx_en)
+				*value |= ATH12K_TLV_LOGGER_TX_ENABLED;
+		}
+		ret = 0;
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);

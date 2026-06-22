@@ -312,6 +312,7 @@
 	ATH12K_CFG(ATH12K_CFG_REO_MGMT_PATH_DISABLE) \
 	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
 	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
+	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -867,6 +868,19 @@
 	ATH12K_CFG_INI_STRING("cumac_band_priority", \
 	0, 31, "", \
 	"CUMAC chip selection band priority (space-separated: \"2GHz 5GHz 6GHz\")")
+
+#define ATH12K_CFG_NUM_VDEVS_MIN	1
+#define ATH12K_CFG_NUM_VDEVS_MAX	17
+/* 0 means "use memory profile default" - preserves backward compatibility */
+#define ATH12K_CFG_NUM_VDEVS_DEFAULT	0
+
+#define ATH12K_CFG_NUM_VDEVS \
+	ATH12K_CFG_INI_UINT("num_vdevs", \
+	ATH12K_CFG_NUM_VDEVS_MIN, \
+	ATH12K_CFG_NUM_VDEVS_MAX, \
+	ATH12K_CFG_NUM_VDEVS_DEFAULT, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, \
+	"Number of vdevs per radio (0 = use memory profile default, normal mode only)")
 
 #define ATH12K_CFG_DP_UMCMN_INTR_HANDLING_DISABLE \
 	ATH12K_CFG_INI_BOOL("dp_umcmn_intr_disable", false, \

@@ -66,7 +66,15 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 
 		list_for_each_entry(iter_link, &chanctx->assigned_links,
 				    assigned_chanctx_list) {
-			if (iter_link->sdata->vif.type == NL80211_IFTYPE_AP) {
+			/* Skip the current link: it was just prepended to the
+			 * list head by ieee80211_link_use_channel() before this
+			 * call, so its cac_start_time/cac_time_ms are not yet
+			 * initialized. */
+			if (iter_link == link)
+				continue;
+
+			if (iter_link->sdata->vif.type == NL80211_IFTYPE_AP ||
+			    iter_link->sdata->vif.type == NL80211_IFTYPE_MESH_POINT) {
 				first_link = iter_link;
 				break;
 			}

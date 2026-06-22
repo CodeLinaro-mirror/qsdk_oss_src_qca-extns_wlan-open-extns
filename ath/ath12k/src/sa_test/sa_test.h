@@ -317,6 +317,11 @@ enum sa_training_mode {
  * @SMART_ANT_PARAM_TRAIN_PERTH_TESTMODE: Set PER threshold to stop training in
  * test mode after minimum packets.
  * @SMART_ANT_PARAM_TRAIN_START_TESTMODE: Start training in test mode.
+ * @SMART_ANT_PARAM_TRAIN_EXTN_FLAGS: Set extended training flags like disable
+ *    latency traffic and enable QoS NULL frames in training.
+ * @SMART_ANT_PARAM_MAX_MPDU_COUNT_FOR_TARINING: Maximum per Radio MPDU count
+ *    for training.
+ * @SMART_ANT_PARAM_MCS_MARGIN: MCS margin per Radio
  */
 enum smart_ant_param  {
 	SMART_ANT_PARAM_HELP = 0,
@@ -356,6 +361,9 @@ enum smart_ant_param  {
 	SMART_ANT_PARAM_TRAIN_MINPKTS_TESTMODE,
 	SMART_ANT_PARAM_TRAIN_PERTH_TESTMODE,
 	SMART_ANT_PARAM_TRAIN_START_TESTMODE,
+	SMART_ANT_PARAM_TRAIN_EXTN_FLAGS_TESTMODE,
+	SMART_ANT_PARAM_MAX_MPDU_COUNT_FOR_TARINING,
+	SMART_ANT_PARAM_MCS_MARGIN,
 };
 
 /*
@@ -374,6 +382,7 @@ enum smart_ant_param  {
  * @parallel_gpio_drive: Parallel mode GPIO drive configuration.
  * @num_min_pkt_threshod: Minimum packet thresholds to detect active
  *     bandwidth per BW.
+ * @max_mpdu_train_cnt: Maximum MPDU count for training
  * @training_mode: Training mode selector (0 = existing traffic only,
  *     1 = self packet generation with existing traffic)
  * @lower_bound: Lower bound for rate drop in training.
@@ -390,6 +399,9 @@ enum smart_ant_param  {
  * @config: Algorithm configuration bitmask (see SA_CONFIG_*).
  * @train_enable: Master bitmap indicating training enable for init/perf/prd.
  * @antenna_change_ind: Global indication to change antenna in next feedback.
+ * @en_rts_ant: Config to enable Separate antenna for RTS
+ * @mcs_margin_en: Flag to hold MCS margin enable/disable
+ * @mcs_margin_val: Holds mcs margin value
  */
 struct smartantenna_params {
 	u32 retrain_interval;
@@ -405,6 +417,7 @@ struct smartantenna_params {
 	u16 per_threshold;
 	u16 parallel_gpio_drive;
 	u16 num_min_pkt_threshod[SA_NUM_BW];
+	u16 max_mpdu_train_cnt;
 	u8 training_mode;
 	u8 lower_bound;
 	u8 upper_bound;
@@ -419,6 +432,9 @@ struct smartantenna_params {
 	u8 config;
 	u8 train_enable;
 	u8 antenna_change_ind;
+	u8 en_rts_ant;
+	u8 mcs_margin_en;
+	u8 mcs_margin_val;
 };
 
 /*
@@ -702,6 +718,8 @@ struct sa_node_ccp {
  * @numpkts: Number of packets required for training.
  * @minpkts: Minimum packets to be trained before evaluating PER threshold.
  * @per_threshold: PER threshold for training stop.
+ * @extn_train_flags: Extended flags for training. Like to disbale Latency traffic
+ *    and enable QoS NULL frame in training.
  */
 struct sa_test_train_params {
 	u16 ratecode[SA_NUM_BW];
@@ -709,6 +727,7 @@ struct sa_test_train_params {
 	u16 numpkts;
 	u16 minpkts;
 	u16 per_threshold;
+	u32 extn_train_flags;
 };
 
 #endif /* ATH12K_SA_TEST_H */

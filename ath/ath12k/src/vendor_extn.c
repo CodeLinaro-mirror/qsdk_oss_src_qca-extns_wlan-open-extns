@@ -2665,7 +2665,8 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
                                           u32 value, bool *reload)
 {
 	struct ath12k *ar = arvif->ar;
-        int ret = -1;
+	int ret = -1;
+	bool old_ofdma_val;
 
 	switch (param) {
         case QCA_WLAN_VENDOR_VDEV_PARAM_TEST_RELOAD:
@@ -3465,6 +3466,110 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			arvif->vap_cfg.dis_lpi_ant_optimize = value;
 		} else {
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_DISABLE_LPI_ANT_OPTIMIZATION to firmware");
+		}
+		break;
+	/* Per-VAP EHT OFDMA/TXBF per-link overrides */
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_DL_OFDMA_TXBF:
+		if (arvif->ar && arvif->is_created) {
+			old_ofdma_val = arvif->vap_cfg.eht_dl_ofdma_txbf;
+			arvif->vap_cfg.eht_dl_ofdma_txbf_configured = true;
+			arvif->vap_cfg.eht_dl_ofdma_txbf = !!value;
+			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			if (ret) {
+				arvif->vap_cfg.eht_dl_ofdma_txbf = old_ofdma_val;
+				arvif->vap_cfg.eht_dl_ofdma_txbf_configured = false;
+				ath12k_err(NULL, "Failed to set EHT_DL_OFDMA_TXBF");
+			}
+		} else {
+			arvif->vap_cfg.eht_dl_ofdma_txbf_configured = true;
+			arvif->vap_cfg.eht_dl_ofdma_txbf = !!value;
+			ret = 0;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_DL_OFDMA:
+		if (arvif->ar && arvif->is_created) {
+			old_ofdma_val = arvif->vap_cfg.eht_dl_ofdma;
+			arvif->vap_cfg.eht_dl_ofdma_configured = true;
+			arvif->vap_cfg.eht_dl_ofdma = !!value;
+			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			if (ret) {
+				arvif->vap_cfg.eht_dl_ofdma = old_ofdma_val;
+				arvif->vap_cfg.eht_dl_ofdma_configured = false;
+				ath12k_err(NULL, "Failed to set EHT_DL_OFDMA");
+			}
+		} else {
+			arvif->vap_cfg.eht_dl_ofdma_configured = true;
+			arvif->vap_cfg.eht_dl_ofdma = !!value;
+			ret = 0;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_OFDMA:
+		if (arvif->ar && arvif->is_created) {
+			old_ofdma_val = arvif->vap_cfg.eht_ul_ofdma;
+			arvif->vap_cfg.eht_ul_ofdma_configured = true;
+			arvif->vap_cfg.eht_ul_ofdma = !!value;
+			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			if (ret) {
+				arvif->vap_cfg.eht_ul_ofdma = old_ofdma_val;
+				arvif->vap_cfg.eht_ul_ofdma_configured = false;
+				ath12k_err(NULL, "Failed to set EHT_UL_OFDMA");
+			}
+		} else {
+			arvif->vap_cfg.eht_ul_ofdma_configured = true;
+			arvif->vap_cfg.eht_ul_ofdma = !!value;
+			ret = 0;
+		}
+		break;
+		/* Per-VAP HE OFDMA/TXBF per-link overrides */
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_DL_OFDMA_TXBF:
+		if (arvif->ar && arvif->is_created) {
+			old_ofdma_val = arvif->vap_cfg.he_dl_ofdma_txbf;
+			arvif->vap_cfg.he_dl_ofdma_txbf_configured = true;
+			arvif->vap_cfg.he_dl_ofdma_txbf = !!value;
+			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			if (ret) {
+				arvif->vap_cfg.he_dl_ofdma_txbf = old_ofdma_val;
+				arvif->vap_cfg.he_dl_ofdma_txbf_configured = false;
+				ath12k_err(NULL, "Failed to set HE_DL_OFDMA_TXBF");
+			}
+		} else {
+			arvif->vap_cfg.he_dl_ofdma_txbf_configured = true;
+			arvif->vap_cfg.he_dl_ofdma_txbf = !!value;
+			ret = 0;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_DL_OFDMA:
+		if (arvif->ar && arvif->is_created) {
+			old_ofdma_val = arvif->vap_cfg.he_dl_ofdma;
+			arvif->vap_cfg.he_dl_ofdma_configured = true;
+			arvif->vap_cfg.he_dl_ofdma = !!value;
+			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			if (ret) {
+				arvif->vap_cfg.he_dl_ofdma = old_ofdma_val;
+				arvif->vap_cfg.he_dl_ofdma_configured = false;
+				ath12k_err(NULL, "Failed to set HE_DL_OFDMA");
+			}
+		} else {
+			arvif->vap_cfg.he_dl_ofdma_configured = true;
+			arvif->vap_cfg.he_dl_ofdma = !!value;
+			ret = 0;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_OFDMA:
+		if (arvif->ar && arvif->is_created) {
+			old_ofdma_val = arvif->vap_cfg.he_ul_ofdma;
+			arvif->vap_cfg.he_ul_ofdma_configured = true;
+			arvif->vap_cfg.he_ul_ofdma = !!value;
+			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			if (ret) {
+				arvif->vap_cfg.he_ul_ofdma = old_ofdma_val;
+				arvif->vap_cfg.he_ul_ofdma_configured = false;
+				ath12k_err(NULL, "Failed to set HE_UL_OFDMA");
+			}
+		} else {
+			arvif->vap_cfg.he_ul_ofdma_configured = true;
+			arvif->vap_cfg.he_ul_ofdma = !!value;
+			ret = 0;
 		}
 		break;
 	default:
@@ -10049,13 +10154,78 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_MAXRATE:
 		ret = ath12k_vendor_get_maxrate_vap(arvif, value);
 		break;
-       default:
-                ath12k_dbg(NULL, ATH12K_DBG_CFG,
-                           "Un-supported param: %d\n", param);
-                break;
-        }
+	/* Per-VAP EHT OFDMA/TXBF per-link override read-back.
+	 * If a per-VAP override has been configured, return that value.
+	 * Otherwise fall back to the radio-level setting and log accordingly.
+	 */
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_DL_OFDMA_TXBF:
+		if (arvif->vap_cfg.eht_dl_ofdma_txbf_configured) {
+			*value = arvif->vap_cfg.eht_dl_ofdma_txbf;
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "EHT_DL_OFDMA_TXBF: no per-VAP override, return radio-level \n");
+			*value = ar->eht_dlbf_enabled;
+		}
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_DL_OFDMA:
+		if (arvif->vap_cfg.eht_dl_ofdma_configured) {
+			*value = arvif->vap_cfg.eht_dl_ofdma;
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "EHT_DL_OFDMA: no per-VAP override, return radio-level \n");
+			*value = ar->eht_dl_enabled;
+		}
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_OFDMA:
+		if (arvif->vap_cfg.eht_ul_ofdma_configured) {
+			*value = arvif->vap_cfg.eht_ul_ofdma;
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "EHT_UL_OFDMA: no per-VAP override, return radio-level \n");
+			*value = ar->eht_ul_enabled;
+		}
+		ret = 0;
+		break;
+	/* Per-VAP HE OFDMA/TXBF per-link override read-back */
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_DL_OFDMA_TXBF:
+		if (arvif->vap_cfg.he_dl_ofdma_txbf_configured) {
+			*value = arvif->vap_cfg.he_dl_ofdma_txbf;
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "HE_DL_OFDMA_TXBF: no per-VAP override, return radio-level \n");
+			*value = ar->he_dlbf_enabled;
+		}
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_DL_OFDMA:
+		if (arvif->vap_cfg.he_dl_ofdma_configured) {
+			*value = arvif->vap_cfg.he_dl_ofdma;
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "HE_DL_OFDMA: no per-VAP override, return radio-level \n");
+			*value = ar->he_dl_enabled;
+		}
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HE_UL_OFDMA:
+		if (arvif->vap_cfg.he_ul_ofdma_configured) {
+			*value = arvif->vap_cfg.he_ul_ofdma;
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "HE_UL_OFDMA: no per-VAP override, return radio-level \n");
+			*value = ar->he_ul_enabled;
+		}
+		ret = 0;
+		break;
+	default:
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "Un-supported param: %d\n", param);
+		break;
+	}
 
-        return ret;
+	return ret;
 }
 
 static inline int get_obss_pd_enable_bit(uint32_t threshold,

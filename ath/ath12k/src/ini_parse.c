@@ -4,6 +4,7 @@
  */
 #include "../debug.h"
 #include "ini.h"
+#include <linux/vmalloc.h>
 
 /**
  * ini_file_read() - Function to read the ini file and load it into memory

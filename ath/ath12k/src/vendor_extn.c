@@ -495,9 +495,114 @@ ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1] = {
 		.type = NLA_BINARY, .len = 3 },
 };
 
+/* Maximum byte length of a TCLAS10 filter mask / value blob */
+#define ATH12K_SCS_RULE_TCLAS10_FILTER_LEN_MAX	16
+/* Byte length of an IPv6 flow label (3 octets per IEEE 802.11) */
+#define ATH12K_SCS_RULE_TCLAS4_FLOW_LABEL_LEN	3
+
+/**
+ * struct ath12k_scs_rule_config_params - Parsed SCS rule configuration
+ *
+ * Carries all attributes from a %QCA_NL80211_VENDOR_SUBCMD_SCS_RULE_CONFIG
+ * vendor command, as parsed by ath12k_vendor_rule_config_notify(), for
+ * forwarding to userspace via ath12k_vendor_send_rule_config_notify().
+ *
+ * @mac_addr: Destination MAC address (mandatory).
+ * @rule_id: SCS rule identifier.
+ * @request_type: Add/remove/change request type.
+ * @output_tid: Output TID for the classified flow.
+ * @classifier_type: TCLAS classifier type (4 or 10).
+ * @tclas4_version: IP version for TCLAS type 4.
+ * @tclas4_src_ipv4: Source IPv4 address (4 bytes).
+ * @tclas4_dst_ipv4: Destination IPv4 address (4 bytes).
+ * @tclas4_src_ipv6: Source IPv6 address (16 bytes).
+ * @tclas4_dst_ipv6: Destination IPv6 address (16 bytes).
+ * @tclas4_src_port: Source UDP/TCP port.
+ * @tclas4_dst_port: Destination UDP/TCP port.
+ * @tclas4_dscp: DSCP value.
+ * @tclas4_next_header: Next-header / protocol field.
+ * @tclas4_flow_label: IPv6 flow label (3 bytes).
+ * @tclas10_protocol_instance: TCLAS10 protocol instance.
+ * @tclas10_next_header: TCLAS10 next-header field.
+ * @tclas10_filter_mask: TCLAS10 filter mask blob.
+ * @tclas10_filter_value: TCLAS10 filter value blob.
+ * @tclas10_filter_len: Byte length of the TCLAS10 filter blobs.
+ * @service_class_id: Service class identifier.
+ * @netdev_if_index: Network device interface index.
+ * @present: Bitmask; bit N is set when attribute N was present in the command.
+ */
+struct ath12k_scs_rule_config_params {
+	u8  mac_addr[ETH_ALEN];
+	u8  rule_id;
+	u8  request_type;
+	u8  output_tid;
+	u8  classifier_type;
+	u8  tclas4_version;
+	u8  tclas4_src_ipv4[4];
+	u8  tclas4_dst_ipv4[4];
+	u8  tclas4_src_ipv6[16];
+	u8  tclas4_dst_ipv6[16];
+	u16 tclas4_src_port;
+	u16 tclas4_dst_port;
+	u8  tclas4_dscp;
+	u8  tclas4_next_header;
+	u8  tclas4_flow_label[ATH12K_SCS_RULE_TCLAS4_FLOW_LABEL_LEN];
+	u8  tclas10_protocol_instance;
+	u8  tclas10_next_header;
+	u8  tclas10_filter_mask[ATH12K_SCS_RULE_TCLAS10_FILTER_LEN_MAX];
+	u8  tclas10_filter_value[ATH12K_SCS_RULE_TCLAS10_FILTER_LEN_MAX];
+	u8  tclas10_filter_len;
+	u8  service_class_id;
+	u32 netdev_if_index;
+	u32 present;
+};
+
 const struct nla_policy
 ath12k_rule_config_policy[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1] = {
-	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] = NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_RULE_ID] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_REQUEST_TYPE] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_OUTPUT_TID] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_CLASSIFIER_TYPE] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_VERSION] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV4_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(4),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV4_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(4),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV6_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(16),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV6_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(16),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_PORT] =
+		{ .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_PORT] =
+		{ .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DSCP] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_NEXT_HEADER] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_FLOW_LABEL] =
+		NLA_POLICY_EXACT_LEN_WARN(ATH12K_SCS_RULE_TCLAS4_FLOW_LABEL_LEN),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_PROTOCOL_INSTANCE] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_NEXT_HEADER] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_MASK] =
+		{ .type = NLA_BINARY,
+		  .len  = ATH12K_SCS_RULE_TCLAS10_FILTER_LEN_MAX },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_VALUE] =
+		{ .type = NLA_BINARY,
+		  .len  = ATH12K_SCS_RULE_TCLAS10_FILTER_LEN_MAX },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_SERVICE_CLASS_ID] =
+		{ .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(ETH_ALEN),
+	[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX] =
+		{ .type = NLA_U32 },
 };
 
 const struct nla_policy
@@ -1154,11 +1259,23 @@ static int ath12k_vendor_resolve_nol_path_from_data_extn(const void *data,
 							 char **path);
 static int ath12k_vendor_reply_u32_extn(struct wiphy *wiphy, u32 value);
 
+/**
+ * ath12k_vendor_send_rule_config_notify() - Send SCS rule config vendor event
+ * @vif: Virtual interface associated with the BSS.
+ * @params: Fully populated SCS rule configuration parameters.
+ *
+ * Allocates a vendor event SKB and populates it with every attribute that
+ * was marked present in @params->present, then dispatches the event to
+ * userspace via cfg80211_vendor_event().
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
 int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
-					   u8 *mac_addr)
+					  const struct ath12k_scs_rule_config_params *params)
 {
 	struct wireless_dev *wdev;
 	struct sk_buff *skb;
+	u32 attr_mask;
 
 	wdev = ieee80211_vif_to_wdev(vif);
 	if (!wdev)
@@ -1171,48 +1288,324 @@ int ath12k_vendor_send_rule_config_notify(struct ieee80211_vif *vif,
 	if (!skb)
 		return -ENOMEM;
 
-	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR,
-		    ETH_ALEN, mac_addr)) {
-		kfree(skb);
-		return -ENOBUFS;
-	}
+	attr_mask = params->present;
 
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR,
+		    ETH_ALEN, params->mac_addr))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_RULE_ID)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_RULE_ID,
+		       params->rule_id))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_REQUEST_TYPE)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_REQUEST_TYPE,
+		       params->request_type))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_OUTPUT_TID)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_OUTPUT_TID,
+		       params->output_tid))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_CLASSIFIER_TYPE)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_CLASSIFIER_TYPE,
+		       params->classifier_type))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_VERSION)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_VERSION,
+		       params->tclas4_version))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV4_ADDR)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV4_ADDR,
+		    sizeof(params->tclas4_src_ipv4), params->tclas4_src_ipv4))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV4_ADDR)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV4_ADDR,
+		    sizeof(params->tclas4_dst_ipv4), params->tclas4_dst_ipv4))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV6_ADDR)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV6_ADDR,
+		    sizeof(params->tclas4_src_ipv6), params->tclas4_src_ipv6))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV6_ADDR)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV6_ADDR,
+		    sizeof(params->tclas4_dst_ipv6), params->tclas4_dst_ipv6))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_PORT)) &&
+	    nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_PORT,
+			params->tclas4_src_port))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_PORT)) &&
+	    nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_PORT,
+			params->tclas4_dst_port))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DSCP)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DSCP,
+		       params->tclas4_dscp))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_NEXT_HEADER)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_NEXT_HEADER,
+		       params->tclas4_next_header))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_FLOW_LABEL)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_FLOW_LABEL,
+		    sizeof(params->tclas4_flow_label), params->tclas4_flow_label))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_PROTOCOL_INSTANCE)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_PROTOCOL_INSTANCE,
+		       params->tclas10_protocol_instance))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_NEXT_HEADER)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_NEXT_HEADER,
+		       params->tclas10_next_header))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_MASK)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_MASK,
+		    params->tclas10_filter_len, params->tclas10_filter_mask))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_VALUE)) &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_VALUE,
+		    params->tclas10_filter_len, params->tclas10_filter_value))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_SERVICE_CLASS_ID)) &&
+	    nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_SERVICE_CLASS_ID,
+		       params->service_class_id))
+		goto nla_fail;
+
+	if ((attr_mask & BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX)) &&
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX,
+			params->netdev_if_index))
+		goto nla_fail;
+
+	ath12k_dbg(NULL, ATH12K_DBG_QOS,
+		   "scs rule config notify: mac=%pM attr_mask=0x%x rule_id=%u req_type=%u tid=%u cls_type=%u svc_cls=%u ifidx=%u tclas4[ver=%u sport=%u dport=%u dscp=%u nhdr=%u src=%pI4 dst=%pI4 src6=%pI6 dst6=%pI6 flow=%3ph] tclas10[inst=%u nhdr=%u flen=%u mask=%*ph val=%*ph]",
+		   params->mac_addr, attr_mask,
+		   params->rule_id, params->request_type, params->output_tid,
+		   params->classifier_type, params->service_class_id, params->netdev_if_index,
+		   params->tclas4_version, params->tclas4_src_port, params->tclas4_dst_port,
+		   params->tclas4_dscp, params->tclas4_next_header,
+		   params->tclas4_src_ipv4, params->tclas4_dst_ipv4,
+		   params->tclas4_src_ipv6, params->tclas4_dst_ipv6,
+		   params->tclas4_flow_label,
+		   params->tclas10_protocol_instance, params->tclas10_next_header,
+		   params->tclas10_filter_len,
+		   params->tclas10_filter_len, params->tclas10_filter_mask,
+		   params->tclas10_filter_len, params->tclas10_filter_value);
 	cfg80211_vendor_event(skb, GFP_ATOMIC);
-	ath12k_dbg(NULL, ATH12K_DBG_MAC, "rule config notify %pM", mac_addr);
 	return 0;
+
+nla_fail:
+	kfree_skb(skb);
+	return -ENOBUFS;
 }
 
 int ath12k_vendor_rule_config_notify(struct wiphy *wiphy,
-				      struct wireless_dev *wdev,
-				      const void *data,
-				      int data_len)
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
 {
 	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
-	u8 mac_addr[ETH_ALEN] = {0};
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX + 1];
+	struct ath12k_scs_rule_config_params params = {};
+	struct nlattr *mask_attr, *val_attr;
+	int flen;
 	int ret;
 
 	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX, data,
 			data_len, ath12k_rule_config_policy, NULL);
 	if (ret) {
-		ath12k_err(NULL, "Invalid attribute in rule config notify %d\n", ret);
+		ath12k_err(NULL,
+			   "Invalid attribute in rule config notify %d\n", ret);
 		return ret;
 	}
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] &&
-	    (nla_len(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR])
-	     == ETH_ALEN)) {
-		memcpy(mac_addr,
-		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR]),
-		       ETH_ALEN);
-	} else {
+	/* Mandatory: destination MAC address */
+	if (!tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR] ||
+	    nla_len(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR]) !=
+	    ETH_ALEN) {
 		ath12k_err(NULL, "Invalid MAC address in rule config notify\n");
 		return -EINVAL;
 	}
+	memcpy(params.mac_addr,
+	       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR]),
+	       ETH_ALEN);
 
-	ath12k_vendor_send_rule_config_notify(vif, mac_addr);
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_RULE_ID]) {
+		params.rule_id =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_RULE_ID]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_RULE_ID);
+	}
 
-	ath12k_info(NULL, "scs rule config mac addr : %pM\n", mac_addr);
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_REQUEST_TYPE]) {
+		params.request_type =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_REQUEST_TYPE]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_REQUEST_TYPE);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_OUTPUT_TID]) {
+		params.output_tid =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_OUTPUT_TID]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_OUTPUT_TID);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_CLASSIFIER_TYPE]) {
+		params.classifier_type =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_CLASSIFIER_TYPE]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_CLASSIFIER_TYPE);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_VERSION]) {
+		params.tclas4_version =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_VERSION]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_VERSION);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV4_ADDR]) {
+		memcpy(params.tclas4_src_ipv4,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV4_ADDR]),
+		       sizeof(params.tclas4_src_ipv4));
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV4_ADDR);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV4_ADDR]) {
+		memcpy(params.tclas4_dst_ipv4,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV4_ADDR]),
+		       sizeof(params.tclas4_dst_ipv4));
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV4_ADDR);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV6_ADDR]) {
+		memcpy(params.tclas4_src_ipv6,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV6_ADDR]),
+		       sizeof(params.tclas4_src_ipv6));
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_IPV6_ADDR);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV6_ADDR]) {
+		memcpy(params.tclas4_dst_ipv6,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV6_ADDR]),
+		       sizeof(params.tclas4_dst_ipv6));
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_IPV6_ADDR);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_PORT]) {
+		params.tclas4_src_port =
+			nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_PORT]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_SRC_PORT);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_PORT]) {
+		params.tclas4_dst_port =
+			nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_PORT]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DST_PORT);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DSCP]) {
+		params.tclas4_dscp =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DSCP]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_DSCP);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_NEXT_HEADER]) {
+		params.tclas4_next_header =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_NEXT_HEADER]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_NEXT_HEADER);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_FLOW_LABEL]) {
+		memcpy(params.tclas4_flow_label,
+		       nla_data(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_FLOW_LABEL]),
+		       sizeof(params.tclas4_flow_label));
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS4_FLOW_LABEL);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_PROTOCOL_INSTANCE]) {
+		params.tclas10_protocol_instance =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_PROTOCOL_INSTANCE]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_PROTOCOL_INSTANCE);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_NEXT_HEADER]) {
+		params.tclas10_next_header =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_NEXT_HEADER]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_NEXT_HEADER);
+	}
+
+	/* Variable-length TCLAS10 filter blobs: mask and value must match */
+	mask_attr = tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_MASK];
+	val_attr  = tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_VALUE];
+	if (mask_attr && val_attr) {
+		flen = nla_len(mask_attr);
+		if (flen == nla_len(val_attr) &&
+		    flen <= ATH12K_SCS_RULE_TCLAS10_FILTER_LEN_MAX) {
+			params.tclas10_filter_len = flen;
+			memcpy(params.tclas10_filter_mask,
+			       nla_data(mask_attr), flen);
+			memcpy(params.tclas10_filter_value,
+			       nla_data(val_attr), flen);
+			params.present |=
+				BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_MASK) |
+				BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_TCLAS10_FILTER_VALUE);
+		} else {
+			ath12k_err(NULL,
+				    "SCS rule config: TCLAS10 filter length mismatch or overflow (%d)\n",
+				    flen);
+		}
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_SERVICE_CLASS_ID]) {
+		params.service_class_id =
+			nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_SERVICE_CLASS_ID]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_SERVICE_CLASS_ID);
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX]) {
+		params.netdev_if_index =
+			nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX]);
+		params.present |=
+			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX);
+	}
+
+	ath12k_vendor_send_rule_config_notify(vif, &params);
+
+	ath12k_info(NULL,
+		    "scs rule config notify: mac=%pM rule_id=%u req_type=%u tid=%u\n",
+		    params.mac_addr, params.rule_id,
+		    params.request_type, params.output_tid);
 
 	return 0;
 }

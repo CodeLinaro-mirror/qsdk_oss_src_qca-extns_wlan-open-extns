@@ -19,6 +19,12 @@ int ath12k_dp_ipa_hw_group_init(struct ath12k_base *ab,
 				struct ath12k_dp_hw_group *dp_hw_grp);
 
 void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp);
+
+
+u32 ath12k_dp_ipa_arch_op_rx_default_routing(struct ath12k_base *ab,
+					     u32 reo_dest);
+
+int ath12k_dp_ipa_init(struct ath12k_base *ab);
 #else
 static inline void
 ath12k_dp_ipa_peer_notify(struct ath12k *ar,
@@ -44,5 +50,16 @@ ath12k_dp_ipa_hw_group_init(struct ath12k_base *ab,
 static inline void
 ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp)
 {
+}
+static inline u32
+ath12k_dp_ipa_arch_op_rx_default_routing(struct ath12k_base *ab, u32 reo_dest)
+{
+	return reo_dest;
+}
+
+static inline int
+ath12k_dp_ipa_init(struct ath12k_base *ab)
+{
+	return 0;
 }
 #endif /* CPTCFG_EXT_IPA_OFFLOAD */

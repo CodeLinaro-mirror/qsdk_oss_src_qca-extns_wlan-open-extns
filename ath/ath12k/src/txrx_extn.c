@@ -13,6 +13,7 @@
 #include "../mac.h"
 #include "../wmi.h"
 #include "../debug.h"
+#include "../debugfs.h"
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
 
@@ -1524,6 +1525,172 @@ static int ath12k_convert_app_band_to_nl80211(int app_band)
 	}
 }
 
+static void ath12k_gpr_timer_handler(struct timer_list *t);
+static void ath12k_gpr_work_handler(struct work_struct *work);
+
+/**
+ * ath12k_gpr_arvif_init - Initialise GPR timer for a link VIF
+ * @arvif: link VIF to initialise
+ *
+ * Called once per arvif at creation time.
+ */
+void ath12k_gpr_arvif_init(struct ath12k_link_vif *arvif)
+{
+	timer_setup(&arvif->arvif_extn.gpr_timer,
+		    ath12k_gpr_timer_handler, 0);
+	INIT_WORK(&arvif->arvif_extn.gpr_work, ath12k_gpr_work_handler);
+	arvif->arvif_extn.gpr_timer_enabled = true;
+}
+
+/**
+ * ath12k_gpr_arvif_deinit - Clean up GPR state for a link VIF
+ * @arvif: link VIF to clean up
+ *
+ * Cancels the periodic timer and frees any stored GPR frame.
+ * Called at arvif teardown.
+ */
+void ath12k_gpr_arvif_deinit(struct ath12k_link_vif *arvif)
+{
+	del_timer_sync(&arvif->arvif_extn.gpr_timer);
+	cancel_work_sync(&arvif->arvif_extn.gpr_work);
+	if (arvif->arvif_extn.gpr_frame) {
+		dev_kfree_skb_any(arvif->arvif_extn.gpr_frame);
+		arvif->arvif_extn.gpr_frame = NULL;
+	}
+}
+
+/**
+ * ath12k_gpr_tx - Transmit a stored GPR frame on the home channel
+ * @arvif: link VIF on which to transmit
+ *
+ * Clones the frame stored in arvif->arvif_extn.gpr_frame, sets up the
+ * skb control block for home-channel management TX, populates raw_pkt_ctx
+ * minimally, calls ath12k_custom_tx_extn(), and releases the mutex
+ * immediately - no completion event is awaited (fire-and-forget).
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ath12k_gpr_tx(struct ath12k_link_vif *arvif)
+{
+	struct ath12k *ar = arvif->ar;
+	struct ath12k_raw_pkt_ctx *raw_pkt_ctx = &ar->ar_extn.raw_pkt_ctx;
+	struct ieee80211_vif *vif = arvif->ahvif ? arvif->ahvif->vif : NULL;
+	struct sk_buff *skb;
+	struct ieee80211_tx_info *info;
+	struct ath12k_skb_cb *skb_cb;
+	int ret;
+
+	if (!vif) {
+		ath12k_err(ar->ab, "GPR TX: no vif on arvif\n");
+		return -EINVAL;
+	}
+
+	if (!arvif->arvif_extn.gpr_frame) {
+		ath12k_err(ar->ab, "GPR TX: no frame stored\n");
+		return -ENODATA;
+	}
+
+	/* Clone the stored frame so the original is preserved for future calls */
+	skb = skb_copy(arvif->arvif_extn.gpr_frame, GFP_ATOMIC);
+	if (!skb) {
+		ath12k_err(ar->ab, "GPR TX: skb_copy failed\n");
+		return -ENOMEM;
+	}
+
+	info = IEEE80211_SKB_CB(skb);
+	skb_cb = ATH12K_SKB_CB(skb);
+	memset(skb_cb, 0, sizeof(*skb_cb));
+
+	skb_cb->vif = vif;
+	skb_cb->u.ar = ar;
+	skb_cb->link_id = arvif->link_id;
+	/* GPR always transmits on the home channel */
+	skb_cb->flags |= ATH12K_SKB_CUSTOM_MGMT_TX;
+	info->control.vif = vif;
+
+	ret = ath12k_fill_tx_param(skb,
+				   arvif->arvif_extn.gpr_nss,
+				   arvif->arvif_extn.gpr_preamble,
+				   arvif->arvif_extn.gpr_mcs,
+				   0 /* retry */, 0 /* power */, 0 /* tx_bf */,
+				   BAND_DEFAULT);
+	if (ret) {
+		ath12k_err(ar->ab, "GPR TX: ath12k_fill_tx_param failed: %d\n", ret);
+		dev_kfree_skb_any(skb);
+		return ret;
+	}
+
+	/* Populate raw_pkt_ctx minimally for home-channel single-frame TX.
+	 * Called from process context (workqueue) so mutex_trylock is safe;
+	 * skip this TX cycle if another operation holds the mutex.
+	 */
+	if (!mutex_trylock(&raw_pkt_ctx->raw_ctx_mutex)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "GPR TX: mutex busy, skipping this cycle\n");
+		dev_kfree_skb_any(skb);
+		return -EBUSY;
+	}
+
+	spin_lock_bh(&raw_pkt_ctx->chan_lock);
+	raw_pkt_ctx->vif = vif;
+	raw_pkt_ctx->func_type = QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_GPR;
+	raw_pkt_ctx->home_chan = true;
+	raw_pkt_ctx->num_frames = 1;
+	raw_pkt_ctx->link_id = arvif->link_id;
+	atomic_set(&raw_pkt_ctx->num_cmpl_pending, 1);
+	skb_queue_tail(&raw_pkt_ctx->pkt_list, skb);
+	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+
+	ret = ath12k_custom_tx_extn(raw_pkt_ctx);
+	if (ret)
+		ath12k_err(ar->ab, "GPR TX: ath12k_custom_tx_extn failed: %d\n", ret);
+
+	/* Fire-and-forget: release mutex immediately, no completion event needed */
+	mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
+
+	return ret;
+}
+
+
+/**
+ * ath12k_gpr_timer_handler - Periodic timer callback for GPR transmission
+ * @t: timer_list embedded in ath12k_link_vif_extn
+ *
+ * Called every gpr_period ms in softirq context.  Re-arms the timer for
+ * the next period BEFORE scheduling the TX work, so the period is measured
+ * from timer-fire to timer-fire rather than from TX-completion to
+ * TX-completion.
+ *
+ */
+static void ath12k_gpr_timer_handler(struct timer_list *t)
+{
+	struct ath12k_link_vif_extn *extn =
+		from_timer(extn, t, gpr_timer);
+	struct ath12k_link_vif *arvif =
+		container_of(extn, struct ath12k_link_vif, arvif_extn);
+
+
+	if (!extn->gpr_timer_enabled)
+		return;
+
+	if (extn->gpr_period)
+		mod_timer(&arvif->arvif_extn.gpr_timer,
+			  jiffies + msecs_to_jiffies(extn->gpr_period));
+
+	/* Defer actual TX to process context */
+	schedule_work(&arvif->arvif_extn.gpr_work);
+}
+
+static void ath12k_gpr_work_handler(struct work_struct *work)
+{
+	struct ath12k_link_vif_extn *extn =
+		container_of(work, struct ath12k_link_vif_extn, gpr_work);
+	struct ath12k_link_vif *arvif =
+		container_of(extn, struct ath12k_link_vif, arvif_extn);
+
+	ath12k_gpr_tx(arvif);
+}
+
 int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 					      struct wireless_dev *wdev,
 					      const void *data,
@@ -1578,6 +1745,142 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 	}
 
 	freq = ieee80211_channel_to_frequency(chan, nl80211_band);
+	/* Handle GPR function - store frame in the arvif for later use */
+	if (func == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_GPR) {
+		struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+		struct ath12k_hw *ah;
+		struct ieee80211_vif *vif;
+		struct ath12k_vif *ahvif;
+		struct ath12k_link_vif *arvif;
+		struct nlattr *offchan_frame;
+		struct nlattr *frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX + 1];
+		const u8 *buf;
+		int buf_len;
+		struct sk_buff *skb;
+		u8 effective_link_id;
+		u8 nss = 0, preamble = 0, mcs = 0;
+
+		ah = ath12k_hw_to_ah(hw);
+		if (!ah) {
+			ath12k_err(NULL, "GPR: Failed to get ah from wiphy\n");
+			return -ENODEV;
+		}
+
+		vif = wdev_to_ieee80211_vif(wdev);
+		if (!vif) {
+			ath12k_err(NULL, "GPR: Failed to get vif from wdev\n");
+			return -ENODEV;
+		}
+
+		ahvif = ath12k_vif_to_ahvif(vif);
+		if (!ahvif) {
+			ath12k_err(NULL, "GPR: Failed to get ahvif from vif\n");
+			return -ENODEV;
+		}
+
+		if (link_id != INVALID_LINK_ID && link_id >= ATH12K_NUM_MAX_LINKS) {
+			ath12k_err(NULL, "GPR: Invalid link_id %u\n", link_id);
+			return -EINVAL;
+		}
+
+		if (!tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME]) {
+			ath12k_err(NULL, "GPR: Frame attribute missing\n");
+			return -EINVAL;
+		}
+
+		offchan_frame = tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME];
+
+		/* Parse the single nested frame entry (num_frames == 1) */
+		{
+			struct nlattr *frame;
+			int rem;
+
+			buf = NULL;
+			buf_len = 0;
+			nla_for_each_nested(frame, offchan_frame, rem) {
+				ret = nla_parse_nested(frame_tb,
+						       QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX,
+						       frame,
+						       ath12k_vendor_home_offchan_tx_rx_frame_policy,
+						       NULL);
+				if (ret) {
+					ath12k_err(NULL, "GPR: Failed to parse frame: %d\n", ret);
+					return ret;
+				}
+				if (!frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]) {
+					ath12k_err(NULL, "GPR: Frame data missing\n");
+					return -EINVAL;
+				}
+				buf = nla_data(frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]);
+				buf_len = nla_len(frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_DATA]);
+				if (frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_NSS])
+					nss = nla_get_u8(frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_NSS]);
+				if (frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_PREAMBLE])
+					preamble = nla_get_u8(frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_PREAMBLE]);
+				if (frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MCS])
+					mcs = nla_get_u8(frame_tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MCS]);
+				break; /* Only one frame expected */
+			}
+		}
+
+		if (!buf || !buf_len) {
+			ath12k_err(NULL, "GPR: No valid frame data found\n");
+			return -EINVAL;
+		}
+
+		rcu_read_lock();
+
+		effective_link_id = (link_id == INVALID_LINK_ID || !ieee80211_vif_is_mld(vif))
+					? 0 : link_id;
+
+		if (effective_link_id == 0) {
+			arvif = &ahvif->deflink;
+		} else {
+			arvif = rcu_dereference(ahvif->link[effective_link_id]);
+		}
+
+		if (!arvif || !arvif->ar) {
+			rcu_read_unlock();
+			ath12k_err(NULL, "GPR: Failed to get arvif for link_id %u\n",
+				   effective_link_id);
+			return -EINVAL;
+		}
+
+		rcu_read_unlock();
+
+		skb = dev_alloc_skb(buf_len);
+		if (!skb) {
+			ath12k_err(arvif->ar->ab, "GPR: Failed to allocate skb\n");
+			return -ENOMEM;
+		}
+		skb_put_data(skb, buf, buf_len);
+
+		/* Free any previously stored GPR frame before replacing */
+		if (arvif->arvif_extn.gpr_frame) {
+			dev_kfree_skb_any(arvif->arvif_extn.gpr_frame);
+			arvif->arvif_extn.gpr_frame = NULL;
+		}
+
+		arvif->arvif_extn.gpr_frame = skb;
+		/* period is carried via SCAN_DUR in the NL message for GPR */
+		arvif->arvif_extn.gpr_period = scan_dur;
+		arvif->arvif_extn.gpr_nss = nss;
+		arvif->arvif_extn.gpr_preamble = preamble;
+		arvif->arvif_extn.gpr_mcs = mcs;
+
+		ath12k_info(arvif->ar->ab,
+			    "GPR params: period=%u nss=%u preamble=%u mcs=%u link_id=%u\n",
+			    scan_dur, nss, preamble, mcs, effective_link_id);
+		ath12k_info(arvif->ar->ab,
+			    "GPR frame: len=%d\n", buf_len);
+		print_hex_dump(KERN_INFO, "GPR pkt: ", DUMP_PREFIX_OFFSET,
+			       16, 1, skb->data, buf_len, true);
+
+		/* Start the periodic GPR timer if enabled; first TX fires immediately */
+		if (arvif->arvif_extn.gpr_timer_enabled)
+			mod_timer(&arvif->arvif_extn.gpr_timer, jiffies);
+		return 0;
+	}
 
 	/* Handle CANCEL function - doesn't need frame data */
 	if (func == QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_CANCEL) {
@@ -1857,4 +2160,64 @@ int schedule_home_offchan_stats_event_ext(struct wireless_dev *wdev, u32 transac
 	schedule_work(&work->work);
 
 	return 0;
+}
+
+static ssize_t ath12k_write_gpr_timer(struct file *file,
+				      const char __user *user_buf,
+				      size_t count, loff_t *ppos)
+{
+	struct ath12k_link_vif *arvif = file->private_data;
+	bool enable;
+
+	if (kstrtobool_from_user(user_buf, count, &enable))
+		return -EINVAL;
+
+	if (arvif->arvif_extn.gpr_timer_enabled == enable)
+		return count;
+
+	arvif->arvif_extn.gpr_timer_enabled = enable;
+
+	if (enable) {
+		/* Re-start timer only if a GPR frame has been configured */
+		if (arvif->arvif_extn.gpr_frame && arvif->arvif_extn.gpr_period)
+			mod_timer(&arvif->arvif_extn.gpr_timer, jiffies);
+	} else {
+		del_timer_sync(&arvif->arvif_extn.gpr_timer);
+		cancel_work_sync(&arvif->arvif_extn.gpr_work);
+	}
+
+	return count;
+}
+
+static ssize_t ath12k_read_gpr_timer(struct file *file,
+				     char __user *user_buf,
+				     size_t count, loff_t *ppos)
+{
+	struct ath12k_link_vif *arvif = file->private_data;
+	char buf[ATH12K_BUF_SIZE_32];
+	size_t len;
+
+	len = scnprintf(buf, sizeof(buf), "%u\n",
+			arvif->arvif_extn.gpr_timer_enabled);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+}
+
+static const struct file_operations ath12k_fops_gpr_timer = {
+	.open  = simple_open,
+	.write = ath12k_write_gpr_timer,
+	.read  = ath12k_read_gpr_timer,
+};
+
+/**
+ * ath12k_gpr_debugfs_register_extn - Create GPR timer debugfs entry for a link VIF
+ * @arvif: link VIF for which to create the entry
+ * @link_debugfs: parent debugfs directory (vif->link_debugfs[link_id])
+ */
+void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
+				      struct dentry *link_debugfs)
+{
+	arvif->arvif_extn.debugfs_gpr_timer =
+		debugfs_create_file("gpr_timer", 0644, link_debugfs,
+				    arvif, &ath12k_fops_gpr_timer);
 }

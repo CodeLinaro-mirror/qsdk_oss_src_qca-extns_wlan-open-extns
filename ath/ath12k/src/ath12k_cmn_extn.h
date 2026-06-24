@@ -102,6 +102,22 @@ struct ath12k_link_vif_extn {
 #ifdef CPTCFG_EXT_IPA_STATS
 	struct ath12k_dp_ipa_stats_vif_hw_stats *stats;
 #endif
+	/* GPR frame buffer and TX params for GPR transmission.
+	 * period reuses SCAN_DUR from the NL message as the carrier.
+	 */
+	struct sk_buff *gpr_frame;
+	u32 gpr_period;
+	u8 gpr_nss;
+	u8 gpr_preamble;
+	u8 gpr_mcs;
+	/* Periodic timer that fires every gpr_period ms to retransmit gpr_frame */
+	struct timer_list gpr_timer;
+	/* Runtime enable/disable flag controlled via debugfs */
+	bool gpr_timer_enabled;
+	/* Work item that performs the actual GPR TX in process context */
+	struct work_struct gpr_work;
+	/* debugfs entry for the gpr_timer enable/disable knob */
+	struct dentry *debugfs_gpr_timer;
 };
 
 struct sta_240mhz_info {
@@ -560,11 +576,22 @@ static inline void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab)
 	return;
 }
 
-static inline void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
+static inline void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
+					      struct ath12k_link_vif *arvif)
 {
 	return;
 }
 
+static inline void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
+{
+	return;
+}
+
+static inline void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
+						     struct dentry *link_debugfs)
+{
+	return;
+}
 static inline void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
 {
 	return;
@@ -1027,7 +1054,14 @@ void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
 
 void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
 
-void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif);
+
+void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
+				struct ath12k_link_vif *arvif);
+void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif);
+void ath12k_gpr_arvif_init(struct ath12k_link_vif *arvif);
+void ath12k_gpr_arvif_deinit(struct ath12k_link_vif *arvif);
+void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
+				      struct dentry *link_debugfs);
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif);
 
 const void **ath12k_wmi_tlv_parse_alloc(struct ath12k_base *ab,

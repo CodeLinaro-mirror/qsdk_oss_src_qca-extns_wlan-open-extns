@@ -102,6 +102,7 @@ struct ipa_header {
 #define ATH12K_IPA_SESSION_ID_SHIFT			1
 #define MAX_IPA_RX_FREE_DESC				64
 #define ATH12K_IPA_WDI3					3
+#define ATH12K_IPA_WDI_VER_INVALID			0xFF
 
 #define ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, mask) \
 	(((ipa_cfg)->ipa_config & (mask)) == (mask))
@@ -287,6 +288,9 @@ struct ath12k_ipa_arch_ops {
 	void (*ipa_set_tx_doorbell_paddr)(struct ath12k_ipa *ipa_ctx);
 	void (*ipa_tx_comp_ring_init_hp)(struct ath12k_ipa *ipa_ctx);
 	int (*ipa_tx_buffer_attach)(struct ath12k_base *ab);
+	void (*dp_rx_pipe_set_rdi)(struct ath12k_ipa *ipa_ctx,
+				   struct ipa_wdi_pipe_setup_info_smmu *rx_smmu);
+	u8 (*ipa_get_wdi_version)(void);
 };
 
 struct ath12k_ipa_mac_addr {
@@ -1014,6 +1018,23 @@ ath12k_dp_ipa_arch_op_tx_buffer_attach(struct ath12k_base *ab)
 		return ipa_ctx->arch_ops->ipa_tx_buffer_attach(ab);
 
 	return 0;
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_rx_pipe_set_rdi(struct ath12k_ipa *ipa_ctx,
+				      struct ipa_wdi_pipe_setup_info_smmu *rx_smmu)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_rx_pipe_set_rdi)
+		ipa_ctx->arch_ops->dp_rx_pipe_set_rdi(ipa_ctx, rx_smmu);
+}
+
+static inline u8
+ath12k_dp_ipa_arch_op_get_wdi_version(struct ath12k_ipa *ipa_ctx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_get_wdi_version)
+		return ipa_ctx->arch_ops->ipa_get_wdi_version();
+
+	return ATH12K_IPA_WDI_VER_INVALID;
 }
 
 #ifndef ETH_P_WAPI

@@ -14,6 +14,11 @@
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 #include "../../dp.h"
 
+static u8 ath12k_wifi7_dp_ipa_get_wdi_version(void)
+{
+	return IPA_WDI_4;
+}
+
 static int ath12k_wifi7_dp_ipa_setup_rx_refill_buf_ring(struct ath12k_base *ab)
 {
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
@@ -512,6 +517,8 @@ static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.ipa_set_tx_doorbell_paddr = ath12k_wifi7_dp_ipa_set_tx_doorbell_paddr,
 	.ipa_tx_comp_ring_init_hp = ath12k_wifi7_dp_ipa_tx_comp_ring_init_hp,
 	.ipa_tx_buffer_attach = ath12k_wifi7_dp_ipa_tx_buffer_attach,
+	.dp_rx_pipe_set_rdi = NULL,
+	.ipa_get_wdi_version = ath12k_wifi7_dp_ipa_get_wdi_version,
 };
 
 int

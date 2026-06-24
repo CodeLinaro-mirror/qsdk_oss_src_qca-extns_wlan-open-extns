@@ -11,6 +11,18 @@
 #include "../../dp_tx.h"
 #include "../../hal.h"
 
+static u8 ath12k_wifi8_dp_ipa_get_wdi_version(void)
+{
+	return IPA_WDI_6;
+}
+
+static void
+ath12k_wifi8_dp_ipa_rx_pipe_set_rdi(struct ath12k_ipa *ipa_ctx,
+				    struct ipa_wdi_pipe_setup_info_smmu *rx_smmu)
+{
+	rx_smmu->rdi = ATH12K_DP_WIFI8_REO2SW5_RDI;
+}
+
 static void ath12k_wifi8_dp_ipa_srng_get_rsrc(struct ath12k_base *ab)
 {
 	/* TODO: fill rx_rsc and tx_rsc from here */
@@ -79,6 +91,8 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_set_tx_doorbell_paddr = ath12k_wifi8_dp_ipa_set_tx_doorbell_paddr,
 	.ipa_tx_comp_ring_init_hp = ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp,
 	.ipa_tx_buffer_attach = NULL,
+	.dp_rx_pipe_set_rdi = ath12k_wifi8_dp_ipa_rx_pipe_set_rdi,
+	.ipa_get_wdi_version = ath12k_wifi8_dp_ipa_get_wdi_version,
 };
 
 int

@@ -11,6 +11,7 @@
 #ifdef CPTCFG_EXT_IPA_STATS
 #include "dp_ipa_stats.h"
 #endif
+#include <linux/ipa_wdi3.h>
 
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 
@@ -860,7 +861,7 @@ int ath12k_dp_ipa_obj_setup(struct ath12k_ipa *ipa_ctx)
 	ipa_ctx->num_iface = 0;
 	/*TODO: set the right ipa config which we get from ini */
 	ipa_ctx->config = g_ipa_config;
-	ipa_ctx->wdi_version = IPA_WDI_4;
+	ipa_ctx->wdi_version = ath12k_dp_ipa_arch_op_get_wdi_version(ipa_ctx);
 
 	/* Create the interface context */
 	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
@@ -1103,6 +1104,8 @@ ath12k_dp_ipa_wdi_rx_smmu_params(struct ath12k_ipa *ipa_ctx,
 			ipa_ctx->ab->device_id;
 	else
 		((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->mlo_chip_id = 0xFF;
+
+	ath12k_dp_ipa_arch_op_rx_pipe_set_rdi(ipa_ctx, rx_smmu);
 }
 /* DONE WDI TX/RX SMMU PARAMS settings */
 

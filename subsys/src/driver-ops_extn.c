@@ -1550,8 +1550,12 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 	    rx->sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH)
 		return RX_CONTINUE;
 
-	if (!ieee80211_is_beacon(mgmt->frame_control) && !ieee80211_is_action(mgmt->frame_control))
-		return RX_DROP_MONITOR;
+	/* Beacons are allowed to be processed further.
+	 * Action frames pass to the normal mac80211 handler.
+	 * All other non-beacon frames are dropped. */
+	if (!ieee80211_is_beacon(mgmt->frame_control))
+		return ieee80211_is_action(mgmt->frame_control) ?
+		       RX_CONTINUE : RX_DROP_MONITOR;
 
 	rcu_read_lock();
 	sta = ieee80211_find_sta(&rx->sdata->vif, mgmt->sa);

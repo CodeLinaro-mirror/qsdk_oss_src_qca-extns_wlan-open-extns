@@ -972,16 +972,6 @@ ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 {
-	struct ieee80211_vif *vif = ath12k_ahvif_to_vif(ahvif);
-	struct ieee80211_sub_if_data *sdata;
-
-	/* Enable RX AMSDU for all standard data TIDs (0-7) by default per VAP */
-	if (vif) {
-		sdata = vif_to_sdata(vif);
-		if (sdata)
-			sdata->rx_amsdu_tid_bitmap = 0xFF;
-	}
-
 	/* Protects the extensions data update for an interface*/
 	spin_lock_init(&ahvif->ath12k_vif_extn.data_lock);
 

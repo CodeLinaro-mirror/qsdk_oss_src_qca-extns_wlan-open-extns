@@ -3097,6 +3097,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		{
 			struct ieee80211_vif *vif = ath12k_ahvif_to_vif(arvif->ahvif);
 			struct ieee80211_sub_if_data *sdata;
+			struct ieee80211_link_data *link;
 
 			if (!vif) {
 				ath12k_err(NULL, "enable_rx_amsdu: vif is NULL\n");
@@ -3112,10 +3113,18 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 					   value, IEEE80211_FIRST_TSPEC_TSID - 1);
 				return -EINVAL;
 			}
-			sdata->rx_amsdu_tid_bitmap |= BIT(value);
-			ath12k_dbg(NULL, ATH12K_DBG_CFG,
-				   "enable_rx_amsdu TID %u bitmap=0x%x\n",
-				   value, sdata->rx_amsdu_tid_bitmap);
+
+			rcu_read_lock();
+			link = ieee80211_get_rx_amsdu_link(sdata, arvif->link_id);
+			if (!link) {
+				rcu_read_unlock();
+				ath12k_err(NULL, "enable_rx_amsdu: link %u is NULL\n",
+					   arvif->link_id);
+				return -EINVAL;
+			}
+			link->rx_amsdu_tid_bitmap |= BIT(value);
+			rcu_read_unlock();
+
 			ret = 0;
 		}
 		break;
@@ -3124,6 +3133,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		{
 			struct ieee80211_vif *vif = ath12k_ahvif_to_vif(arvif->ahvif);
 			struct ieee80211_sub_if_data *sdata;
+			struct ieee80211_link_data *link;
 
 			if (!vif) {
 				ath12k_err(NULL, "disable_rx_amsdu: vif is NULL\n");
@@ -3142,10 +3152,18 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 					   value, IEEE80211_FIRST_TSPEC_TSID - 1);
 				return -EINVAL;
 			}
-			sdata->rx_amsdu_tid_bitmap &= ~BIT(value);
-			ath12k_dbg(NULL, ATH12K_DBG_CFG,
-				   "disable_rx_amsdu TID %u bitmap=0x%x\n",
-				   value, sdata->rx_amsdu_tid_bitmap);
+
+			rcu_read_lock();
+			link = ieee80211_get_rx_amsdu_link(sdata, arvif->link_id);
+			if (!link) {
+				rcu_read_unlock();
+				ath12k_err(NULL, "disable_rx_amsdu: link %u is NULL\n",
+					   arvif->link_id);
+				return -EINVAL;
+			}
+			link->rx_amsdu_tid_bitmap &= ~BIT(value);
+			rcu_read_unlock();
+
 			ret = 0;
 		}
 		break;
@@ -10254,6 +10272,7 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		{
 			struct ieee80211_vif *vif = ath12k_ahvif_to_vif(arvif->ahvif);
 			struct ieee80211_sub_if_data *sdata;
+			struct ieee80211_link_data *link;
 
 			if (!vif) {
 				ath12k_err(NULL, "get_rx_amsdu_bitmap: vif is NULL\n");
@@ -10264,10 +10283,21 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 				ath12k_err(NULL, "get_rx_amsdu_bitmap: sdata is NULL\n");
 				return -EINVAL;
 			}
-			*value = sdata->rx_amsdu_tid_bitmap;
+
+			rcu_read_lock();
+			link = ieee80211_get_rx_amsdu_link(sdata, arvif->link_id);
+			if (!link) {
+				rcu_read_unlock();
+				ath12k_err(NULL, "get_rx_amsdu_bitmap: link %u is NULL\n",
+					   arvif->link_id);
+				return -EINVAL;
+			}
+			*value = link->rx_amsdu_tid_bitmap;
+			rcu_read_unlock();
+
 			ath12k_dbg(NULL, ATH12K_DBG_CFG,
-				   "get_rx_amsdu bitmap=0x%x\n",
-				   sdata->rx_amsdu_tid_bitmap);
+				   "get_rx_amsdu link_id %u bitmap=0x%x\n",
+				   arvif->link_id, (u32)*value);
 			ret = 0;
 		}
 		break;

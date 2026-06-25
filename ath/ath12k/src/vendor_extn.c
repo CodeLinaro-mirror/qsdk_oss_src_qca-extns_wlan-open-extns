@@ -3474,7 +3474,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.eht_dl_ofdma_txbf;
 			arvif->vap_cfg.eht_dl_ofdma_txbf_configured = true;
 			arvif->vap_cfg.eht_dl_ofdma_txbf = !!value;
-			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			ret = ath12k_mac_set_eht_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.eht_dl_ofdma_txbf = old_ofdma_val;
 				arvif->vap_cfg.eht_dl_ofdma_txbf_configured = false;
@@ -3491,7 +3491,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.eht_dl_ofdma;
 			arvif->vap_cfg.eht_dl_ofdma_configured = true;
 			arvif->vap_cfg.eht_dl_ofdma = !!value;
-			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			ret = ath12k_mac_set_eht_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.eht_dl_ofdma = old_ofdma_val;
 				arvif->vap_cfg.eht_dl_ofdma_configured = false;
@@ -3508,7 +3508,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.eht_ul_ofdma;
 			arvif->vap_cfg.eht_ul_ofdma_configured = true;
 			arvif->vap_cfg.eht_ul_ofdma = !!value;
-			ret = ath12k_mac_set_eht_txbf_conf(arvif);
+			ret = ath12k_mac_set_eht_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.eht_ul_ofdma = old_ofdma_val;
 				arvif->vap_cfg.eht_ul_ofdma_configured = false;
@@ -3526,7 +3526,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.he_dl_ofdma_txbf;
 			arvif->vap_cfg.he_dl_ofdma_txbf_configured = true;
 			arvif->vap_cfg.he_dl_ofdma_txbf = !!value;
-			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			ret = ath12k_mac_set_he_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.he_dl_ofdma_txbf = old_ofdma_val;
 				arvif->vap_cfg.he_dl_ofdma_txbf_configured = false;
@@ -3543,7 +3543,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.he_dl_ofdma;
 			arvif->vap_cfg.he_dl_ofdma_configured = true;
 			arvif->vap_cfg.he_dl_ofdma = !!value;
-			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			ret = ath12k_mac_set_he_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.he_dl_ofdma = old_ofdma_val;
 				arvif->vap_cfg.he_dl_ofdma_configured = false;
@@ -3560,7 +3560,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			old_ofdma_val = arvif->vap_cfg.he_ul_ofdma;
 			arvif->vap_cfg.he_ul_ofdma_configured = true;
 			arvif->vap_cfg.he_ul_ofdma = !!value;
-			ret = ath12k_mac_set_he_txbf_conf(arvif);
+			ret = ath12k_mac_set_he_txbf_conf(arvif, NULL, false);
 			if (ret) {
 				arvif->vap_cfg.he_ul_ofdma = old_ofdma_val;
 				arvif->vap_cfg.he_ul_ofdma_configured = false;
@@ -6623,6 +6623,41 @@ void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
 	}
 }
 
+static int ath12k_vendor_set_bssid_extn(struct wireless_dev *wdev,
+					struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+
+	if (!params->data || params->data_len != ETH_ALEN)
+		return -EINVAL;
+
+	if (is_broadcast_ether_addr(params->data) ||
+	    is_multicast_ether_addr(params->data))
+		return -EINVAL;
+
+	if (wdev->iftype != NL80211_IFTYPE_STATION)
+		return -EOPNOTSUPP;
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif)
+		return -EINVAL;
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+
+	spin_lock_bh(&ahvif->ath12k_vif_extn.data_lock);
+	if (is_zero_ether_addr(params->data)) {
+		eth_zero_addr(ahvif->ath12k_vif_extn.bssid);
+		ahvif->ath12k_vif_extn.bssid_set = false;
+	} else {
+		ether_addr_copy(ahvif->ath12k_vif_extn.bssid, params->data);
+		ahvif->ath12k_vif_extn.bssid_set = true;
+	}
+	spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
+
+	return 0;
+}
+
 int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_dev *wdev,
 					   struct ath12k_wifi_generic_params *wifi_params)
 {
@@ -6754,6 +6789,13 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 		}
 		enable = !!*(u8 *)wifi_params->data;
 		ieee80211_set_allow_scan_on_dfs_chan_extn(local, enable);
+		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_BSSID:
+		ret = ath12k_vendor_set_bssid_extn(wdev, wifi_params);
+		if (ret) {
+			ath12k_err(NULL,"Failed to set BSSID\n");
+			return ret;
+		}
 		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
@@ -8195,6 +8237,13 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
 		memcpy(&value, params->data, sizeof(value));
 		ret = ath12k_vendor_set_regdomain(wiphy, ar, value);
+		return ret;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_GET_NFCAL_POWER:
+		ret = ath12k_wmi_send_pdev_get_nfcal_power_cmd(ar);
+		if (ret)
+			ath12k_warn(ar->ab,
+				    "failed to send WMI_PDEV_GET_NFCAL_POWER cmd: %d\n",
+				    ret);
 		return ret;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_SCAN_STRICT_PASSIVE_PCH:
 		if (params->data_len < sizeof(u32)) {
@@ -12495,6 +12544,75 @@ int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
  * @event_flag: Vendor-defined recovery event type
  * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
  */
+
+/**
+ * ath12k_vendor_nfcal_power_event - Send a noise floor calibration power
+ * vendor NL80211 event to userspace.
+ * @ar: Pointer to the ath12k radio context
+ * @param: Pointer to the parsed nfcal power event data
+ *
+ * Sends QCA_NL80211_VENDOR_SUBCMD_WLAN_NFCAL_POWER_EVENT carrying nfdbr,
+ * nfdbm and freqnum arrays as binary attributes.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
+				    const struct ath12k_wmi_nfcal_power_event *param)
+{
+	struct wiphy *wiphy;
+	struct sk_buff *skb;
+	u8 hw_link_id;
+
+	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return -EINVAL;
+
+	wiphy = ar->ah->hw->wiphy;
+	hw_link_id = ar->hw_link_id;
+
+	skb = cfg80211_vendor_event_alloc(wiphy, NULL,
+					  NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_WLAN_NFCAL_POWER_EVENT_INDEX,
+					  GFP_ATOMIC);
+	if (!skb)
+		return -ENOMEM;
+
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_HW_LINK_ID,
+		       hw_link_id))
+		goto err;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NFDBR,
+		    param->num_nfdbr_dbm * sizeof(s8), param->nfdbr))
+		goto err;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NFDBM,
+		    param->num_nfdbr_dbm * sizeof(s8), param->nfdbm))
+		goto err;
+
+	if (nla_put(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_FREQNUM,
+		    param->num_freq * sizeof(u32), param->freqnum))
+		goto err;
+
+	if (nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NUM_NFDBR_DBM,
+			param->num_nfdbr_dbm))
+		goto err;
+
+	if (nla_put_u16(skb, QCA_WLAN_VENDOR_ATTR_NFCAL_POWER_NUM_FREQ,
+			param->num_freq))
+		goto err;
+
+	cfg80211_vendor_event(skb, GFP_ATOMIC);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "nfcal power vendor event sent: hw_link_id=%u num_nfdbr_dbm=%u num_freq=%u\n",
+		   hw_link_id, param->num_nfdbr_dbm, param->num_freq);
+
+	return 0;
+
+err:
+	kfree_skb(skb);
+	return -EINVAL;
+}
+
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag)
 {
@@ -13658,12 +13776,12 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 					      struct wireless_dev *wdev,
 					      const void *data, int data_len)
 {
-	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
-	struct ath12k_hw *ah = hw->priv;
+	struct ieee80211_vif *vif;
+        struct ath12k_vif *ahvif;
+        struct ath12k_link_vif *arvif;
 	struct ath12k *ar;
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1];
 	struct ath12k_tdma_sched_info sched = {0};
-	u32 radio_index = 0;
 	int ret;
 
 	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX, data, data_len,
@@ -13673,20 +13791,30 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 		return ret;
 	}
 
-	if (tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX])
-		radio_index = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_RADIO_INDEX]);
+	 vif = wdev_to_ieee80211_vif(wdev);
+        if (!vif) {
+                ath12k_err(NULL, "vif is NULL for TDMA schedule config\n");
+                return -EINVAL;
+        }
 
-	if (radio_index >= ah->num_radio) {
-		ath12k_err(NULL, "Invalid radio index %u for TDMA schedule config\n",
-			   radio_index);
-		return -EINVAL;
-	}
+        ahvif = ath12k_vif_to_ahvif(vif);
+        if (!ahvif) {
+                ath12k_err(NULL, "ahvif is NULL for TDMA schedule config\n");
+                return -EINVAL;
+        }
+        /* VAP (vdev) interface is used as the entry point for user commands since
+         * wlanconfig operates on netdev interfaces (wlanX).
+         * The driver internally maps the given vdev to the corresponding pdev (radio)
+         * and issues the required pdev-level WMI command to firmware.
+         * This ensures correct radio selection and maintains proper driver abstraction.
+         */
+        arvif = &ahvif->deflink;
+        if (!arvif || !arvif->ar) {
+                ath12k_err(NULL, "arvif or ar is NULL for TDMA schedule config\n");
+                return -EINVAL;
+        }
 
-	ar = &ah->radio[radio_index];
-	if (!ar) {
-		ath12k_err(NULL, "ar is NULL for radio index %u\n", radio_index);
-		return -EINVAL;
-	}
+        ar = arvif->ar;
 
 	sched.pdev_id = ar->pdev->pdev_id;
 

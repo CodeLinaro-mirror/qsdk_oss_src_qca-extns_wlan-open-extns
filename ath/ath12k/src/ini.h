@@ -307,6 +307,7 @@
 	ATH12K_CFG(ATH12K_CFG_NOL_AUTO_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_REO_MGMT_PATH_DISABLE) \
 	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
+	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -391,6 +392,20 @@
 #define ATH12K_CFG_LOW_MEM_SYSTEM \
 	ATH12K_CFG_INI_BOOL("low_mem_system", false, \
 	"Low Memory System")
+
+/**
+ * ATH12K_CFG_RF_SWITCH_CONFIG - Boot-time 5G RF path selection
+ *
+ * false (0) = Primary path:   full 5G range (4890-5930 MHz, ch 36-177) [default]
+ * true  (1) = Secondary path: high 5G range (5490-5930 MHz, ch 100-177)
+ *
+ * When set to 1, the driver instructs firmware via resource_config.rf_path in
+ * WMI_INIT_CMDID, selects EXT2 frequency caps for the regulatory range, and
+ * configures the initial channel list to only include the high 5G range.
+ */
+#define ATH12K_CFG_RF_SWITCH_CONFIG \
+	ATH12K_CFG_INI_BOOL("rf_switch_config", false, \
+	"RF path: false=primary/full 5G range (default), true=secondary/high 5G range")
 
 #define ATH12K_CFG_TWT_INTERFERENCE_THRESH_SETUP \
 	ATH12K_CFG_INI_UINT("twt_interference_thresh_setup", \

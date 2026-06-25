@@ -11,6 +11,22 @@
 #include "../../dp_tx.h"
 #include "../../hal.h"
 
+void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
+{
+	in->is_meta_data_valid = 0;
+}
+
+void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(struct ipa_wdi_reg_intf_in_params *in)
+{
+
+}
+
+void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
+						  int intf_idx)
+{
+
+}
+
 static u8 ath12k_wifi8_dp_ipa_get_wdi_version(void)
 {
 	return IPA_WDI_6;
@@ -93,6 +109,11 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_tx_buffer_attach = NULL,
 	.dp_rx_pipe_set_rdi = ath12k_wifi8_dp_ipa_rx_pipe_set_rdi,
 	.ipa_get_wdi_version = ath12k_wifi8_dp_ipa_get_wdi_version,
+	.ipa_iface_setup_set_metadata = ath12k_wifi8_dp_ipa_set_metadata,
+	.ipa_iface_setup_set_vp_num = ath12k_wifi8_dp_ipa_iface_setup_set_vp_num,
+	.ipa_iface_setup_set_intf_idx = ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx,
+	.ipa_client_connect_ex = NULL,
+	.ipa_client_disconnect = NULL,
 };
 
 int

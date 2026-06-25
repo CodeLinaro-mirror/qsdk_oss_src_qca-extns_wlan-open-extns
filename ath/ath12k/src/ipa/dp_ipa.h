@@ -291,6 +291,22 @@ struct ath12k_ipa_arch_ops {
 	void (*dp_rx_pipe_set_rdi)(struct ath12k_ipa *ipa_ctx,
 				   struct ipa_wdi_pipe_setup_info_smmu *rx_smmu);
 	u8 (*ipa_get_wdi_version)(void);
+	void (*ipa_iface_setup_set_metadata)(struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_setup_set_vp_num)(struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_setup_set_intf_idx)(struct ipa_wdi_reg_intf_in_params *in,
+					     int intf_idx);
+	int (*ipa_client_connect_ex)(struct ath12k_ipa *ipa_ctx,
+				     enum ipa_wlan_event event,
+				     u32 vdev_id,
+				     const u8 mac[ETH_ALEN],
+				     struct dp_ipa_net_device_priv *dev,
+				     bool is_mlo);
+	int (*ipa_client_disconnect)(struct ath12k_ipa *ipa_ctx,
+				     enum ipa_wlan_event event,
+				     u32 vdev_id,
+				     const u8 mac[ETH_ALEN],
+				     struct dp_ipa_net_device_priv *dev,
+				     bool is_mlo);
 };
 
 struct ath12k_ipa_mac_addr {
@@ -911,6 +927,70 @@ int ath12k_dp_ipa_uc_detach(struct ath12k_base *ab);
 int dp_ipa_uc_attach(struct ath12k_base *ab);
 int ath12k_dp_ipa_register_is_ipa_ready(struct ath12k_base *ab);
 int ath12k_dp_ipa_uc_ol_deinit(struct ath12k_base *ab);
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,
+						   struct ipa_wdi_reg_intf_in_params *in)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_metadata)
+		ipa_ctx->arch_ops->ipa_iface_setup_set_metadata(in);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(struct ath12k_ipa *ipa_ctx,
+						 struct ipa_wdi_reg_intf_in_params *in)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num)
+		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(in);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(struct ath12k_ipa *ipa_ctx,
+						   struct ipa_wdi_reg_intf_in_params *in,
+						   int intf_idx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_intf_idx)
+		ipa_ctx->arch_ops->ipa_iface_setup_set_intf_idx(in, intf_idx);
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_ipa_client_connect_ex(struct ath12k_ipa *ipa_ctx,
+					    enum ipa_wlan_event event,
+					    u32 vdev_id,
+					    const u8 mac[ETH_ALEN],
+					    struct dp_ipa_net_device_priv *dev,
+					    bool is_mlo)
+{
+	int ret = 0;
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_client_connect_ex) {
+		ret = ipa_ctx->arch_ops->ipa_client_connect_ex(ipa_ctx, event, vdev_id,
+							       mac, dev, is_mlo);
+	}
+
+	return ret;
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_ipa_client_disconnect(struct ath12k_ipa *ipa_ctx,
+					    enum ipa_wlan_event event,
+					    u32 vdev_id,
+					    const u8 mac[ETH_ALEN],
+					    struct dp_ipa_net_device_priv *dev,
+					    bool is_mlo)
+{
+	int ret = 0;
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_client_disconnect) {
+		ret = ipa_ctx->arch_ops->ipa_client_disconnect(ipa_ctx, event, vdev_id,
+							       mac, dev, is_mlo);
+	}
+
+	return ret;
+}
 
 static inline int ath12k_dp_ipa_arch_op_srng_setup(struct ath12k_base *ab)
 {

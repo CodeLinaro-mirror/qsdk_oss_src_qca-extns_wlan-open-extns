@@ -215,6 +215,7 @@ struct ath12k_skb_tx_param {
  * @ts_foreign_exit:      Foreign chan exit timestamp
  * @ts_scan_done:         Scan complete timestamp
  * @raw_ctx_mutex:        Mutex to serialize raw context operations (held until user event)
+ * @frame_id:             Per-frame IDs supplied by userspace, echoed back in the TX status event.
  */
 struct ath12k_raw_pkt_ctx {
 	struct sk_buff_head  pkt_list;
@@ -239,7 +240,7 @@ struct ath12k_raw_pkt_ctx {
 	ktime_t ts_foreign_exit;
 	ktime_t ts_scan_done;
 	struct mutex raw_ctx_mutex;
-
+	u8 frame_id[ATH12K_MAX_CUSTOM_TX_PKT];
 };
 
 #define DCS_TX_MAX_CU          30

@@ -934,8 +934,21 @@ enum srtype {
 };
 
 #define SR_TYPE_LENGTH 16
+#define IEEE80211_HE_LTF_DEFAULT 0x0
+#define IEEE80211_HE_LTF_1X      0x1
+#define IEEE80211_HE_LTF_2X      0x2
+#define IEEE80211_HE_LTF_4X      0x3
 #define IEEE80211_EHT_LTF_4X      0x3
 #define IEEE80211_EHT_BW_IDX_MAX  4
+
+#define IEEE80211_HE_AR_LDPC_DEFAULT 3
+#define IEEE80211_HE_AR_LDPC_SHIFT   16
+#define IEEE80211_HE_AR_LTF_MASK     0x00ff
+#define IEEE80211_HE_AR_SGI_MASK     0xff00
+#define IEEE80211_HE_AR_SGI_S        8
+#define IEEE80211_HE_AR_DEFAULT_LTF_SGI_COMBINATION 0xffff
+
+#define IEEE80211_HEOP_RTS_THRESHOLD_DISABLED 0x3ff
 
 /* GI Modes. */
 #define IEEE80211_GI_0DOT8_US           0   /*800 nano secs/0.8 us is default/GI disabled mode in HT,VHT, HE*/

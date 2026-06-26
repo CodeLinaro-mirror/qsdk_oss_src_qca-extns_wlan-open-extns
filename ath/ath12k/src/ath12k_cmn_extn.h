@@ -125,4 +125,11 @@ struct ath12k_base_extn {
 };
 
 #endif /* CPTCFG_QCN_EXTN */
+
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+struct ath12k_base;
+int ath12k_dp_ipa_rx_refill_buf_ring_alloc(struct ath12k_base *ab);
+void ath12k_dp_ipa_rx_refill_buf_ring_free(struct ath12k_base *ab);
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
+
 #endif /* ATH12K_CMN_EXTN_H */

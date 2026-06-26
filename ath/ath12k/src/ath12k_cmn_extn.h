@@ -42,6 +42,7 @@ struct ath12k_wmi_resource_config_params;
 struct ath12k_wmi_resource_config_arg;
 struct wmi_scan_event;
 struct sk_buff;
+struct wmi_scan_blanking_params_info;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -361,6 +362,8 @@ struct ath12k_extn {
 
 	/* Continuous Background Scan structure */
 	struct ath12k_cbs cbs;
+
+	u8 scan_blanking_mode;
 };
 
 /**
@@ -650,6 +653,18 @@ static inline void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 						    struct wmi_chan_info_event *ch_info,
 						    int channel_idx)
 {
+}
+
+static inline void ath12k_send_scan_radio_chan_stats_event_extn(struct ath12k *ar,
+								u32 freq,
+								const struct wmi_scan_blanking_params_info *blanking)
+{
+}
+
+static inline int ath12k_vendor_get_scan_blanking_mode_extn(struct wiphy *wiphy,
+								  u64 *value)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline void ath12k_update_offchan_ts_extn(struct ath12k *ar,
@@ -1064,6 +1079,10 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 				      u32 freq,
 				      struct wmi_chan_info_event *ch_info,
 				      int channel_idx);
+void ath12k_send_scan_radio_chan_stats_event_extn(struct ath12k *ar,
+						  u32 freq,
+						  const struct wmi_scan_blanking_params_info *blanking);
+int ath12k_vendor_get_scan_blanking_mode_extn(struct wiphy *wiphy, u64 *value);
 
 /**
  * ath12k_update_offchan_ts_extn - Update offchan timestamps based on scan events

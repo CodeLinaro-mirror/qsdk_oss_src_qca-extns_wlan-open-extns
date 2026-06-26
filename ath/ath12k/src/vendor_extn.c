@@ -6918,7 +6918,78 @@ static int ath12k_vendor_set_bssid_extn(struct wireless_dev *wdev,
 		ahvif->ath12k_vif_extn.bssid_set = true;
 	}
 	spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
+	return 0;
+}
 
+static struct ath12k *ath12k_get_scan_radio_ar(struct wiphy *wiphy)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	int i;
+
+	for (i = 0; i < ah->num_radio; i++) {
+		if (ath12k_scan_radio_blanking_supported(ah->radio[i].pdev))
+			return &ah->radio[i];
+	}
+	return NULL;
+}
+
+static int ath12k_vendor_set_scan_blanking_mode_extn(
+		struct wiphy *wiphy,
+		struct ath12k_wifi_generic_params *params)
+{
+	struct ath12k *ar;
+	u32 *data = (u32 *)params->data;
+	u8 mode;
+	int ret;
+
+	if (!data)
+		return -EINVAL;
+
+	ar = ath12k_get_scan_radio_ar(wiphy);
+	if (!ar) {
+		ath12k_err(NULL, "No scan radio with blanking support found\n");
+		return -EOPNOTSUPP;
+	}
+
+	mode = (u8)*data;
+	if (mode >= 3) {
+		ath12k_err(ar->ab, "Invalid scan blanking mode %u\n", mode);
+		return -EINVAL;
+	}
+
+	if (ar->ar_extn.scan_blanking_mode == mode) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+			   "scan_blanking_mode already %u, skip\n", mode);
+		return 0;
+	}
+
+	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_SET_SCAN_BLANKING_MODE,
+					mode, ar->pdev->pdev_id);
+	if (ret) {
+		ath12k_warn(ar->ab, "failed to set scan blanking mode %u: %d\n",
+			    mode, ret);
+		return ret;
+	}
+
+	ar->ar_extn.scan_blanking_mode = mode;
+	ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+		   "scan_blanking_mode set to %u on pdev %u\n",
+		   mode, ar->pdev->pdev_id);
+	return 0;
+}
+
+int ath12k_vendor_get_scan_blanking_mode_extn(struct wiphy *wiphy, u64 *value)
+{
+	struct ath12k *ar = ath12k_get_scan_radio_ar(wiphy);
+
+	if (!ar)
+		return -EOPNOTSUPP;
+
+	*value = ar->ar_extn.scan_blanking_mode;
+	ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+		   "scan_blanking_mode get: mode=%u\n",
+		   ar->ar_extn.scan_blanking_mode);
 	return 0;
 }
 
@@ -7061,6 +7132,9 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 			return ret;
 		}
 		break;
+	case ACFG_PARAM_RADIO_SCAN_BLANKING_MODE:
+		return ath12k_vendor_set_scan_blanking_mode_extn(wiphy, wifi_params);
+
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Un-supported generic command\n");
 		return -EOPNOTSUPP;
@@ -14221,8 +14295,7 @@ int ath12k_vendor_tdma_schedule_config(struct wiphy *wiphy,
 	return ath12k_wmi_send_tdma_schedule_request(ar, &sched);;
 }
 
-#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
-static const char *ath12k_phymode_str(enum wmi_phy_mode mode)
+const char *ath12k_phymode_str(enum wmi_phy_mode mode)
 {
 	switch (mode) {
 	case MODE_11A:
@@ -14317,6 +14390,7 @@ static const char *ath12k_phymode_str(enum wmi_phy_mode mode)
 	return "<unknown>";
 }
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 /**
  * ath12k_vendor_mesh_peer_dump - Dump mesh peer information
  *

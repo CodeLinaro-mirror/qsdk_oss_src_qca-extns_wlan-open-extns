@@ -630,6 +630,38 @@ ath12k_chan_info_event_extn(struct ath12k_extn *ar_extn,
 	inst->txpower_range = (int)le32_to_cpu(ch_info_ev->chan_tx_pwr_range);
 }
 
+struct ath12k_chan_info_blanking_parse {
+	const struct wmi_scan_blanking_params_info *blanking;
+};
+
+static int ath12k_wmi_tlv_chan_info_blanking_parse(struct ath12k_base *ab,
+						   u16 tag, u16 len,
+						   const void *ptr, void *data)
+{
+	struct ath12k_chan_info_blanking_parse *parse = data;
+
+	if (tag == WMI_TAG_SCAN_BLANKING_PARAMS_INFO)
+		parse->blanking = ptr;
+
+	return 0;
+}
+
+static int ath12k_wmi_tlv_chan_info_parse(struct ath12k_base *ab,
+					  u16 tag, u16 len,
+					  const void *ptr, void *data)
+{
+	int ret;
+
+	if (tag == WMI_TAG_ARRAY_STRUCT && len > 0) {
+		ret = ath12k_wmi_tlv_iter(ab, ptr, len,
+					  ath12k_wmi_tlv_chan_info_blanking_parse,
+					  data);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
 void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 				      struct sk_buff *skb,
 				      u32 freq,
@@ -638,8 +670,8 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 {
 	struct ath12k_raw_pkt_ctx *raw_ctx;
 	struct ath12k_offchan_stat *stats;
-	struct ath12k_blanking_params *ev, *blank_stats;
-	const void **tb;
+	struct ath12k_blanking_params *blank_stats;
+	struct ath12k_chan_info_blanking_parse parse = {};
 	struct ath12k_base *ab;
 
 	if (!ar) {
@@ -671,23 +703,16 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 		stats->rx_frame_count = le32_to_cpu(ch_info->rx_frame_count);
 		stats->cycle_count = le32_to_cpu(ch_info->cycle_count);
 
-
-		tb = ath12k_wmi_tlv_parse_alloc(ab, skb, GFP_ATOMIC);
-		if (IS_ERR(tb)) {
-			ath12k_dbg(ab, ATH12K_DBG_WMI,
-				   "failed to parse tlv for blanking params\n");
-                        spin_unlock_bh(&raw_ctx->chan_lock);
-			return;
-		}
+		ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
+				    ath12k_wmi_tlv_chan_info_parse, &parse);
 
 		blank_stats = &raw_ctx->chan_stat.blank_params;
-		if (tb[WMI_TAG_SCAN_BLANKING_PARAMS_INFO]) {
-			*ev = *(struct ath12k_blanking_params *)tb[WMI_TAG_SCAN_BLANKING_PARAMS_INFO];
-
-			blank_stats->valid = le32_to_cpu(ev->valid);
-			blank_stats->blanking_duration = le32_to_cpu(ev->blanking_duration);
-			blank_stats->blanking_count = le32_to_cpu(ev->blanking_count);
-
+		if (parse.blanking) {
+			blank_stats->valid = 1;
+			blank_stats->blanking_duration =
+				le32_to_cpu(parse.blanking->blanking_duration);
+			blank_stats->blanking_count =
+				le32_to_cpu(parse.blanking->blanking_count);
 			ath12k_dbg(ab, ATH12K_DBG_WMI,
 				   "scan blanking params: valid=%u count=%u duration=%u\n",
 				   blank_stats->valid, blank_stats->blanking_count,
@@ -699,7 +724,6 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 			ath12k_dbg(ab, ATH12K_DBG_WMI,
 				   "scan blanking params not present in event\n");
 		}
-		kfree(tb);
 
 		ath12k_dbg(ab, ATH12K_DBG_WMI,
 			   "offchan stats updated: freq=%u nf=%d tx=%u rx=%u "
@@ -715,6 +739,75 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 			    freq);
 	}
 	spin_unlock_bh(&raw_ctx->chan_lock);
+
+	if (le32_to_cpu(ch_info->err_code) == 0)
+		ath12k_send_scan_radio_chan_stats_event_extn(ar, freq, parse.blanking);
+}
+
+void ath12k_send_scan_radio_chan_stats_event_extn(struct ath12k *ar,
+						  u32 freq,
+						  const struct wmi_scan_blanking_params_info *blanking)
+{
+	struct ath12k_blanking_params blank = {};
+	struct ath12k_link_vif *arvif;
+	struct cfg80211_chan_def *chandef = NULL;
+	enum wmi_phy_mode phymode = MODE_UNKNOWN;
+	const char *phymode_str;
+	struct sk_buff *vendor_skb;
+
+	if (!ath12k_scan_radio_blanking_supported(ar->pdev))
+		return;
+
+	if (blanking) {
+		blank.valid             = 1;
+		blank.blanking_count    = le32_to_cpu(blanking->blanking_count);
+		blank.blanking_duration = le32_to_cpu(blanking->blanking_duration);
+	}
+
+	/* scan radio has exactly one VAP; get its home channel phy mode */
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (arvif->chanctx.def.chan) {
+			chandef = &arvif->chanctx.def;
+			break;
+		}
+	}
+	if (chandef)
+		phymode = ath12k_mac_get_phymode(ar, chandef->chan->band,
+						 chandef->width);
+	phymode_str = ath12k_phymode_str(phymode);
+
+	vendor_skb = cfg80211_vendor_event_alloc(ath12k_ar_to_hw(ar)->wiphy, NULL,
+						 128,
+						 QCA_NL80211_VENDOR_SUBCMD_SCAN_RADIO_CHAN_STATS_INDEX,
+						 GFP_ATOMIC);
+	if (!vendor_skb) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "scan_radio_chan_stats: alloc failed\n");
+		return;
+	}
+
+	if (nla_put_u32(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_FREQ,
+			freq))
+		goto err_free_skb;
+	if (nla_put_u8(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_BLANKING_VALID,
+		       (u8)blank.valid))
+		goto err_free_skb;
+	if (nla_put_u32(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_BLANKING_COUNT,
+			blank.blanking_count))
+		goto err_free_skb;
+	if (nla_put_u32(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_BLANKING_DURATION,
+			blank.blanking_duration))
+		goto err_free_skb;
+	if (nla_put_string(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_PHYMODE,
+			   phymode_str))
+		goto err_free_skb;
+
+	cfg80211_vendor_event(vendor_skb, GFP_ATOMIC);
+	return;
+
+err_free_skb:
+	ath12k_err(ar->ab, "scan_radio_chan_stats: nla_put failed\n");
+	kfree_skb(vendor_skb);
 }
 
 /**

@@ -41,7 +41,9 @@ ath12k_wifi8_dp_ipa_rx_pipe_set_rdi(struct ath12k_ipa *ipa_ctx,
 
 static void ath12k_wifi8_dp_ipa_srng_get_rsrc(struct ath12k_base *ab)
 {
-	/* TODO: fill rx_rsc and tx_rsc from here */
+	/* TODO: fill tx_rsc from here */
+
+	ath12k_wifi8_dp_fill_rx_src(ab);
 	return;
 }
 
@@ -62,13 +64,52 @@ static void ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp(struct ath12k_ipa *ipa_ctx)
 
 static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 {
-	/* TODO: call RX and TX ring setup from here */
-	return 0;
+	/* TODO: call TX ring setup from here */
+	int ret = 0;
+	u64 orig_dma_mask;
+
+	/**
+	 * Limit phys address withing 32 bit space during ring initialization since
+	 * IPA cannot handle larger address space.
+	 */
+	orig_dma_mask = dma_get_mask(ab->dev);
+	ret = dma_set_mask_and_coherent(ab->dev, DMA_BIT_MASK(32));
+	if (ret) {
+		ath12k_ipa_err(ab, "failed to set DMA_BIT_MASK(32): %d", ret);
+		ath12k_ipa_err(ab, "ring PA may exceed 32-bit; IPA crash likely");
+	} else {
+		ath12k_ipa_info(ab, "DMA mask set to 32-bit (orig_dma_mask=0x%llx)",
+				orig_dma_mask);
+	}
+
+	ret = ath12k_wifi8_dp_rx_ring_setup_ipa(ab);
+	if (ret) {
+		ath12k_ipa_err(ab, "failed to setup RX rings");
+		goto restore_dma_mask;
+	}
+
+	ret = ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(ab);
+	if (ret) {
+		ath12k_ipa_err(ab, "failed to configure ipa2wbm_idle_buf ring");
+		goto ipa2wbm_idle_buf_err;
+	}
+
+	dma_set_mask_and_coherent(ab->dev, orig_dma_mask);
+	ath12k_ipa_info(ab, "ath12k IPA RX rings: DMA mask restored to 0x%llx",
+			orig_dma_mask);
+	return ret;
+
+ipa2wbm_idle_buf_err:
+	ath12k_wifi8_dp_rx_ring_free_ipa(ab);
+restore_dma_mask:
+	dma_set_mask_and_coherent(ab->dev, orig_dma_mask);
+	return ret;
 }
 
 static int ath12k_wifi8_dp_ipa_srng_cleanup(struct ath12k_base *ab)
 {
-	/* TODO: call RX and TX ring cleanup from here */
+	/* TODO: call TX ring cleanup from here */
+	ath12k_wifi8_dp_rx_ring_free_ipa(ab);
 	return 0;
 }
 
@@ -103,6 +144,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.dp_rxdma_buf_setup = NULL,
 	.dp_get_tx_bank_id = NULL,
 	.dp_rx_buf_smmu_map_unmap = NULL,
+	.dp_srng_rx_init = ath12k_wifi8_dp_ipa_ipa2wbm_idle_buf_ring_init,
 	.ipa_set_rx_doorbell_paddr = ath12k_wifi8_dp_ipa_set_rx_doorbell_paddr,
 	.ipa_set_tx_doorbell_paddr = ath12k_wifi8_dp_ipa_set_tx_doorbell_paddr,
 	.ipa_tx_comp_ring_init_hp = ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp,

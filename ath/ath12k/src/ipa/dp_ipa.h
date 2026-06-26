@@ -284,6 +284,7 @@ struct ath12k_ipa_arch_ops {
 	int (*dp_rxdma_buf_setup)(struct ath12k_base *ab);
 	int (*dp_get_tx_bank_id)(struct ath12k_base *ab, u8 *bank_id);
 	int (*dp_rx_buf_smmu_map_unmap)(struct ath12k_base *ab, bool create);
+	int (*dp_srng_rx_init)(struct ath12k_base *ab);
 	void (*ipa_set_rx_doorbell_paddr)(struct ath12k_ipa *ipa_ctx);
 	void (*ipa_set_tx_doorbell_paddr)(struct ath12k_ipa *ipa_ctx);
 	void (*ipa_tx_comp_ring_init_hp)(struct ath12k_ipa *ipa_ctx);
@@ -927,6 +928,8 @@ int ath12k_dp_ipa_uc_detach(struct ath12k_base *ab);
 int dp_ipa_uc_attach(struct ath12k_base *ab);
 int ath12k_dp_ipa_register_is_ipa_ready(struct ath12k_base *ab);
 int ath12k_dp_ipa_uc_ol_deinit(struct ath12k_base *ab);
+int ath12k_dp_ipa_sg_tbl_setup(struct device *dev, struct sg_table *sgt,
+			       void *cpu_addr, dma_addr_t dma_addr, size_t size);
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,

@@ -21,6 +21,9 @@
 #define ATH12K_DP_WIFI8_IPA_REO2SW5_RING_SZ	4096
 #define ATH12K_DP_WIFI8_REO2SW5_RDI		5
 
+#define ATH12K_DP_WIFI8_IPA2TCL_RING_SIZE	8192
+#define ATH12K_DP_WIFI8_TQM2IPA_RING_SIZE	8192
+
 /**
  * enum ath12k_dp_wifi8_ipa2wbm_ring_e - IPA to WBM ring types
  * @ATH12K_DP_WIFI8_IPA2WBM_IPA: ring given to IPA for refill
@@ -39,12 +42,16 @@ enum ath12k_dp_wifi8_ipa2wbm_ring_e {
  * @ipa2wbm_idle_buf_ring: ring for providing initial rx bufs to IPA WBM pool
  * @ipa2wbm_ring: Array of IPA to WBM rings indexed by ring type
  * @reo2sw5: reo dst ring used by IPA for processing RX packets
+ * @ipa2tcl_ring: TX data ring to which IPA enqueues packets
+ * @tqm2ipa_ring: TX completion ring from which IPA consumes free buffers
  */
 struct ath12k_dp_wifi8_ipa {
 	struct ath12k_dp_wifi8 *dp_wifi8;
 	struct dp_srng ipa2wbm_idle_buf_ring;
 	struct dp_srng ipa2wbm_ring[ATH12K_DP_WIFI8_IPA2WBM_MAX];
 	struct dp_srng reo2sw5;
+	struct dp_srng ipa2tcl_ring;
+	struct dp_srng tqm2ipa_ring;
 };
 
 int ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab);
@@ -95,5 +102,8 @@ void ath12k_wifi8_dp_rx_ring_free_ipa(struct ath12k_base *ab);
 int ath12k_wifi8_dp_ipa_ipa2wbm_idle_buf_ring_init(struct ath12k_base *ab);
 void ath12k_wifi8_dp_fill_rx_src(struct ath12k_base *ab);
 int ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(struct ath12k_base *ab);
+int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab);
+void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab);
+int ath12k_wifi8_dp_fill_tx_src(struct ath12k_base *ab);
 
 #endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

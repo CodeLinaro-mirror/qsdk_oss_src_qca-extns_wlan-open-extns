@@ -31,6 +31,7 @@ bool ath12k_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 				  u32 qos_nw_delay)
 {
 	struct ath12k_vif *ahvif = container_of(dp_vif, struct ath12k_vif, dp_vif);
+	struct ath12k_link_vif *arvif = NULL;
 	bool is_recycler = false;
 	u8 link_id;
 
@@ -40,6 +41,16 @@ bool ath12k_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 				 ATH12K_MLO_METADATA_MLO_ASSIST_TAG))) {
 		/* Extract link ID from mark */
 		link_id = u32_get_bits(skb->mark, ATH12K_MLO_METADATA_LINKID_MASK);
+		arvif = rcu_dereference(ahvif->link[link_id]);
+
+		if (unlikely(!arvif || !arvif->ar)) {
+			ath12k_mac_ieee80211_free_txskb(ahvif->ah->hw, skb, NULL,
+							NULL, dp_vif,
+							DP_TX_ENQ_DROP_INV_ARVIF,
+							0, false);
+			return true;
+		}
+
 		skb_ctrl->flags |= DP_SKB_FAST_TX;
 		is_recycler = (skb->fast_recycled = !!skb->is_from_recycler);
 		if (likely(is_recycler))

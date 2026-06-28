@@ -16,15 +16,45 @@
  * recycler SKBs where the caller ensures ordering requirements, to avoid the
  * overhead of a full barrier.
  *
- * On some platforms (e.g. PLATFORM_SDX85) this is a no-op.
+ * On some platforms (e.g. PLATFORM_SDX) this is a no-op.
  */
 static inline void ath12k_core_dma_clean_range_no_dsb(const void *start, const void *end)
 {
-#ifndef PLATFORM_SDX85
+#ifndef PLATFORM_SDX
 	dmac_clean_range_no_dsb(start, end);
 #endif
 }
 
+#ifdef PLATFORM_SDX
+/**
+ * ath12k_dp_tx_buffer_map() - Map TX skb data buffer for DMA
+ * @dp: Datapath instance (provides DMA device)
+ * @skb: Socket buffer whose linear data will be mapped
+ * @len: Number of bytes to map from @skb->data
+ * @skb_ctrl: Per-skb control (DP_SKB_RECYCLED indicates recycler/fast-path skb)
+ *
+ * When @skb_ctrl has DP_SKB_RECYCLED set, the buffer is assumed to come from the
+ * recycler/fast-path. In that case the cache is cleaned without a DSB and the
+ * physical address is obtained via virt_to_phys() (bypassing dma_map_single()).
+ *
+ * Otherwise the linear data buffer is mapped for DMA_TO_DEVICE using
+ * dma_map_single() on non IO-coherent platforms, or translated via
+ * virt_to_phys() on IO-coherent platforms (CONFIG_IO_COHERENCY).
+ *
+ * Return: DMA address for the mapped buffer. Caller must use
+ * dma_mapping_error() to validate the returned address.
+ */
+static inline
+dma_addr_t ath12k_dp_tx_buffer_map(struct ath12k_dp *dp, struct sk_buff *skb, u32 len,
+				   struct ath12k_dp_skb_ctrl *skb_ctrl)
+{
+	dma_addr_t paddr;
+
+	/* DMA cache clean */
+	paddr = dma_map_single(dp->dev, skb->data, len, DMA_TO_DEVICE);
+	return paddr;
+}
+#else
 /**
  * ath12k_dp_tx_buffer_map() - Map TX skb data buffer for DMA
  * @dp: Datapath instance (provides DMA device)
@@ -60,6 +90,7 @@ dma_addr_t ath12k_dp_tx_buffer_map(struct ath12k_dp *dp, struct sk_buff *skb, u3
 	paddr = dma_map_single(dp->dev, skb->data, len, DMA_TO_DEVICE);
 	return paddr;
 }
+#endif
 
 /**
  * ath12k_dp_tx_buffer_unmap() - Unmap a previously DMA-mapped TX buffer

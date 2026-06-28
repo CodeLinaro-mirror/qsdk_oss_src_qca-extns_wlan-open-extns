@@ -54,6 +54,7 @@ static void ath12k_reset_raw_pkt_ctx(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 	/* Clear tracking array */
 	memset(raw_pkt_ctx->tracked_skbs, 0, sizeof(raw_pkt_ctx->tracked_skbs));
 	raw_pkt_ctx->num_tracked_skbs = 0;
+	memset(raw_pkt_ctx->frame_id, 0, sizeof(raw_pkt_ctx->frame_id));
 }
 
 /**
@@ -629,6 +630,38 @@ ath12k_chan_info_event_extn(struct ath12k_extn *ar_extn,
 	inst->txpower_range = (int)le32_to_cpu(ch_info_ev->chan_tx_pwr_range);
 }
 
+struct ath12k_chan_info_blanking_parse {
+	const struct wmi_scan_blanking_params_info *blanking;
+};
+
+static int ath12k_wmi_tlv_chan_info_blanking_parse(struct ath12k_base *ab,
+						   u16 tag, u16 len,
+						   const void *ptr, void *data)
+{
+	struct ath12k_chan_info_blanking_parse *parse = data;
+
+	if (tag == WMI_TAG_SCAN_BLANKING_PARAMS_INFO)
+		parse->blanking = ptr;
+
+	return 0;
+}
+
+static int ath12k_wmi_tlv_chan_info_parse(struct ath12k_base *ab,
+					  u16 tag, u16 len,
+					  const void *ptr, void *data)
+{
+	int ret;
+
+	if (tag == WMI_TAG_ARRAY_STRUCT && len > 0) {
+		ret = ath12k_wmi_tlv_iter(ab, ptr, len,
+					  ath12k_wmi_tlv_chan_info_blanking_parse,
+					  data);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
 void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 				      struct sk_buff *skb,
 				      u32 freq,
@@ -637,8 +670,8 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 {
 	struct ath12k_raw_pkt_ctx *raw_ctx;
 	struct ath12k_offchan_stat *stats;
-	struct ath12k_blanking_params *ev, *blank_stats;
-	const void **tb;
+	struct ath12k_blanking_params *blank_stats;
+	struct ath12k_chan_info_blanking_parse parse = {};
 	struct ath12k_base *ab;
 
 	if (!ar) {
@@ -670,23 +703,16 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 		stats->rx_frame_count = le32_to_cpu(ch_info->rx_frame_count);
 		stats->cycle_count = le32_to_cpu(ch_info->cycle_count);
 
-
-		tb = ath12k_wmi_tlv_parse_alloc(ab, skb, GFP_ATOMIC);
-		if (IS_ERR(tb)) {
-			ath12k_dbg(ab, ATH12K_DBG_WMI,
-				   "failed to parse tlv for blanking params\n");
-                        spin_unlock_bh(&raw_ctx->chan_lock);
-			return;
-		}
+		ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
+				    ath12k_wmi_tlv_chan_info_parse, &parse);
 
 		blank_stats = &raw_ctx->chan_stat.blank_params;
-		if (tb[WMI_TAG_SCAN_BLANKING_PARAMS_INFO]) {
-			*ev = *(struct ath12k_blanking_params *)tb[WMI_TAG_SCAN_BLANKING_PARAMS_INFO];
-
-			blank_stats->valid = le32_to_cpu(ev->valid);
-			blank_stats->blanking_duration = le32_to_cpu(ev->blanking_duration);
-			blank_stats->blanking_count = le32_to_cpu(ev->blanking_count);
-
+		if (parse.blanking) {
+			blank_stats->valid = 1;
+			blank_stats->blanking_duration =
+				le32_to_cpu(parse.blanking->blanking_duration);
+			blank_stats->blanking_count =
+				le32_to_cpu(parse.blanking->blanking_count);
 			ath12k_dbg(ab, ATH12K_DBG_WMI,
 				   "scan blanking params: valid=%u count=%u duration=%u\n",
 				   blank_stats->valid, blank_stats->blanking_count,
@@ -698,7 +724,6 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 			ath12k_dbg(ab, ATH12K_DBG_WMI,
 				   "scan blanking params not present in event\n");
 		}
-		kfree(tb);
 
 		ath12k_dbg(ab, ATH12K_DBG_WMI,
 			   "offchan stats updated: freq=%u nf=%d tx=%u rx=%u "
@@ -714,6 +739,75 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 			    freq);
 	}
 	spin_unlock_bh(&raw_ctx->chan_lock);
+
+	if (le32_to_cpu(ch_info->err_code) == 0)
+		ath12k_send_scan_radio_chan_stats_event_extn(ar, freq, parse.blanking);
+}
+
+void ath12k_send_scan_radio_chan_stats_event_extn(struct ath12k *ar,
+						  u32 freq,
+						  const struct wmi_scan_blanking_params_info *blanking)
+{
+	struct ath12k_blanking_params blank = {};
+	struct ath12k_link_vif *arvif;
+	struct cfg80211_chan_def *chandef = NULL;
+	enum wmi_phy_mode phymode = MODE_UNKNOWN;
+	const char *phymode_str;
+	struct sk_buff *vendor_skb;
+
+	if (!ath12k_scan_radio_blanking_supported(ar->pdev))
+		return;
+
+	if (blanking) {
+		blank.valid             = 1;
+		blank.blanking_count    = le32_to_cpu(blanking->blanking_count);
+		blank.blanking_duration = le32_to_cpu(blanking->blanking_duration);
+	}
+
+	/* scan radio has exactly one VAP; get its home channel phy mode */
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (arvif->chanctx.def.chan) {
+			chandef = &arvif->chanctx.def;
+			break;
+		}
+	}
+	if (chandef)
+		phymode = ath12k_mac_get_phymode(ar, chandef->chan->band,
+						 chandef->width);
+	phymode_str = ath12k_phymode_str(phymode);
+
+	vendor_skb = cfg80211_vendor_event_alloc(ath12k_ar_to_hw(ar)->wiphy, NULL,
+						 128,
+						 QCA_NL80211_VENDOR_SUBCMD_SCAN_RADIO_CHAN_STATS_INDEX,
+						 GFP_ATOMIC);
+	if (!vendor_skb) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "scan_radio_chan_stats: alloc failed\n");
+		return;
+	}
+
+	if (nla_put_u32(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_FREQ,
+			freq))
+		goto err_free_skb;
+	if (nla_put_u8(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_BLANKING_VALID,
+		       (u8)blank.valid))
+		goto err_free_skb;
+	if (nla_put_u32(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_BLANKING_COUNT,
+			blank.blanking_count))
+		goto err_free_skb;
+	if (nla_put_u32(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_BLANKING_DURATION,
+			blank.blanking_duration))
+		goto err_free_skb;
+	if (nla_put_string(vendor_skb, QCA_WLAN_VENDOR_ATTR_SCAN_RADIO_CHAN_STATS_PHYMODE,
+			   phymode_str))
+		goto err_free_skb;
+
+	cfg80211_vendor_event(vendor_skb, GFP_ATOMIC);
+	return;
+
+err_free_skb:
+	ath12k_err(ar->ab, "scan_radio_chan_stats: nla_put failed\n");
+	kfree_skb(vendor_skb);
 }
 
 /**
@@ -1053,7 +1147,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	uint8_t tx_bf = 0;
 	char *buf;
 	struct nlattr *frame;
-	unsigned int attrsize = QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX * sizeof(struct nlattr *);
+	unsigned int attrsize = (QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX + 1) * sizeof(struct nlattr *);
 	struct sk_buff *skb;
 	struct ieee80211_tx_info *info;
 	struct ath12k_skb_cb *skb_cb;
@@ -1073,6 +1167,8 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	u32 beacon_interval = 100;
 	u32 timeout_ms;
 	u8 effective_link_id;
+	u8 frame_idx;
+	u8 cur_frame_id;
 
 	/* Common setup for both TX and RX functions */
 	ah = ath12k_hw_to_ah(hw);
@@ -1231,6 +1327,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		return -EINVAL;
 	}
 
+	frame_idx = 0;
 	nla_for_each_nested(frame, offchan_frame, rem) {
 		memset(tb, 0, attrsize);
 		ret = nla_parse_nested(tb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_MAX,
@@ -1241,7 +1338,11 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return ret;
 		}
-
+		/* Parse frame_id for this frame; commit only after successful SKB allocation */
+		cur_frame_id = (u8)-1;
+		if (frame_idx < ATH12K_MAX_CUSTOM_TX_PKT &&
+		    tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_ID])
+			cur_frame_id = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_ID]);
 		if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_NSS])
 			nss = nla_get_u8(tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_NSS]);
 		if (tb[QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_FRAME_PREAMBLE])
@@ -1275,6 +1376,11 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 			mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
 			return -ENOMEM;
 		}
+
+		/* Commit frame_id and advance index only after successful SKB allocation */
+		if (frame_idx < ATH12K_MAX_CUSTOM_TX_PKT)
+			raw_pkt_ctx->frame_id[frame_idx] = cur_frame_id;
+		frame_idx++;
 
 		skb_put_data(skb, buf, buf_len);
 
@@ -1565,7 +1671,6 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 						      struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	struct sk_buff *skb;
-	uint32_t data_len;
 	struct ath12k_offchan_stat *stats = NULL;
 	int i;
 
@@ -1579,15 +1684,19 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		return -EINVAL;
 	}
 
-	/* Calculate the data length */
-	data_len = sizeof(struct ath12k_offchan_stat) + (ATH12K_MAX_CUSTOM_TX_PKT * sizeof(u32));
-
-	/* Allocate an skb for the vendor event */
-	skb = cfg80211_vendor_event_alloc(wdev->wiphy, wdev, data_len + 200,
+	skb = cfg80211_vendor_event_alloc(wdev->wiphy, wdev, NLMSG_DEFAULT_SIZE,
 		QCA_NL80211_VENDOR_SUBCMD_WLAN_HOME_OFFCHAN_TX_RX_INDEX, GFP_KERNEL);
 	if (!skb) {
 		ath12k_err(NULL, "Failed to allocate skb for vendor event\n");
 		return -ENOMEM;
+	}
+
+	/* Add interface index so userspace can identify the wdev */
+	if (wdev->netdev &&
+	    nla_put_u32(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_EVENT_TX_IFINDEX, wdev->netdev->ifindex)) {
+		ath12k_err(NULL, "Failed to put ifindex\n");
+		kfree_skb(skb);
+		return -EINVAL;
 	}
 
 	/* Add transaction ID for correlation */
@@ -1657,14 +1766,29 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 		}
 		/* Add status for all frames sent from application */
 		for (i = 0; i < raw_pkt_ctx->num_frames && i < ATH12K_MAX_CUSTOM_TX_PKT; i++) {
-			ath12k_dbg(NULL, ATH12K_DBG_WMI,
-				   "Packet %d status: %u\n", i, raw_pkt_ctx->custom_tx_status[i]);
-			/* Add packet status as indexed attribute within the nest */
-			if (nla_put_u8(skb, i, (u8)raw_pkt_ctx->custom_tx_status[i])) {
-				ath12k_err(NULL, "Failed to put packet %d status\n", i);
+			struct nlattr *status_entry;
+			status_entry = nla_nest_start(skb, i + 1);
+			if (!status_entry) {
+				ath12k_err(NULL, "Failed to create nested attribute for status entry\n");
 				kfree_skb(skb);
 				return -EINVAL;
 			}
+			/* Add packet status id */
+			if (nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_PKT_STATUS_ID, raw_pkt_ctx->frame_id[i])) {
+				ath12k_err(NULL, "Failed to put packet %d status id\n", i);
+				kfree_skb(skb);
+				return -EINVAL;
+			}
+
+			ath12k_dbg(NULL, ATH12K_DBG_WMI,
+				   "Packet %d status: %u\n", i, raw_pkt_ctx->custom_tx_status[i]);
+			/* Add packet status result */
+			if (nla_put_u8(skb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_PKT_STATUS_RESULT, (u8)raw_pkt_ctx->custom_tx_status[i])) {
+				ath12k_err(NULL, "Failed to put packet %d status result\n", i);
+				kfree_skb(skb);
+				return -EINVAL;
+			}
+			nla_nest_end(skb, status_entry);
 		}
 		nla_nest_end(skb, pkt_status_nest);
 	}

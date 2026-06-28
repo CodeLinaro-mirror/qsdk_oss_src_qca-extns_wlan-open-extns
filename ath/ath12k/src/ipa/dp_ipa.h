@@ -49,14 +49,14 @@ struct ipa_header {
 
 #define ATH12K_IPA_TCL_SW_RING 0
 
-#define MAX_IPA_IFACE                       7
+#define MAX_IPA_IFACE                       16
 #define ATH12K_IPA_MAX_IFACE                MAX_IPA_IFACE
 #define ATH12K_IPA_MAX_SYSBAM_PIPE          4
 #define WLAN_IPA_WLAN_HDR_DES_MAC_OFFSET    0
 #define WLAN_IPA_UC_WLAN_HDR_DES_MAC_OFFSET \
 	(sizeof(struct frag_header) + sizeof(struct ipa_header))
 
-#define ATH12K_IPA_MAX_SESSION              MAX_IPA_IFACE //7
+#define ATH12K_IPA_MAX_SESSION              MAX_IPA_IFACE
 
 #define ATH12K_IPA_RX_PIPE                  (ATH12K_IPA_MAX_SYSBAM_PIPE - 1)
 #define ATH12K_IPA_ENABLE_MASK              BIT(0)
@@ -102,6 +102,7 @@ struct ipa_header {
 #define ATH12K_IPA_SESSION_ID_SHIFT			1
 #define MAX_IPA_RX_FREE_DESC				64
 #define ATH12K_IPA_WDI3					3
+#define ATH12K_IPA_WDI_VER_INVALID			0xFF
 
 #define ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, mask) \
 	(((ipa_cfg)->ipa_config & (mask)) == (mask))
@@ -134,20 +135,13 @@ struct ipa_header {
 
 #define IPA_SET_RX_BUF_SMMU_MAP(ab, skb) \
 	do { \
-		if (IPA_CTX(ab) && \
-			IPA_CTX(ab)->ipa_ops && \
-			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap) \
-			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap \
-				(ab, skb, DP_RX_BUFFER_SIZE, 1, \
+		ath12k_dp_ipa_handle_buf_smmu_map_unmap(ab, skb, DP_RX_BUFFER_SIZE, 1, \
 				IPA_CTX(ab)->hdl); \
 	} while (0)
 
 #define IPA_SET_RX_BUF_SMMU_UNMAP(ab, skb, unmap) \
 	do { \
-		if (IPA_CTX(ab) && IPA_CTX(ab)->ipa_ops && \
-			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap) \
-			IPA_CTX(ab)->ipa_ops->ipa_set_rx_buf_smmu_map_unmap \
-				(ab, skb, DP_RX_BUFFER_SIZE, 0, \
+		ath12k_dp_ipa_handle_buf_smmu_map_unmap(ab, skb, DP_RX_BUFFER_SIZE, 0, \
 				IPA_CTX(ab)->hdl); \
 		if (unmap) \
 			ATH12K_DMA_UNMAP_DEFRAG_SKB(ab, skb); \
@@ -160,14 +154,10 @@ struct ipa_header {
 	ath12k_hal_srng_access_end(ab, tcl_ring);
 
 #define IPA_TX_BUFFER_FREE(ab) \
-	if (IPA_CTX(ab) && IPA_CTX(ab)->ipa_ops && \
-	    IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_free) \
-		IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_free(ab);
+	ath12k_dp_ipa_uc_detach(ab);
 
 #define IPA_TX_BUFFER_ALLOC(ab) \
-	if (IPA_CTX(ab) && IPA_CTX(ab)->ipa_ops && \
-	    IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_alloc) \
-		IPA_CTX(ab)->ipa_ops->ipa_tx_buffer_alloc(ab);
+	dp_ipa_uc_attach(ab);
 
 #define RETURN_IPA_CODE(val) return val
 
@@ -285,20 +275,39 @@ struct dp_ipa_net_device_priv {
 	int ifindex;
 };
 
-struct ath12k_ipa_ops {
-	int (*ipa_register_is_ipa_ready)(struct ath12k_base *ab);
-	void (*ipa_deregister_is_ipa_ready)(void);
-	int (*ipa_setup_rx_refill_buf_ring)(struct ath12k_base *ab);
-	void (*ipa_cleanup_rx_refill_buf_ring)(struct ath12k_base *ab);
-	int (*ipa_smmu_mem_map_setup)(struct ath12k_base *ab, bool ipa_present);
-	u32 (*ipa_set_default_routing)(u32 reo_dest);
-	int (*ipa_set_rx_buf_smmu_map_unmap)(struct ath12k_base *ab,
-					     struct sk_buff *skb,
-					     u32 size, bool create,
-					     ipa_wdi_hdl_t hdl);
-	int (*ipa_uc_ol_deinit)(struct ath12k_base *ab);
-	int (*ipa_tx_buffer_alloc)(struct ath12k_base *ab);
-	int (*ipa_tx_buffer_free)(struct ath12k_base *ab);
+struct ath12k_ipa_arch_ops {
+	int (*dp_ipa_init)(struct ath12k_base *ab);
+	int (*dp_srng_cleanup)(struct ath12k_base *ab);
+	int (*dp_srng_setup)(struct ath12k_base *ab);
+	void (*dp_srng_get_rsrc)(struct ath12k_base *ab);
+	u32 (*dp_rx_default_routing)(u32 reo_dest);
+	int (*dp_rxdma_buf_setup)(struct ath12k_base *ab);
+	int (*dp_get_tx_bank_id)(struct ath12k_base *ab, u8 *bank_id);
+	int (*dp_rx_buf_smmu_map_unmap)(struct ath12k_base *ab, bool create);
+	int (*dp_srng_rx_init)(struct ath12k_base *ab);
+	void (*ipa_set_rx_doorbell_paddr)(struct ath12k_ipa *ipa_ctx);
+	void (*ipa_set_tx_doorbell_paddr)(struct ath12k_ipa *ipa_ctx);
+	void (*ipa_tx_comp_ring_init_hp)(struct ath12k_ipa *ipa_ctx);
+	int (*ipa_tx_buffer_attach)(struct ath12k_base *ab);
+	void (*dp_rx_pipe_set_rdi)(struct ath12k_ipa *ipa_ctx,
+				   struct ipa_wdi_pipe_setup_info_smmu *rx_smmu);
+	u8 (*ipa_get_wdi_version)(void);
+	void (*ipa_iface_setup_set_metadata)(struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_setup_set_vp_num)(struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_setup_set_intf_idx)(struct ipa_wdi_reg_intf_in_params *in,
+					     int intf_idx);
+	int (*ipa_client_connect_ex)(struct ath12k_ipa *ipa_ctx,
+				     enum ipa_wlan_event event,
+				     u32 vdev_id,
+				     const u8 mac[ETH_ALEN],
+				     struct dp_ipa_net_device_priv *dev,
+				     bool is_mlo);
+	int (*ipa_client_disconnect)(struct ath12k_ipa *ipa_ctx,
+				     enum ipa_wlan_event event,
+				     u32 vdev_id,
+				     const u8 mac[ETH_ALEN],
+				     struct dp_ipa_net_device_priv *dev,
+				     bool is_mlo);
 };
 
 struct ath12k_ipa_mac_addr {
@@ -682,7 +691,6 @@ struct ath12k_ipa_config {
 
 struct ath12k_ipa {
 	struct ath12k_base *ab;
-	struct ath12k_ipa_ops *ipa_ops;
 	struct ath12k_ipa_dp_tx_rsc ipa_uc_tx_rsc;
 	struct ath12k_ipa_dp_rx_rsc ipa_uc_rx_rsc;
 	struct ath12k_ipa_dp_tx_rsc ipa_uc_tx_alt_rsc;
@@ -743,7 +751,7 @@ struct ath12k_ipa {
 	u32 curr_cons_bw;
 	bool is_db_ddr_mapped;
 	bool ipa_first_tx_db_access;
-	const struct ipa_wifi_ops *wifi_hw_ops;
+	struct ath12k_ipa_arch_ops *arch_ops;
 };
 
 /**
@@ -909,6 +917,208 @@ void ath12k_debugfs_register_ipa_extn(struct ath12k *ar);
 void ath12k_wmi_copy_resource_config_ipa(struct ath12k_base *ab,
 					 struct ath12k_wmi_resource_config_params *wmi_cfg,
 					 struct ath12k_wmi_resource_config_arg *tg_cfg);
+
+int ath12k_dp_ipa_get_shared_mem_info(struct ath12k_base *ab,
+				      shared_mem_t *shared_mem, void *cpu_addr,
+				      dma_addr_t dma_addr, u32 size);
+int ath12k_dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
+						   struct sk_buff *skb, u32 size,
+						   bool create, ipa_wdi_hdl_t hdl);
+int ath12k_dp_ipa_uc_detach(struct ath12k_base *ab);
+int dp_ipa_uc_attach(struct ath12k_base *ab);
+int ath12k_dp_ipa_register_is_ipa_ready(struct ath12k_base *ab);
+int ath12k_dp_ipa_uc_ol_deinit(struct ath12k_base *ab);
+int ath12k_dp_ipa_sg_tbl_setup(struct device *dev, struct sg_table *sgt,
+			       void *cpu_addr, dma_addr_t dma_addr, size_t size);
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,
+						   struct ipa_wdi_reg_intf_in_params *in)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_metadata)
+		ipa_ctx->arch_ops->ipa_iface_setup_set_metadata(in);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(struct ath12k_ipa *ipa_ctx,
+						 struct ipa_wdi_reg_intf_in_params *in)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num)
+		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(in);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(struct ath12k_ipa *ipa_ctx,
+						   struct ipa_wdi_reg_intf_in_params *in,
+						   int intf_idx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_intf_idx)
+		ipa_ctx->arch_ops->ipa_iface_setup_set_intf_idx(in, intf_idx);
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_ipa_client_connect_ex(struct ath12k_ipa *ipa_ctx,
+					    enum ipa_wlan_event event,
+					    u32 vdev_id,
+					    const u8 mac[ETH_ALEN],
+					    struct dp_ipa_net_device_priv *dev,
+					    bool is_mlo)
+{
+	int ret = 0;
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_client_connect_ex) {
+		ret = ipa_ctx->arch_ops->ipa_client_connect_ex(ipa_ctx, event, vdev_id,
+							       mac, dev, is_mlo);
+	}
+
+	return ret;
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_ipa_client_disconnect(struct ath12k_ipa *ipa_ctx,
+					    enum ipa_wlan_event event,
+					    u32 vdev_id,
+					    const u8 mac[ETH_ALEN],
+					    struct dp_ipa_net_device_priv *dev,
+					    bool is_mlo)
+{
+	int ret = 0;
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_client_disconnect) {
+		ret = ipa_ctx->arch_ops->ipa_client_disconnect(ipa_ctx, event, vdev_id,
+							       mac, dev, is_mlo);
+	}
+
+	return ret;
+}
+
+static inline int ath12k_dp_ipa_arch_op_srng_setup(struct ath12k_base *ab)
+{
+	int ret = 0;
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_srng_setup) {
+		ret = ipa_ctx->arch_ops->dp_srng_setup(ab);
+	}
+
+	return ret;
+}
+
+static inline int ath12k_dp_ipa_arch_op_srng_cleanup(struct ath12k_base *ab)
+{
+	int ret = 0;
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_srng_cleanup) {
+		ret = ipa_ctx->arch_ops->dp_srng_cleanup(ab);
+	}
+
+	return ret;
+}
+
+static inline void ath12k_dp_ipa_arch_op_get_srng_rsrc(struct ath12k_base *ab)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_srng_get_rsrc)
+		ipa_ctx->arch_ops->dp_srng_get_rsrc(ab);
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_rxdma_buf_setup(struct ath12k_base *ab)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_rxdma_buf_setup)
+		return ipa_ctx->arch_ops->dp_rxdma_buf_setup(ab);
+
+	return 0;
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_get_tx_bank_id(struct ath12k_base *ab, u8 *bank_id)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_get_tx_bank_id)
+		return ipa_ctx->arch_ops->dp_get_tx_bank_id(ab, bank_id);
+
+	return -EINVAL;
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_rx_buf_smmu_map_unmap)
+		return ipa_ctx->arch_ops->dp_rx_buf_smmu_map_unmap(ab, create);
+
+	return 0;
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_ipa_init(struct ath12k_base *ab)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_ipa_init)
+		return ipa_ctx->arch_ops->dp_ipa_init(ab);
+
+	return -EINVAL;
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_set_tx_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_set_tx_doorbell_paddr)
+		ipa_ctx->arch_ops->ipa_set_tx_doorbell_paddr(ipa_ctx);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_set_rx_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_set_rx_doorbell_paddr)
+		ipa_ctx->arch_ops->ipa_set_rx_doorbell_paddr(ipa_ctx);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_tx_comp_ring_init_hp(struct ath12k_ipa *ipa_ctx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_tx_comp_ring_init_hp)
+		ipa_ctx->arch_ops->ipa_tx_comp_ring_init_hp(ipa_ctx);
+}
+
+static inline int
+ath12k_dp_ipa_arch_op_tx_buffer_attach(struct ath12k_base *ab)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_tx_buffer_attach)
+		return ipa_ctx->arch_ops->ipa_tx_buffer_attach(ab);
+
+	return 0;
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_rx_pipe_set_rdi(struct ath12k_ipa *ipa_ctx,
+				      struct ipa_wdi_pipe_setup_info_smmu *rx_smmu)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_rx_pipe_set_rdi)
+		ipa_ctx->arch_ops->dp_rx_pipe_set_rdi(ipa_ctx, rx_smmu);
+}
+
+static inline u8
+ath12k_dp_ipa_arch_op_get_wdi_version(struct ath12k_ipa *ipa_ctx)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_get_wdi_version)
+		return ipa_ctx->arch_ops->ipa_get_wdi_version();
+
+	return ATH12K_IPA_WDI_VER_INVALID;
+}
 
 #ifndef ETH_P_WAPI
 #define ETH_P_WAPI 0x88B4

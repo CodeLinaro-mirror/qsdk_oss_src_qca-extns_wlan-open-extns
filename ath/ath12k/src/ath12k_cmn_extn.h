@@ -6,6 +6,8 @@
 #ifndef ATH12K_CMN_EXTN_H
 #define ATH12K_CMN_EXTN_H
 
+#include <linux/ieee80211.h>
+#include <linux/if_ether.h>
 #include <linux/mhi.h>
 #include <linux/uuid.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
@@ -39,6 +41,8 @@ struct ath12k_sta;
 struct ath12k_wmi_resource_config_params;
 struct ath12k_wmi_resource_config_arg;
 struct wmi_scan_event;
+struct sk_buff;
+struct wmi_scan_blanking_params_info;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -51,6 +55,10 @@ struct mgmt_srng;
 struct ath12k_vif_extn {
 	struct list_head peer_240mhz_list_extn;
 	spinlock_t data_lock;
+	u8 ssid[IEEE80211_MAX_SSID_LEN];
+	u8 ssid_len;
+	u8 bssid[ETH_ALEN];
+	bool bssid_set;
 };
 
 struct ath12k_dp_vif_extn {
@@ -208,6 +216,7 @@ struct ath12k_skb_tx_param {
  * @ts_foreign_exit:      Foreign chan exit timestamp
  * @ts_scan_done:         Scan complete timestamp
  * @raw_ctx_mutex:        Mutex to serialize raw context operations (held until user event)
+ * @frame_id:             Per-frame IDs supplied by userspace, echoed back in the TX status event.
  */
 struct ath12k_raw_pkt_ctx {
 	struct sk_buff_head  pkt_list;
@@ -232,7 +241,7 @@ struct ath12k_raw_pkt_ctx {
 	ktime_t ts_foreign_exit;
 	ktime_t ts_scan_done;
 	struct mutex raw_ctx_mutex;
-
+	u8 frame_id[ATH12K_MAX_CUSTOM_TX_PKT];
 };
 
 #define DCS_TX_MAX_CU          30
@@ -353,6 +362,8 @@ struct ath12k_extn {
 
 	/* Continuous Background Scan structure */
 	struct ath12k_cbs cbs;
+
+	u8 scan_blanking_mode;
 };
 
 /**
@@ -463,6 +474,8 @@ struct ath12k_dp_rx_scan_radio_stats {
 
 struct ath12k_pdev_mon_dp_extn {
 	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
+	struct ath12k_dp_mon_tlv_logger *rx_tlv_log;
+	struct ath12k_dp_mon_tlv_logger *tx_tlv_log;
 };
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
@@ -642,6 +655,18 @@ static inline void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 {
 }
 
+static inline void ath12k_send_scan_radio_chan_stats_event_extn(struct ath12k *ar,
+								u32 freq,
+								const struct wmi_scan_blanking_params_info *blanking)
+{
+}
+
+static inline int ath12k_vendor_get_scan_blanking_mode_extn(struct wiphy *wiphy,
+								  u64 *value)
+{
+	return -EOPNOTSUPP;
+}
+
 static inline void ath12k_update_offchan_ts_extn(struct ath12k *ar,
 						 u32 event_type)
 {
@@ -697,8 +722,10 @@ ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 }
 
 static inline void
-ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
-					   struct ath12k_wmi_scan_req_arg *arg)
+ath12k_wmi_prepare_scan_req_extn(struct ath12k *ar,
+				 struct ath12k_wmi_scan_req_arg *arg,
+				 const u8 *ssid,
+				 u8 ssid_len)
 {
 }
 
@@ -1052,6 +1079,10 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 				      u32 freq,
 				      struct wmi_chan_info_event *ch_info,
 				      int channel_idx);
+void ath12k_send_scan_radio_chan_stats_event_extn(struct ath12k *ar,
+						  u32 freq,
+						  const struct wmi_scan_blanking_params_info *blanking);
+int ath12k_vendor_get_scan_blanking_mode_extn(struct wiphy *wiphy, u64 *value);
 
 /**
  * ath12k_update_offchan_ts_extn - Update offchan timestamps based on scan events
@@ -1191,17 +1222,19 @@ void ath12k_wmi_offchan_txrx_update_scan_params_extn(struct ath12k *ar,
 					     struct ath12k_wmi_scan_req_arg *arg);
 
 /**
- * ath12k_wmi_update_strict_passive_scan_extn - Update strict passive scan
- *                                              setting for 5 GHz scans
+ * ath12k_wmi_prepare_scan_req_extn - Prepare scan request extension data
  * @ar: Pointer to the ath12k radio structure
  * @arg: Pointer to the scan request parameters
+ * @ssid: Pointer to the scan request SSID
+ * @ssid_len: Length of the scan request SSID
  *
- * Update the strict passive scan flag in the scan request based on the
- * userspace radio configuration. The flag is applied only when the scan
- * request includes a 5 GHz channel.
+ * Store scan request SSID information for the scan vif and update strict
+ * passive scan parameter from userspace radio configuration when applicable.
  */
-void ath12k_wmi_update_strict_passive_scan_extn(struct ath12k *ar,
-						struct ath12k_wmi_scan_req_arg *arg);
+void ath12k_wmi_prepare_scan_req_extn(struct ath12k *ar,
+				      struct ath12k_wmi_scan_req_arg *arg,
+				      const u8 *ssid,
+				      u8 ssid_len);
 
 /**
  * ath12k_wmi_start_scan_init_extn - Initialize CBS scan offset in scan args
@@ -1252,7 +1285,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
                                          unsigned long valid_links,
                                          u8 *primary_link_id);
 
-void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct ieee80211_hdr *hdr,
+void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct sk_buff *skb,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);
 
 bool ath12k_cbs_skip_scan_event_and_send_scan_complete(

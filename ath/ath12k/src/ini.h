@@ -258,6 +258,10 @@
 #define ATH12K_DP_TQM2PPE_RING_SIZE_MAX		32768
 #define ATH12K_DP_TQM2PPE_RING_SIZE_DEFAULT	(ath12k_dp_ring_cfg->tqm2ppe_ring_size)
 
+#define ATH12K_DP_NUM_CLIENTS_MIN	56
+#define ATH12K_DP_NUM_CLIENTS_MAX	64
+#define ATH12K_DP_NUM_CLIENTS_MAX_DEFAULT	(ath12k_dp_ring_cfg->dp_num_clients_max)
+
 #define ATH12K_DP_RXDMA_MON_STATUS_RING_SIZE_MIN 1024
 #define ATH12K_DP_RXDMA_MON_STATUS_RING_SIZE_MAX 2048
 #define ATH12K_DP_RXDMA_MON_STATUS_RING_SIZE_DEFAULT 1024
@@ -307,6 +311,8 @@
 	ATH12K_CFG(ATH12K_CFG_NOL_AUTO_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_REO_MGMT_PATH_DISABLE) \
 	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
+	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
+	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -357,6 +363,7 @@
 	ATH12K_CFG(ATH12K_CFG_DP_TX_COMPL_RING_SIZE_4) \
 	ATH12K_CFG(ATH12K_CFG_DP_PPE_WBM2SW_RING_SIZE) \
 	ATH12K_CFG(ATH12K_CFG_DP_TQM2PPE_RING_SIZE) \
+	ATH12K_CFG(ATH12K_CFG_DP_NUM_CLIENTS_MAX) \
 	ATH12K_CFG(ATH12K_CFG_DP_WBM_SFE_HIGH_WATERMARK) \
 	ATH12K_CFG(ATH12K_CFG_DP_WBM_MGMT_HIGH_WATERMARK) \
 	ATH12K_CFG(ATH12K_CFG_DP_WBM_PPE_HIGH_WATERMARK) \
@@ -368,6 +375,7 @@
 	ATH12K_CFG(ATH12K_CFG_DP_RXDMA_MONITOR_BUF_RING_SIZE) \
 	ATH12K_CFG(ATH12K_CFG_DP_RXDMA_MONITOR_DST_RING_SIZE) \
 	ATH12K_CFG(ATH12K_CFG_DP_MON_NUM_PPDU_DESC) \
+	ATH12K_CFG(ATH12K_CFG_DP_UMCMN_INTR_HANDLING_DISABLE) \
 
 #define ATH12K_DP_UMAC_RESET_TIMEOUT_MIN	100
 #define ATH12K_DP_UMAC_RESET_TIMEOUT_MAX	10000
@@ -390,6 +398,20 @@
 #define ATH12K_CFG_LOW_MEM_SYSTEM \
 	ATH12K_CFG_INI_BOOL("low_mem_system", false, \
 	"Low Memory System")
+
+/**
+ * ATH12K_CFG_RF_SWITCH_CONFIG - Boot-time 5G RF path selection
+ *
+ * false (0) = Primary path:   full 5G range (4890-5930 MHz, ch 36-177) [default]
+ * true  (1) = Secondary path: high 5G range (5490-5930 MHz, ch 100-177)
+ *
+ * When set to 1, the driver instructs firmware via resource_config.rf_path in
+ * WMI_INIT_CMDID, selects EXT2 frequency caps for the regulatory range, and
+ * configures the initial channel list to only include the high 5G range.
+ */
+#define ATH12K_CFG_RF_SWITCH_CONFIG \
+	ATH12K_CFG_INI_BOOL("rf_switch_config", false, \
+	"RF path: false=primary/full 5G range (default), true=secondary/high 5G range")
 
 #define ATH12K_CFG_TWT_INTERFERENCE_THRESH_SETUP \
 	ATH12K_CFG_INI_UINT("twt_interference_thresh_setup", \
@@ -705,6 +727,13 @@
 	ATH12K_DP_TQM2PPE_RING_SIZE_DEFAULT, \
 	ATH12K_CFG_VALUE_OR_DEFAULT, "DP tqm2ppe ring Size")
 
+#define ATH12K_CFG_DP_NUM_CLIENTS_MAX \
+	ATH12K_CFG_INI_UINT("dp_num_client_max", \
+	ATH12K_DP_NUM_CLIENTS_MIN, \
+	ATH12K_DP_NUM_CLIENTS_MAX, \
+	ATH12K_DP_NUM_CLIENTS_MAX_DEFAULT, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, "DP num client max")
+
 #define ATH12K_CFG_DP_WBM_SFE_HIGH_WATERMARK \
 	ATH12K_CFG_INI_UINT("dp_wbm_sfe_high_watermark", \
 	ATH12K_DP_WBM_SFE_HIGH_WATERMARK_MIN, \
@@ -839,6 +868,23 @@
 	ATH12K_CFG_INI_STRING("cumac_band_priority", \
 	0, 31, "", \
 	"CUMAC chip selection band priority (space-separated: \"2GHz 5GHz 6GHz\")")
+
+#define ATH12K_CFG_NUM_VDEVS_MIN	1
+#define ATH12K_CFG_NUM_VDEVS_MAX	17
+/* 0 means "use memory profile default" - preserves backward compatibility */
+#define ATH12K_CFG_NUM_VDEVS_DEFAULT	0
+
+#define ATH12K_CFG_NUM_VDEVS \
+	ATH12K_CFG_INI_UINT("num_vdevs", \
+	ATH12K_CFG_NUM_VDEVS_MIN, \
+	ATH12K_CFG_NUM_VDEVS_MAX, \
+	ATH12K_CFG_NUM_VDEVS_DEFAULT, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, \
+	"Number of vdevs per radio (0 = use memory profile default, normal mode only)")
+
+#define ATH12K_CFG_DP_UMCMN_INTR_HANDLING_DISABLE \
+	ATH12K_CFG_INI_BOOL("dp_umcmn_intr_disable", false, \
+	"Disable umcmn interrupt handling")
 
 /**
  * enum ath12k_cfg_data_type - Enum for CFG/INI types

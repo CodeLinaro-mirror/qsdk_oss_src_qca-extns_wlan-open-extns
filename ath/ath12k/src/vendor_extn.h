@@ -499,6 +499,12 @@ ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
 				 struct ieee80211_regdomain *regd)
 {
 }
+
+static inline int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
+					const struct ath12k_wmi_nfcal_power_event *param)
+{
+	return -1;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -763,6 +769,10 @@ enum ath12k_chan_144_state {
 	CHAN_144_DIS = 0,
 	CHAN_144_EN = 1,
 };
+
+int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
+				    const struct ath12k_wmi_nfcal_power_event *param);
+
 #endif /* CPTCFG_QCN_EXTN */
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
@@ -924,8 +934,21 @@ enum srtype {
 };
 
 #define SR_TYPE_LENGTH 16
+#define IEEE80211_HE_LTF_DEFAULT 0x0
+#define IEEE80211_HE_LTF_1X      0x1
+#define IEEE80211_HE_LTF_2X      0x2
+#define IEEE80211_HE_LTF_4X      0x3
 #define IEEE80211_EHT_LTF_4X      0x3
 #define IEEE80211_EHT_BW_IDX_MAX  4
+
+#define IEEE80211_HE_AR_LDPC_DEFAULT 3
+#define IEEE80211_HE_AR_LDPC_SHIFT   16
+#define IEEE80211_HE_AR_LTF_MASK     0x00ff
+#define IEEE80211_HE_AR_SGI_MASK     0xff00
+#define IEEE80211_HE_AR_SGI_S        8
+#define IEEE80211_HE_AR_DEFAULT_LTF_SGI_COMBINATION 0xffff
+
+#define IEEE80211_HEOP_RTS_THRESHOLD_DISABLED 0x3ff
 
 /* GI Modes. */
 #define IEEE80211_GI_0DOT8_US           0   /*800 nano secs/0.8 us is default/GI disabled mode in HT,VHT, HE*/
@@ -950,4 +973,7 @@ enum srtype {
 #define MAX_VHT80_RATE_MASK   0x3bffffff /* NSS=1 MCS 0-9, NSS=2 MCS 0-9, NSS=3 MCS 0-5 7-9 */
 
 #define MAX_VHT_SGI_MASK   0x3ff /* MCS 0-9 */
+
+const char *ath12k_phymode_str(enum wmi_phy_mode mode);
+
 #endif /* VENDOR_EXTN_H */

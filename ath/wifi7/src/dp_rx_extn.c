@@ -19,6 +19,9 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 					struct link_peer_rx_tid_stats *stats,
 					struct rx_tlv_info_1 *prev_tlv_info)
 {
+#ifdef CPTCFG_MAC80211_PPE_SUPPORT
+	struct netdev_hw_offload_ops __rcu *offload_ops;
+#endif
 	struct rx_msdu_desc_info *rx_msdu_info;
 	struct rx_mpdu_desc_info *rx_mpdu_info;
 	struct rx_tlv_info_1 *tlv_info;
@@ -87,11 +90,15 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			msdu->mark =
 			 u32_replace_bits(msdu->mark, macid,
 					  ATH12K_EGRESS_MACID_MASK);
+			if (!peer->dev)
+				return 1;
+
+			offload_ops = READ_ONCE(peer->dev->offload_ops);
 			if ((rx_mpdu_info->flow_info.flow_metadata &
 			    ATH12K_RX_FSE_FLOW_MATCH_USE_PPE)) {
 				dp->device_stats.fast_rx[ring_id][device_id]++;
-				if (!peer->dev->offload_ops->recv(peer->dev,
-								 msdu)) {
+				if (offload_ops &&
+				    offload_ops->recv(peer->dev, msdu)) {
 					dev_kfree_skb_any(msdu);
 					return 0;
 				}

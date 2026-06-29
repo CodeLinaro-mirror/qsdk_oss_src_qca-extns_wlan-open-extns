@@ -144,7 +144,6 @@ ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(struct ath12k_ipa *ipa_ctx)
 }
 
 static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
-	.dp_ipa_init = ath12k_wifi8_dp_ipa_init,
 	.dp_srng_cleanup = ath12k_wifi8_dp_ipa_srng_cleanup,
 	.dp_srng_setup = ath12k_wifi8_dp_ipa_srng_setup,
 	.dp_srng_get_rsrc = ath12k_wifi8_dp_ipa_srng_get_rsrc,
@@ -194,6 +193,12 @@ ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 		return -ENOMEM;
 	memset(dp_wifi8->extn.ipa, 0, sizeof(struct ath12k_dp_wifi8_ipa));
 	dp_wifi8->extn.ipa->dp_wifi8 = dp_wifi8;
+
+	ret = ath12k_dp_ipa_register_is_ipa_ready(ab);
+	if (ret) {
+		ath12k_err(ab, "IPA: ipa init failed");
+		ath12k_dp_ipa_plugin_deregister_ops_extn(ab);
+	}
 
 	return ret;
 }

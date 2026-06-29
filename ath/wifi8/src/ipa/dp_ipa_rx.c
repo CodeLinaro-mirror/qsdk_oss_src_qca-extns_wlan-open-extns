@@ -305,7 +305,6 @@ static int ath12k_wifi8_dp_ipa_reo_srng_setup(struct ath12k_base *ab)
 		goto err_reo_cleanup;
 	}
 
-	/*TODO: Disable cookie conversion */
 	return 0;
 
 err_reo_cleanup:
@@ -348,7 +347,71 @@ err_reo_free:
 	return ret;
 }
 
-/**
+/*
+ * ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap() - Bulk IPA SMMU map/unmap for IPA RX pool
+ * @ab: Pointer to ath12k base structure
+ * @create: true to map, false to unmap
+ *
+ * Walks the RX descriptor pool and maps (or unmaps) every PPE/IPA pool buffer
+ * into the IPA SMMU domain.  Called during IPA disconnect (create=false) to
+ * release SMMU mappings that were created per-buffer inside
+ * ath12k_dp_rx_bufs_replenish() at ring init time.
+ *
+ * Return: 0 on success, negative error code on first failure.
+ */
+int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
+{
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_rx_desc_info *rx_desc;
+	struct sk_buff *skb;
+	unsigned int processed = 0, failed = 0;
+	int i, j, ret = 0;
+
+	if (!ipa_is_ready()) {
+		ath12k_ipa_err(ab, "IPA is not ready");
+		return 0;
+	}
+
+	spin_lock_bh(&dp->rx_desc_lock);
+	for (i = 0; i < ab->hw_params->num_rx_spt_pages; i++) {
+		rx_desc = dp->rxbaddr[i];
+		if (!rx_desc)
+			continue;
+
+		for (j = 0; j < ATH12K_MAX_SPT_ENTRIES; j++) {
+			skb = rx_desc[j].skb;
+			if (!skb)
+				continue;
+
+			/* For unmap: only release buffers that were mapped */
+			if (!create &&
+			    !(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
+				continue;
+
+			ret = ath12k_dp_ipa_handle_buf_smmu_map_unmap(
+					ab, skb, DP_RX_BUFFER_SIZE,
+					create, ipa_ctx->hdl);
+			if (ret) {
+				ath12k_ipa_err(ab,
+					       "IPA SMMU %s failed for RX buf: %d\n",
+					       create ? "map" : "unmap", ret);
+				failed++;
+				goto unlock;
+			}
+			processed++;
+		}
+	}
+unlock:
+	spin_unlock_bh(&dp->rx_desc_lock);
+
+	ath12k_ipa_info(ab, "ath12k IPA RX SMMU %s: processed=%u failed=%u\n",
+			create ? "map" : "unmap", processed, failed);
+
+	return ret;
+}
+
+/*
  * ath12k_wifi8_dp_rx_ring_free_ipa() - Free IPA RX ring resources
  * @ab: Pointer to ath12k base structure
  *

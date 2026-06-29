@@ -47,19 +47,190 @@ static void ath12k_wifi8_dp_ipa_srng_get_rsrc(struct ath12k_base *ab)
 	return;
 }
 
+/**
+ * ath12k_wifi8_dp_ipa_set_tx_doorbell_paddr() - Program TQM2PPE ring HP_ADDR
+ *	registers with IPA's TX completion doorbell physical address
+ * @ipa_ctx: IPA context holding the TX completion doorbell PA and ring state
+ *
+ * After this call the TQM2PPE ring hardware will DMA-write the updated head
+ * pointer to IPA's doorbell PA each time TQM appends a new TX-completion
+ * entry, letting IPA detect new completions without polling.
+ */
 static void ath12k_wifi8_dp_ipa_set_tx_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
 {
-	return;
+	struct ath12k_base *ab = ipa_ctx->ab;
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa = dp_wifi8->extn.ipa;
+	struct ath12k_hal *hal = &ab->hal;
+	struct hal_srng *tqm_srng;
+	u64 hp_addr = ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_paddr;
+	u32 reg_base;
+	u32 hp_lsb_off, hp_msb_off;
+	int ring_id;
+
+	/*
+	 * HP_ADDR_LSB/MSB are at a uniform offset from BASE_LSB for all
+	 * UMAC DST rings (REO, TQM2PPE, WBM).  Derive it from the REO1
+	 * register map, which is the reference layout.
+	 */
+	hp_lsb_off = HAL_REO1_RING_HP_ADDR_LSB(hal) - HAL_REO1_RING_BASE_LSB(hal);
+	hp_msb_off = HAL_REO1_RING_HP_ADDR_MSB(hal) - HAL_REO1_RING_BASE_LSB(hal);
+
+	ring_id = dp_wifi8_ipa->tqm2ipa_ring.ring_id;
+	tqm_srng = &ab->hal.srng_list[ring_id];
+	reg_base = tqm_srng->hwreg_base[HAL_SRNG_REG_GRP_R0];
+
+	ath12k_ipa_info(ab, "set_tx_db: ring_id=%d reg_base=0x%x "
+	       "hp_lsb_off=0x%x hp_msb_off=0x%x "
+	       "=> LSB_reg=0x%x MSB_reg=0x%x "
+	       "hp_addr=0x%llx (lsb=0x%x msb=0x%x)",
+	       ring_id, reg_base,
+	       hp_lsb_off, hp_msb_off,
+	       reg_base + hp_lsb_off, reg_base + hp_msb_off,
+	       hp_addr,
+	       (u32)(hp_addr & HAL_ADDR_LSB_REG_MASK),
+	       (u32)(hp_addr >> HAL_ADDR_MSB_REG_SHIFT));
+
+	ath12k_hif_write32(ab, reg_base + hp_lsb_off,
+			   hp_addr & HAL_ADDR_LSB_REG_MASK);
+	ath12k_hif_write32(ab, reg_base + hp_msb_off,
+			   hp_addr >> HAL_ADDR_MSB_REG_SHIFT);
 }
 
+/**
+ * ath12k_wifi8_dp_ipa_set_rx_doorbell_paddr() - Program REO2SW5 ring HP_ADDR
+ *	registers with IPA's RX ready doorbell physical address
+ * @ipa_ctx: IPA context holding the RX ready doorbell PA and ring state
+ *
+ * After this call the REO2SW5 ring hardware will DMA-write the updated head
+ * pointer to IPA's doorbell PA each time REO steers a new RX packet to the
+ * IPA ring, letting IPA detect new RX frames without polling.
+ */
 static void ath12k_wifi8_dp_ipa_set_rx_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
 {
-	return;
+	struct ath12k_base *ab = ipa_ctx->ab;
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa = dp_wifi8->extn.ipa;
+	struct ath12k_hal *hal = &ab->hal;
+	struct hal_srng *reo_srng;
+	u64 hp_addr = ipa_ctx->ipa_uc_rx_rsc.rx_ready_doorbell_paddr;
+	u32 reg_base;
+	u32 hp_lsb_off, hp_msb_off;
+	int ring_id;
+
+	hp_lsb_off = HAL_REO1_RING_HP_ADDR_LSB(hal) - HAL_REO1_RING_BASE_LSB(hal);
+	hp_msb_off = HAL_REO1_RING_HP_ADDR_MSB(hal) - HAL_REO1_RING_BASE_LSB(hal);
+
+	ring_id = dp_wifi8_ipa->reo2sw5.ring_id;
+	reo_srng = &ab->hal.srng_list[ring_id];
+	reg_base = reo_srng->hwreg_base[HAL_SRNG_REG_GRP_R0];
+
+	ath12k_ipa_info(ab, "set_rx_db: ring_id=%d reg_base=0x%x "
+	       "hp_lsb_off=0x%x hp_msb_off=0x%x "
+	       "=> LSB_reg=0x%x MSB_reg=0x%x "
+	       "hp_addr=0x%llx (lsb=0x%x msb=0x%x)",
+	       ring_id, reg_base,
+	       hp_lsb_off, hp_msb_off,
+	       reg_base + hp_lsb_off, reg_base + hp_msb_off,
+	       hp_addr,
+	       (u32)(hp_addr & HAL_ADDR_LSB_REG_MASK),
+	       (u32)(hp_addr >> HAL_ADDR_MSB_REG_SHIFT));
+
+	ath12k_hif_write32(ab, reg_base + hp_lsb_off,
+			   hp_addr & HAL_ADDR_LSB_REG_MASK);
+	ath12k_hif_write32(ab, reg_base + hp_msb_off,
+			   hp_addr >> HAL_ADDR_MSB_REG_SHIFT);
 }
 
+/**
+ * ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp() - Initialize TQM2PPE ring head
+ *	pointer and ring IPA TX completion doorbell.
+ * @ipa_ctx: IPA context for this device instance
+ *
+ * Remaps the TQM2PPE ring's hp_addr to point directly at IPA's TX completion
+ * doorbell virtual address, writes the initial cached HP value to TQM hardware,
+ * and rings the IPA doorbell with the same value so IPA starts consuming
+ * pre-seeded TX buffer entries.
+ *
+ * Context: Must be called after IPA pipes are enabled via
+ *          ipa_wdi_enable_pipes_per_inst().
+ */
 static void ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp(struct ath12k_ipa *ipa_ctx)
 {
-	return;
+	struct ath12k_base *ab = ipa_ctx->ab;
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa = dp_wifi8->extn.ipa;
+	struct hal_srng *tqm_srng;
+	u32 cached_hp;
+	int ring_id;
+
+	/*
+	 * IPA pipes must be enabled (via ipa_wdi_enable_pipes_per_inst) before
+	 * ringing this doorbell, otherwise IPA will not process the entry.
+	 * The caller (ath12k_dp_ipa_enable_pipes) guarantees this ordering.
+	 */
+	ath12k_ipa_info(ab, "tqm2ipa init_hp: ipa_pipes_enabled=%d",
+	       atomic_read(&ipa_ctx->ipa_pipes_enabled));
+
+	ring_id = dp_wifi8_ipa->tqm2ipa_ring.ring_id;
+	tqm_srng = &ab->hal.srng_list[ring_id];
+
+	/* Map the IPA doorbell TX completion vaddr as the ring HP address.
+	 * This makes TQM hardware's shadow HP writes land directly at the
+	 * IPA doorbell, so IPA is notified automatically on every TX completion
+	 * entry TQM produces into this ring.
+	 */
+	tqm_srng->u.dst_ring.hp_addr =
+		(u32 __iomem *)ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_vaddr;
+
+	cached_hp = tqm_srng->u.dst_ring.cached_hp;
+
+	ath12k_ipa_info(ab, "tqm2ipa ring params: ring_id=%d "
+	       "ring_base_paddr=0x%llx ring_size=%u num_entries=%u entry_size=%u "
+	       "cached_hp=%u hp_addr(doorbell_vaddr)=%p doorbell_paddr=0x%lx",
+	       ring_id,
+	       (u64)tqm_srng->ring_base_paddr,
+	       tqm_srng->ring_size,
+	       tqm_srng->num_entries,
+	       tqm_srng->entry_size,
+	       cached_hp,
+	       tqm_srng->u.dst_ring.hp_addr,
+	       ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_paddr);
+
+	/* Tell TQM hardware the initial HP value so it knows positions
+	 * 0..cached_hp-1 are pre-seeded by the host (not yet written by TQM).
+	 * TQM will start appending real TX-completion entries at cached_hp.
+	 */
+	ath12k_hif_write32(ab, HAL_SEQ_WCSS_UMAC_TQM_REG +
+			   HAL_TQM2PPE_RELEASE_RING_HP, cached_hp);
+	ath12k_ipa_info(ab, "tqm2ipa TQM HP write: wrote %u readback=%u",
+	       cached_hp,
+	       ath12k_hif_read32(ab, HAL_SEQ_WCSS_UMAC_TQM_REG +
+				 HAL_TQM2PPE_RELEASE_RING_HP));
+
+	/* Update HP via hp_addr (now remapped to IPA doorbell) with cached HP.
+	 * This gives IPA the initial HP so it starts consuming the pre-seeded
+	 * TX buffer entries.
+	 */
+	if (ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_vaddr) {
+		*tqm_srng->u.dst_ring.hp_addr = cached_hp;
+		ath12k_ipa_info(ab, "tqm2ipa doorbell RANG via hp_addr: "
+		       "wrote %u to hp_addr=%p (readback=0x%x)",
+		       cached_hp,
+		       tqm_srng->u.dst_ring.hp_addr,
+		       *tqm_srng->u.dst_ring.hp_addr);
+	} else {
+		ath12k_ipa_info(ab, "ath12k DBG tqm2ipa doorbell NOT RANG: "
+		       "tx_comp_doorbell_vaddr is NULL");
+	}
+
+	ath12k_ipa_info(ab,
+			"tqm2ipa HP init: ring_id=%d cached_hp=%u hp_addr(doorbell)=%p",
+			ring_id, cached_hp,
+			tqm_srng->u.dst_ring.hp_addr);
 }
 
 static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)

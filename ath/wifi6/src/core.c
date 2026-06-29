@@ -9,11 +9,19 @@
 #include "../../pci.h"
 #include "pci.h"
 #include "ahb.h"
+#ifdef CPTCFG_QCN_EXTN
+#include "../../qcn_extns/ini.h"
+#endif
 
 static int ahb_err,pci_err;
 
 static int ath12k_wifi6_init(void)
 {
+
+#ifdef CPTCFG_QCN_EXTN
+	ath12k_cfg_global_init();
+#endif
+
 	ahb_err = ath12k_wifi6_ahb_init();
 	if (ahb_err)
 		pr_warn("Failed to initialize ath12k WiFi6 AHB device: %d\n",
@@ -35,6 +43,10 @@ static void ath12k_wifi6_exit(void)
 
 	if (!ahb_err)
 		ath12k_wifi6_ahb_exit();
+
+#ifdef CPTCFG_QCN_EXTN
+	ath12k_cfg_global_deinit();
+#endif
 }
 
 module_init(ath12k_wifi6_init);

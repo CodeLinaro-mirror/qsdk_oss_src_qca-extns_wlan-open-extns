@@ -7,11 +7,7 @@
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 #include "../../hal_qcn9625.h"
 #include <linux/iommu.h>
-
-static u32 ath12k_dp_ipa2wbm_ring_sz[ATH12K_DP_WIFI8_IPA2WBM_MAX] = {
-	[ATH12K_DP_WIFI8_IPA2WBM_IPA] = ATH12K_DP_WIFI8_IPA2WBM_IPA_RING_SZ,
-	[ATH12K_DP_WIFI8_IPA2WBM_HOST] = ATH12K_DP_WIFI8_IPA2WBM_HOST_RING_SZ,
-};
+#include "../../../qcn_extns/ini.h"
 
 /**
  * ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625() - Configure IPA2WBM
@@ -215,22 +211,32 @@ static int ath12k_wifi8_dp_ipa_ipa2wbm_srng_setup(struct ath12k_base *ab)
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
 	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
 	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa = ath12k_wifi8_get_ipa_dp(dp_wifi8);
-	int i, ret;
+	u32 host_ring_sz = ath12k_cfg_get(ab, ATH12K_INI_DP_IPA2WBM_HOST_RING_SZ);
+	u32 ipa_ring_sz = ath12k_cfg_get(ab, ATH12K_INI_DP_IPA2WBM_IPA_RING_SZ);
+	u32 idle_ring_sz = ath12k_cfg_get(ab, ATH12K_INI_DP_IPA2WBM_IDLE_RING_SZ);
+	int ret;
 
-	for (i = 0; i < ATH12K_DP_WIFI8_IPA2WBM_MAX; i++) {
-		ret = ath12k_dp_srng_setup(ab,
-					   &dp_wifi8_ipa->ipa2wbm_ring[i],
-					   HAL_PPE2WBM_BUF, i, 0,
-					   ath12k_dp_ipa2wbm_ring_sz[i]);
-		if (ret) {
-			ath12k_ipa_err(ab, "failed to setup WBM refill ring (%d)", i);
-			goto fail;
-		}
+	ret = ath12k_dp_srng_setup(ab,
+					&dp_wifi8_ipa->ipa2wbm_ring[0],
+					HAL_PPE2WBM_BUF, 0, 0,
+					ipa_ring_sz);
+	if (ret) {
+		ath12k_ipa_err(ab, "failed to setup IPA2WBM_HOST refill ring (0)");
+		goto fail;
+	}
+
+	ret = ath12k_dp_srng_setup(ab,
+					&dp_wifi8_ipa->ipa2wbm_ring[1],
+					HAL_PPE2WBM_BUF, 1, 0,
+					host_ring_sz);
+	if (ret) {
+		ath12k_ipa_err(ab, "failed to setup IPA2WBM_IPA refill ring (1)");
+		goto fail;
 	}
 
 	ret = ath12k_dp_srng_setup(ab, &dp_wifi8_ipa->ipa2wbm_idle_buf_ring,
 				   HAL_PPE2WBM_IDLE_BUF, 0, 0,
-				   ATH12K_DP_WIFI8_IPA2WBM_IDLE_RING_SZ);
+				   idle_ring_sz);
 	if (ret) {
 		ath12k_ipa_err(ab, "failed to setup wbm idle buf ring");
 		goto fail;
@@ -313,11 +319,12 @@ static int ath12k_wifi8_dp_ipa_reo_srng_setup(struct ath12k_base *ab)
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
 	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
 	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa = ath12k_wifi8_get_ipa_dp(dp_wifi8);
+	u32 reo2sw5_ring_sz = ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_REO2SW5_RING_SIZE);
 	int ret;
 
 	ret = ath12k_dp_srng_setup(ab, &dp_wifi8_ipa->reo2sw5,
 				   HAL_REO_DST, ATH12K_DP_WIFI8_IPA_REO2SW5_IDX,
-				   0, ATH12K_DP_WIFI8_IPA_REO2SW5_RING_SZ);
+				   0, reo2sw5_ring_sz);
 	if (ret) {
 		ath12k_ipa_err(ab, "failed to setup reo_dst_ring");
 		goto err_reo_cleanup;

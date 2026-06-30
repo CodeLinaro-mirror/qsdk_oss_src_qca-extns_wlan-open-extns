@@ -304,10 +304,12 @@ static void sa_core_peer_connect_notify(struct ath12k *ar,
 	sa_sta = &arsta->arsta_extn.sa_sta;
 	ether_addr_copy(node_info.mac_addr, arsta->addr);
 	node_info.radio_id = ar->radio_idx;
-	node_info.max_ch_bw = arsta->bw;
+	node_info.max_ch_bw = link_sta->bandwidth;
 	node_info.nss_tx = arsta->peer_nss;
 	node_info.nss_rx = link_sta->rx_nss;
-	memcpy(&node_info.rate_cap, &param->rate_cap, sizeof(param->rate_cap));
+	if (param)
+		memcpy(&node_info.rate_cap, &param->rate_cap,
+		       sizeof(param->rate_cap));
 
 	chan = arvif->chanctx.def.chan;
 	if (chan) {
@@ -841,6 +843,9 @@ static int sa_core_get_training_info(void *sta_ctx,
 {
 	struct ath12k_smart_ant_ops *ops;
 	int ret = 0;
+
+	if (!sta_ctx || !param)
+		return -1;
 
 	ops = rcu_dereference(g_sa_ops);
 	if (!ops)
@@ -1405,8 +1410,10 @@ int sa_core_init(struct ath12k *ar,
 		return -1;
 
 	sa_ar = &ar->ar_extn.sa_ar;
-	if (sa_ar->state == SA_INIT_DONE_STATE)
-		return -1;
+	if (init_flags & SA_NEW_CONFIG) {
+		if (sa_ar->state == SA_INIT_DONE_STATE)
+			return 0;
+	}
 
 	ath12k_dbg(ab, ATH12K_DBG_ANY,
 		   "SA Core Init Called with init_flag = %u\n", init_flags);
@@ -1500,6 +1507,56 @@ int sa_core_init(struct ath12k *ar,
 	return 0;
 }
 
+/* Called from process context with wiphy lock held. */
+static void sa_core_peer_reconnect_iter(struct ath12k *ar,
+					struct ath12k_link_sta *arsta,
+					void *data)
+{
+	struct sa_sta_extn *sa_sta = &arsta->arsta_extn.sa_sta;
+
+	/*
+	 * Only re-notify peers that already have a valid SA context.
+	 * Peers that never completed the ratecode-list handshake have
+	 * ctx == NULL and cannot be re-notified here.
+	 */
+	if (!sa_sta->ctx)
+		return;
+
+	/* Reuse the existing peer-connect path. rate_cap is not available
+	 * from the WMI event here, so pass NULL — sa_core_peer_connect_notify
+	 * skips the memcpy when data is NULL and the algorithm module retains
+	 * its cached rate capabilities from the initial connect.
+	 */
+	rcu_read_lock();
+	sa_core_peer_connect_notify(ar, arsta, NULL);
+	rcu_read_unlock();
+}
+
+void sa_core_notify_all_peers_connected(struct ath12k *ar)
+{
+	u32 bkt;
+	struct ath12k_link_sta *arsta;
+	struct hlist_node *tmp;
+
+	if (!ar || !ath12k_smart_ant_is_enable(ar->ab))
+		return;
+
+	if (!rcu_access_pointer(g_sa_ops))
+		return;
+
+	spin_lock_bh(&ar->arsta_lock);
+	if (!ar->arsta_list) {
+		spin_unlock_bh(&ar->arsta_lock);
+		return;
+	}
+	for (bkt = 0; bkt < BIT(ar->arsta_hash_bits); bkt++) {
+		hlist_for_each_entry_safe(arsta, tmp, &ar->arsta_list[bkt],
+					  hlist_addr)
+			sa_core_peer_reconnect_iter(ar, arsta, NULL);
+	}
+	spin_unlock_bh(&ar->arsta_lock);
+}
+
 int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 {
 	struct ath12k_smart_ant_ops *ops;
@@ -1527,7 +1584,7 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 
 	if (sa_ar->state == SA_DEINIT_DONE_STATE) {
 		ath12k_dbg(ab, ATH12K_DBG_ANY, "SA Core Deinit already done!\n");
-		return -1;
+		return 0;
 	}
 	if (init_flags) {
 		/* Call deinit under RCU so the module cannot be unloaded

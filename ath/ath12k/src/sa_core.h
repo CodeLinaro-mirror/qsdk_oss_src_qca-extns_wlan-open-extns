@@ -190,4 +190,18 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
  */
 void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta);
 
+/**
+ * sa_core_notify_all_peers_connected - Re-notify SA of all connected peers on a radio
+ * @ar: ath12k radio context whose peer table is walked
+ *
+ * Iterates over every link STA currently associated on @ar and invokes the
+ * Smart Antenna peer-connect callback for each one.  Called after a channel
+ * change reconfiguration (SA_NEW_RECONFIG) so that the algorithm module can
+ * rebuild per-peer state that may depend on the new channel parameters.
+ *
+ * The caller must hold the wiphy lock (or equivalent serialisation) to ensure
+ * the peer table is stable during the walk.
+ */
+void sa_core_notify_all_peers_connected(struct ath12k *ar);
+
 #endif /* ATH12K_SA_CORE_H */

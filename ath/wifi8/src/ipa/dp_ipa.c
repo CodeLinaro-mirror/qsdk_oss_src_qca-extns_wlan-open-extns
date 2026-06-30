@@ -235,8 +235,10 @@ static void ath12k_wifi8_dp_ipa_tx_comp_ring_init_hp(struct ath12k_ipa *ipa_ctx)
 
 static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 {
-	int ret = 0;
+	struct ath12k_hw_group *ag = ab->ag;
+	struct ath12k_base *partner_ab;
 	u64 orig_dma_mask;
+	int i, ret = 0;
 
 	/**
 	 * Limit phys address withing 32 bit space during ring initialization since
@@ -258,10 +260,17 @@ static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 		goto restore_dma_mask;
 	}
 
-	ret = ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(ab);
-	if (ret) {
-		ath12k_ipa_err(ab, "failed to configure ipa2wbm_idle_buf ring");
-		goto ipa2wbm_idle_buf_err;
+	for (i = 0; i < ag->num_devices; i++) {
+		partner_ab = ag->ab[i];
+		if (!partner_ab || partner_ab->is_bypassed)
+			continue;
+
+		ret = ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(partner_ab);
+		if (ret) {
+			ath12k_ipa_err(partner_ab,
+				       "failed to configure ipa2wbm_idle_buf ring");
+			goto ipa2wbm_idle_buf_err;
+		}
 	}
 
 	dma_set_mask_and_coherent(ab->dev, orig_dma_mask);

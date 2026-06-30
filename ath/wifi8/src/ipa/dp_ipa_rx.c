@@ -35,6 +35,26 @@ ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(struct ath12k_base *ab)
 	int ret;
 	u32 hal_rx_desc_sz = ab->hal.hal_desc_sz;
 
+	if (!dp_ipa) {
+		struct ath12k_dp *central_dp = ath12k_get_central_dp(dp);
+		struct ath12k_dp_wifi8 *central_dp_wifi8;
+
+		if (!central_dp) {
+			ath12k_ipa_err(ab, "ath12k IPA idle_buf_config: device_id=%d
+				       central_dp is NULL, skip\n", ab->device_id);
+			return -EINVAL;
+		}
+
+		central_dp_wifi8 = ath12k_get_dp_wifi8(central_dp);
+		dp_ipa = ath12k_wifi8_get_ipa_dp(central_dp_wifi8);
+		if (!dp_ipa) {
+			ath12k_ipa_err(ab, "ath12k IPA idle_buf_config: device_id=%d
+				       central dp_ipa NULL, IPA not enabled\n",
+				       ab->device_id);
+			return 0; /* IPA not enabled on central chip */
+		}
+	}
+
 	ring_id = dp_ipa->ipa2wbm_idle_buf_ring.ring_id;
 	tlv_filter.rx_filter = HTT_RX_TLV_FLAGS_RXDMA_RING;
 	tlv_filter.rxmon_disable = true;

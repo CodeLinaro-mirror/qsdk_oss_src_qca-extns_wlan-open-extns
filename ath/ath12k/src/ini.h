@@ -362,6 +362,7 @@
 	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
 	ATH12K_CFG(ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY) \
 	ATH12K_CFG(ATH12K_CFG_PARALLEL_HW_SCAN) \
+	ATH12K_CFG(ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -497,6 +498,18 @@
 #define ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY \
 	ATH12K_CFG_INI_BOOL("mlo_force_mode2_recovery", true, \
 	"Force Mode2 MLO recovery, skip Mode3 even if FW supports it")
+
+/**
+ * ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE - Reset Scan Radio special-VAP
+ * TX+RX stats on channel change
+ *
+ * false (0) = Do not reset scan-radio special-VAP stats on channel change [default]
+ * true  (1) = On every channel change, zero the special-VAP's CP TX mgmt-frame
+ *             completion counters and the pdev's DP RX scan-radio stats
+ */
+#define ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE \
+	ATH12K_CFG_INI_BOOL("reset_scan_spcl_vap_stats_enable", false, \
+	"Reset Scan Radio special-VAP TX+RX stats on channel change")
 
 #define ATH12K_CFG_TWT_INTERFERENCE_THRESH_SETUP \
 	ATH12K_CFG_INI_UINT("twt_interference_thresh_setup", \

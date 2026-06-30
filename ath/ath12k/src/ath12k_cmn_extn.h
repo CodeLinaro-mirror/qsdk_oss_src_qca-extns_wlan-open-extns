@@ -676,6 +676,11 @@ static inline void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif 
 	return;
 }
 
+static inline void ath12k_mgmt_stats_scan_radio_tx_reset(struct ath12k_vif *ahvif)
+{
+	return;
+}
+
 static inline void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif)
 {
 	return;
@@ -1153,6 +1158,8 @@ void ath12k_gpr_arvif_deinit(struct ath12k_link_vif *arvif);
 void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
 				      struct dentry *link_debugfs);
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif);
+
+void ath12k_mgmt_stats_scan_radio_tx_reset(struct ath12k_vif *ahvif);
 
 const void **ath12k_wmi_tlv_parse_alloc(struct ath12k_base *ab,
 					struct sk_buff *skb, gfp_t gfp);

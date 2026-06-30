@@ -14821,6 +14821,60 @@ int ath12k_fill_rx_scan_radio_stats(
 	return 0;
 }
 
+int ath12k_get_cp_tx_scan_radio_stats_len(void)
+{
+	return nla_total_size_nested(6 * nla_total_size_64bit(sizeof(u64)));
+}
+
+int ath12k_fill_cp_tx_scan_radio_stats(struct sk_buff *vendor_event,
+				       struct ath12k_mgmt_frame_stats *mgmt_stats)
+{
+	struct nlattr *attr;
+
+	if (!mgmt_stats)
+		return -EINVAL;
+
+	attr = nla_nest_start(vendor_event,
+			      QCA_VENDOR_ATTR_TELEMETRY_CP_TX_SCAN_RADIO_STATS);
+	if (!attr) {
+		ath12k_err(NULL, "nla nest failure: cp tx scan radio stats");
+		return -EINVAL;
+	}
+
+	if (nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_TX_OK_PKTS,
+			      mgmt_stats->tx_cmpl_succ_pkts,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_INVALID) ||
+	    nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_TX_OK_BYTES,
+			      mgmt_stats->tx_cmpl_succ_bytes,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_INVALID) ||
+	    nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_TX_RETRY_PKTS,
+			      mgmt_stats->tx_cmpl_retry_pkts,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_INVALID) ||
+	    nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_TX_RETRY_BYTES,
+			      mgmt_stats->tx_cmpl_retry_bytes,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_INVALID) ||
+	    nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_TX_ERR_PKTS,
+			      mgmt_stats->tx_cmpl_err_pkts,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_INVALID) ||
+	    nla_put_u64_64bit(vendor_event,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_TX_ERR_BYTES,
+			      mgmt_stats->tx_cmpl_err_bytes,
+			      QCA_WLAN_VENDOR_ATTR_TX_MON_SCAN_STATS_INVALID)) {
+		ath12k_err(NULL, "nla put failure: cp tx scan radio stats");
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	nla_nest_end(vendor_event, attr);
+
+	return 0;
+}
+
 int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 				  struct wireless_dev *wdev,
 				  const void *data,

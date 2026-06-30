@@ -10652,7 +10652,6 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		struct ath12k_pdev_dp *dp_pdev;
 		struct ath12k_pdev_mon_dp_extn *mon_extn = NULL;
 		bool rx_en, tx_en;
-
 		if (arvif->ahvif->vif->type != NL80211_IFTYPE_MONITOR) {
 			ath12k_err(NULL, "requested interface is not a monitor interface!\n");
 			return -EINVAL;
@@ -10672,6 +10671,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 			if (tx_en)
 				*value |= ATH12K_TLV_LOGGER_TX_ENABLED;
 		}
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_MONITOR_VERSION:
+		*value = ath12k_get_monitor_version(ar->ab);
 		ret = 0;
 		break;
 	default:

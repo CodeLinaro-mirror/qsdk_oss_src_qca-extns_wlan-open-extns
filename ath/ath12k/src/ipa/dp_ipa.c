@@ -16,7 +16,7 @@
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 
 /* global control for IPA status */
-atomic_t g_instances_added;
+atomic_t g_instances_added = ATOMIC_INIT(0);
 
 static bool g_ipa_is_ready;
 static struct ath12k_ipa_config *g_ipa_config;
@@ -28,14 +28,6 @@ struct wmi_ipa_offload_enable_disable_cmd {
 	__le32 vdev_id;
 	__le32 enable;
 } __packed;
-
-/* DE Bruijn Sequence to fetch the instance id */
-static const int deBruijnIdx[32] = {
-	0, 1, 28, 2, 29, 14, 24, 3,
-	30, 22, 20, 15, 25, 17, 4, 8,
-	31, 27, 13, 23, 21, 19, 16, 7,
-	26, 12, 18, 6, 11, 5, 10, 9
-};
 
 /* IPA config update */
 void ath12k_dp_ipa_component_config_init(void)
@@ -293,10 +285,11 @@ EXPORT_SYMBOL(dp_ipa_uc_attach);
 
 /* TX-RX buffer SMMU Mapping towards IPA */
 static inline unsigned long
-ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_addr)
+ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_addr,
+				     const void *vaddr)
 {
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ab);
-	phys_addr_t addr;
+	phys_addr_t addr = 0;
 
 	if (!(pci_priv->ath12k_pci_extn.iommu_domain))
 		ath12k_err(ab, "IPA: iommu_domain is null");
@@ -305,8 +298,12 @@ ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_a
 		addr = iommu_iova_to_phys(pci_priv->ath12k_pci_extn.iommu_domain,
 					  dma_addr);
 		if (!addr) {
-			ath12k_err(ab, "IPA: iova returned is null");
-			return dma_addr;
+			if (vaddr) {
+				addr = virt_to_phys(vaddr);
+			} else {
+				ath12k_err(ab, "IPA: iova returned is null");
+				return dma_addr;
+			}
 		}
 	}
 	if (addr)
@@ -318,9 +315,10 @@ ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_a
 static inline void ath12k_dp_ipa_update_mem_map_table(struct ath12k_base *ab,
 						     struct ipa_wdi_buffer_info *mem_info,
 						     unsigned long dma_addr,
+						     const void *vaddr,
 						     u32 mem_size)
 {
-	mem_info->pa = ath12k_dp_ipa_mem_paddr_from_dmaaddr(ab, dma_addr);
+	mem_info->pa = ath12k_dp_ipa_mem_paddr_from_dmaaddr(ab, dma_addr, vaddr);
 	mem_info->iova = dma_addr;
 	mem_info->size = mem_size;
 	return;
@@ -346,35 +344,50 @@ int ath12k_dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 	 * Assuming single frag for now
 	 */
 	frag_addr = ATH12K_SKB_CB(skb)->paddr;
-	ath12k_dp_ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, size);
+	ath12k_dp_ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, skb->data,
+					   size);
 
 	if (create) {
 		/* Skip if already mapped */
 		if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP)
 			return 0;
 
-		/* Assert if PA is zero */
-		BUG_ON(mem_map_table.pa == 0);
+		if (WARN_ON(mem_map_table.pa == 0)) {
+			ath12k_err(ab, "IPA: cannot map RX buffer with PA=0");
+			return -EINVAL;
+		}
 
 		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
-		if (!ret)
-			ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
+		if (ret) {
+			ath12k_err(ab, "IPA: SMMU map failed: ret=%d\n", ret);
+			return ret;
+		}
+		if (mem_map_table.result != 0) {
+			ath12k_err(ab, "IPA: SMMU map result error: %d (iova=0x%lx pa=0x%llx)\n",
+				   mem_map_table.result,
+				   mem_map_table.iova,
+				   (unsigned long long)mem_map_table.pa);
+			return -EIO;
+		}
+		ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 	} else {
 		/* Skip if not mapped */
 		if (!(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
 			return 0;
 
 		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
-		if (!ret)
-			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
+		ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
+		if (ret) {
+			ath12k_err(ab, "IPA: SMMU unmap failed: ret=%d\n", ret);
+			return ret;
+		}
+		if ((s32)mem_map_table.result <= 0) {
+			ath12k_err(ab, "IPA: SMMU unmap result error: %d (size=%u)\n",
+				   (s32)mem_map_table.result, mem_map_table.size);
+			return -EIO;
+		}
 	}
-	BUG_ON(ret);
-
-	if (create)
-		BUG_ON(mem_map_table.result != 0);
-	else
-		BUG_ON(mem_map_table.result != mem_map_table.size);
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL(ath12k_dp_ipa_handle_buf_smmu_map_unmap);
 
@@ -1069,8 +1082,7 @@ ath12k_dp_ipa_wdi_rx_smmu_params(struct ath12k_ipa *ipa_ctx,
 	struct ath12k_ipa_dp_rx_rsc *rx_rsc = &ipa_ctx->ipa_uc_rx_rsc;
 	bool over_gsi = ipa_ctx->over_gsi;
 	ipa_wdi_hdl_t hdl = ipa_ctx->hdl;
-	/*TODO: need to handle this get proper value for RX tlv packet */
-	u32 rx_pkt_tlv_size = 128;
+	u32 rx_pkt_tlv_size = ipa_ctx->ab->hal.hal_desc_sz;
 
 	if (over_gsi) {
 		if (hdl == ATH12K_IPA_HDL_FIRST)
@@ -1104,6 +1116,8 @@ ath12k_dp_ipa_wdi_rx_smmu_params(struct ath12k_ipa *ipa_ctx,
 
 	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->event_ring_doorbell_pa =
 		rx_rsc->ipa_rx_refill_buf_hp_paddr;
+
+	ath12k_dp_ipa_set_smmu_evt_rn_db_addr(ipa_ctx->ab, rx_smmu);
 
 	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->pkt_offset =
 		rx_pkt_tlv_size + L3_HEADER_PADDING;
@@ -1453,8 +1467,7 @@ void ath12k_dp_ipa_ready_cb(void *data)
 	}
 
 	g_ipa_is_ready = true;
-	ipa_priv->instance_id = deBruijnIdx[(ipa_priv->ab->qmi.target.board_id *
-			DEBRUIJIN_MAGIC_IDX) >> DEBRUIJIN_MAGIC_SHIFT];
+	ipa_priv->instance_id = atomic_read(&g_instances_added);
 
 	ret = ath12k_dp_ipa_obj_setup(ipa_priv);
 	if (ret) {
@@ -1596,8 +1609,11 @@ int ath12k_pci_init_smmu_extn(struct ath12k_pci *pci_priv)
 	    !strcmp("atomic", iommu_dma_type))) {
 		ath12k_dbg(pci_priv->ab, ATH12K_DBG_PCI, "Enabling SMMU S1 stage\n");
 		pci_priv->ath12k_pci_extn.smmu_s1_enable = true;
-		iommu_set_fault_handler(pci_priv->ath12k_pci_extn.iommu_domain,
-					ath12k_dp_ipa_pci_smmu_fault_handler, pci_priv);
+		if (pci_priv->ath12k_pci_extn.iommu_domain->cookie_type ==
+		    IOMMU_COOKIE_NONE)
+			iommu_set_fault_handler(pci_priv->ath12k_pci_extn.iommu_domain,
+						ath12k_dp_ipa_pci_smmu_fault_handler,
+						pci_priv);
 	}
 	ath12k_dbg(pci_priv->ab, ATH12K_DBG_PCI,
 			"IPA: iommu_domain->type:%d dma_type:%s S1 enable:%d",
@@ -3127,17 +3143,12 @@ exit:
 }
 
 /**
- * ath12_dp_ipa_sg_tbl_setup() - Setup scatter-gather table for DMA buffer
+ * ath12k_dp_ipa_sg_tbl_setup() - Setup scatter-gather table for IPA ring mapping
  * @dev: Pointer to device structure
  * @sgt: Pointer to scatter-gather table to be populated
  * @cpu_addr: CPU virtual address of the DMA buffer
- * @dma_addr: DMA address of the buffer
+ * @dma_addr: DMA address of Ring base
  * @size: Size of the DMA buffer in bytes
- *
- * The function performs two main operations:
- * 1. Obtains the scatter-gather table from the DMA layer using dma_get_sgtable()
- * 2. Iterates through all scatter-gather entries and sets their dma_address
- *    field to the physical address obtained via sg_phys()
  *
  * Return: 0 on success, -1 on failure
  */

@@ -105,5 +105,6 @@ int ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(struct ath12k_base *ab);
 int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab);
 void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab);
 int ath12k_wifi8_dp_fill_tx_src(struct ath12k_base *ab);
+int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create);
 
 #endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

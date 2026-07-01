@@ -246,13 +246,8 @@ static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 	 */
 	orig_dma_mask = dma_get_mask(ab->dev);
 	ret = dma_set_mask_and_coherent(ab->dev, DMA_BIT_MASK(32));
-	if (ret) {
+	if (ret)
 		ath12k_ipa_err(ab, "failed to set DMA_BIT_MASK(32): %d", ret);
-		ath12k_ipa_err(ab, "ring PA may exceed 32-bit; IPA crash likely");
-	} else {
-		ath12k_ipa_info(ab, "DMA mask set to 32-bit (orig_dma_mask=0x%llx)",
-				orig_dma_mask);
-	}
 
 	ret = ath12k_wifi8_dp_rx_ring_setup_ipa(ab);
 	if (ret) {
@@ -274,8 +269,6 @@ static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 	}
 
 	dma_set_mask_and_coherent(ab->dev, orig_dma_mask);
-	ath12k_ipa_info(ab, "ath12k IPA RX rings: DMA mask restored to 0x%llx",
-			orig_dma_mask);
 
 	ret = ath12k_wifi8_dp_tx_ring_setup_ipa(ab);
 	if (ret) {
@@ -330,7 +323,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.dp_rx_default_routing = NULL,
 	.dp_rxdma_buf_setup = NULL,
 	.dp_get_tx_bank_id = NULL,
-	.dp_rx_buf_smmu_map_unmap = NULL,
+	.dp_rx_buf_smmu_map_unmap = ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap,
 	.dp_srng_rx_init = ath12k_wifi8_dp_ipa_ipa2wbm_idle_buf_ring_init,
 	.ipa_set_rx_doorbell_paddr = ath12k_wifi8_dp_ipa_set_rx_doorbell_paddr,
 	.ipa_set_tx_doorbell_paddr = ath12k_wifi8_dp_ipa_set_tx_doorbell_paddr,
@@ -371,6 +364,7 @@ ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 	dp_wifi8->extn.ipa = kmalloc(sizeof(struct ath12k_dp_wifi8_ipa), GFP_KERNEL);
 	if (!dp_wifi8->extn.ipa)
 		return -ENOMEM;
+
 	memset(dp_wifi8->extn.ipa, 0, sizeof(struct ath12k_dp_wifi8_ipa));
 	dp_wifi8->extn.ipa->dp_wifi8 = dp_wifi8;
 

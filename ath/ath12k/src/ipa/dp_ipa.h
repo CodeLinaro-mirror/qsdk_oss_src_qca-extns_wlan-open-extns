@@ -276,7 +276,6 @@ struct dp_ipa_net_device_priv {
 };
 
 struct ath12k_ipa_arch_ops {
-	int (*dp_ipa_init)(struct ath12k_base *ab);
 	int (*dp_srng_cleanup)(struct ath12k_base *ab);
 	int (*dp_srng_setup)(struct ath12k_base *ab);
 	void (*dp_srng_get_rsrc)(struct ath12k_base *ab);
@@ -1058,17 +1057,6 @@ ath12k_dp_ipa_arch_op_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 		return ipa_ctx->arch_ops->dp_rx_buf_smmu_map_unmap(ab, create);
 
 	return 0;
-}
-
-static inline int
-ath12k_dp_ipa_arch_op_ipa_init(struct ath12k_base *ab)
-{
-	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
-
-	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_ipa_init)
-		return ipa_ctx->arch_ops->dp_ipa_init(ab);
-
-	return -EINVAL;
 }
 
 static inline void

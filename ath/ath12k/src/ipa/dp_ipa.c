@@ -3458,23 +3458,3 @@ void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp)
 	ath12k_dp_hw_group_ipa_free(dp_hw_grp->extn.ipa);
 	dp_hw_grp->extn.ipa = NULL;
 }
-
-int ath12k_dp_ipa_init(struct ath12k_base *ab)
-{
-	int ret = 0;
-
-	ret = ath12k_dp_ipa_arch_op_ipa_init(ab);
-	if (ret) {
-		ath12k_err(ab, "IPA: ipa alloc failed");
-		return ret;
-	}
-
-	ret = ath12k_dp_ipa_register_is_ipa_ready(ab);
-	if (ret) {
-		ath12k_err(ab, "IPA: ipa init failed");
-		ath12k_dp_ipa_plugin_deregister_ops_extn(ab);
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL(ath12k_dp_ipa_init);

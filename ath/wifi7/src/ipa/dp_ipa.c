@@ -628,7 +628,6 @@ fail_free_skb:
 }
 
 static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
-	.dp_ipa_init = ath12k_wifi7_dp_ipa_init,
 	.dp_srng_cleanup = NULL,
 	.dp_srng_setup = NULL,
 	.dp_srng_get_rsrc = ath12k_wifi7_dp_ipa_srng_get_rsrc,
@@ -659,6 +658,12 @@ ath12k_wifi7_dp_ipa_init(struct ath12k_base *ab)
 		return ret;
 
 	ab->ath12k_base_extn.ipa_ctx->arch_ops = &ipa_wifi7_arch_ops;
+
+	ret = ath12k_dp_ipa_register_is_ipa_ready(ab);
+	if (ret) {
+		ath12k_err(ab, "IPA: ipa init failed");
+		ath12k_dp_ipa_plugin_deregister_ops_extn(ab);
+	}
 
 	return ret;
 }

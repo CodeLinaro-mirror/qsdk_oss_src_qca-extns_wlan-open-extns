@@ -791,7 +791,8 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 			vif->bss_conf.link_id;
 
 	station_params->link_sta_params.mld_mac =
-			mesh_params->peer_mld_mac;
+		is_zero_ether_addr(mesh_params->peer_mld_mac) ?
+		NULL : mesh_params->peer_mld_mac;
 
 	station_params->link_sta_params.link_mac =
 			mesh_params->peers[0].peer_link_mac;

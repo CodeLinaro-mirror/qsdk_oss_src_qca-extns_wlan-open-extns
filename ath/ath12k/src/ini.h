@@ -313,6 +313,7 @@
 	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
 	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
 	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
+	ATH12K_CFG(ATH12K_CFG_SCAN_RADIO_TX_ON_DFS) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -852,6 +853,10 @@
 #define ATH12K_CFG_REO_MGMT_PATH_DISABLE \
 	ATH12K_CFG_INI_BOOL("test_reo_mgmt_path_disable", false, \
 	"Disable REO2SW path for management frames (dev-only)")
+
+#define ATH12K_CFG_SCAN_RADIO_TX_ON_DFS \
+	ATH12K_CFG_INI_BOOL("scan_radio_tx_on_dfs_channels", false, \
+	"Enable TX on DFS channels for scan radio")
 
 #define ATH12K_CFG_DP_UMAC_RESET_TIMEOUT \
 	ATH12K_CFG_INI_UINT("dp_umac_reset_timeout_ms", \

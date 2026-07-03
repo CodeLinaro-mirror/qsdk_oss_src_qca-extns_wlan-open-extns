@@ -4180,7 +4180,7 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 							    entry->vdev_id,
 							    entry->pdev_idx,
 							    entry->mac_addr, &entry->dev,
-							    NL80211_IFTYPE_UNSPECIFIED,
+							    NL80211_IFTYPE_AP,
 							    NL80211_BAND_UNSPECIFIED,
 							    entry->is_mlo);
 					rhashtable_remove_fast(ctx->mac_table,

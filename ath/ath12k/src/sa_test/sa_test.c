@@ -327,13 +327,13 @@ static int sa_test_update_txfeedback(void *ccp,
 
 	SA_DEBUG_PRINT(SA_DEBUG_LVL4, node->node_info.radio_id,
 		       "SA Test: Mac: %pM nFrame:%d nBad:%d Rate:[0x%x] "
-		       "RateIdx:%d TxAntenna:0x%06x RSSI:[%d %d %d %d] "
+		       "RateIdx:%d TxAntenna:0x%06x RSSI:[%d %d %d %d %d] "
 		       "Ratemaxphy:[0x%03x|0x%03x|0x%03x|0x%03x|0x%03x] "
 		       "SR:[%d %d %d %d %d %d] LR:[%d %d %d %d %d %d] "
 		       "Trainpkt:%d Goodput:%d\n", node->node_info.mac_addr,
 		       fb->num_packets, fb->num_bad, fb->rate_mcs[0],
-		       fb->rate_index, fb->tx_antenna[0], fb->rssi[0],
-		       fb->rssi[1], fb->rssi[2], fb->rssi[3], fb->ratemaxphy[0],
+		       fb->rate_index, fb->tx_antenna[0], fb->rssi[0], fb->rssi[1],
+		       fb->rssi[2], fb->rssi[3], fb->rssi[4], fb->ratemaxphy[0],
 		       fb->ratemaxphy[1], fb->ratemaxphy[2], fb->ratemaxphy[3],
 		       fb->ratemaxphy[4], fb->nshort_retries[0],
 		       fb->nshort_retries[1], fb->nshort_retries[2],
@@ -796,7 +796,7 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 					"BW %d", node->node_info.max_ch_bw);
 				return -1;
 			}
-			for (i = node->node_info.max_ch_bw; i < SA_NUM_BW; i++)
+			for (i = 0; i < SA_NUM_BW; i++)
 				g_train_params.ratecode[i] = 0;
 			g_train_params.ratecode[rate_index] =
 					(params->param_value & SA_WORD_MASK);

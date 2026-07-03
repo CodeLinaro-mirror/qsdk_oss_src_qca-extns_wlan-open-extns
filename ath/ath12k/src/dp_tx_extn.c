@@ -210,3 +210,84 @@ bool ath12k_dp_tx_dma_map(struct ath12k_dp *dp, struct sk_buff *skb, u32 len,
 }
 EXPORT_SYMBOL(ath12k_dp_tx_dma_map);
 EXPORT_SYMBOL(ath12k_dp_tx_buffer_unmap);
+
+void ath12k_dp_tx_hw_group_extn_init(struct ath12k_dp_hw_group *dp_hw_grp)
+{
+	int i = 0;
+	struct ath12k_dp_hw_group_extn *hw_grp_extn = &dp_hw_grp->extn;
+
+	mutex_lock(&dp_hw_grp->tx_init_lock);
+
+	if (hw_grp_extn->tx_desc_extn_initialized)
+		goto unlock;
+
+	for (i = 0; i < ATH12K_HW_MAX_QUEUES; i++)
+		INIT_LIST_HEAD(&hw_grp_extn->tx_hot_desc_list[i]);
+
+	hw_grp_extn->tx_desc_extn_initialized = true;
+unlock:
+	mutex_unlock(&dp_hw_grp->tx_init_lock);
+}
+
+EXPORT_SYMBOL(ath12k_dp_tx_hw_group_extn_init);
+
+/**
+ * ath12k_dp_tx_assign_buffer_hot() - Assign a TX descriptor from the per-ring
+ *                                    hot list (lock-free fast-TX path).
+ * @dp_hw_grp: HW group owning the descriptor pools
+ * @ring_id:   TX ring / pool index (== smp_processor_id() on fast-TX path)
+ *
+ * Tries to pop a descriptor from the per-CPU hot list without any lock.
+ * If the hot list is empty, it refills it with up to
+ * ATH12K_DP_TX_HOT_DESC_BATCH_SIZE entries from the regular tx_desc_free_list
+ * (under tx_desc_lock) and retries once.
+ *
+ * Return: pointer to a free ath12k_tx_desc_info, or NULL when the pool is
+ *         exhausted.
+ */
+struct ath12k_tx_desc_info *
+ath12k_dp_tx_assign_buffer_hot(struct ath12k_dp_hw_group *dp_hw_grp, u8 ring_id)
+{
+	struct ath12k_tx_desc_info *desc;
+	struct list_head *hot_list = &dp_hw_grp->extn.tx_hot_desc_list[ring_id];
+	LIST_HEAD(batch);
+	int i;
+	u32 *tx_desc_used_cnt;
+
+	/* Fast path: hot list has entries – no lock needed. */
+	desc = list_first_entry_or_null(hot_list,
+					struct ath12k_tx_desc_info, list);
+	if (likely(desc)) {
+		list_del(&desc->list);
+		return desc;
+	}
+
+	/* Hot list empty – refill from the regular pool under lock. */
+	spin_lock_bh(&dp_hw_grp->tx_desc_lock[ring_id]);
+	for (i = 0; i < ATH12K_DP_TX_HOT_DESC_BATCH_SIZE; i++) {
+		desc = list_first_entry_or_null(&dp_hw_grp->tx_desc_free_list[ring_id],
+						struct ath12k_tx_desc_info, list);
+		if (!desc)
+			break;
+
+		desc->in_use = true;
+		tx_desc_used_cnt = this_cpu_ptr(dp_hw_grp->tx_desc_used_cnt);
+		(*tx_desc_used_cnt)++;
+
+		list_move_tail(&desc->list, &batch);
+	}
+	spin_unlock_bh(&dp_hw_grp->tx_desc_lock[ring_id]);
+
+	if (list_empty(&batch))
+		return NULL;
+
+	/* Move the batch into the hot list. */
+	list_splice_tail(&batch, hot_list);
+
+	/* Consume the first entry from the freshly populated hot list. */
+	desc = list_first_entry(hot_list, struct ath12k_tx_desc_info, list);
+	list_del(&desc->list);
+	return desc;
+}
+
+EXPORT_SYMBOL(ath12k_dp_tx_assign_buffer_hot);

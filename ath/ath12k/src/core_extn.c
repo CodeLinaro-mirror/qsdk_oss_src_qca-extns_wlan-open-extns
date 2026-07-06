@@ -270,11 +270,6 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 			 "mlo primary selection: forced check sta %pM valid_links 0x%lx links %d\n",
 			 sta->addr, valid_links, num_links);
 
-	if (num_links != 3) {
-		ath12k_dbg_level(NULL, ATH12K_DBG_MAC, ATH12K_DBG_L2, "not a 3 link association\n");
-		return -1;
-	}
-
 	/* loop through all ab in ah*/
 	for (i = 0; i < ah->num_radio; i++) {
 		ar = &ah->radio[i];

@@ -227,6 +227,45 @@ struct ieee80211_mesh_config_params_extn {
 	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
 	bool peer_cleanup_timer_enable;
 } __packed;
+
+/**
+ * struct ieee80211_mesh_getkey_params - Request parameters for GET_KEY command.
+ * Binary layout must match userspace ieee80211_wlanconfig_mesh_getkey.
+ *
+ * @cmd_type: Must be ATH12K_EXTN_MESH_CONF_GET_KEY
+ * @key_idx:  Key index to retrieve (0-3 for group keys, 0 for pairwise)
+ * @link_id:  Link ID for MLO (-1 for non-MLO, 0-14 for MLO)
+ * @peer_mac: Peer link MAC address (all-zero for group/GTK lookup)
+ * @pairwise: 1 = pairwise key (PTK), 0 = group key (GTK/IGTK)
+ */
+struct ieee80211_mesh_getkey_params {
+	u8  cmd_type;
+	u8  key_idx;
+	s8  link_id;
+	u8  peer_mac[ETH_ALEN];
+	u8  pairwise;
+} __packed;
+static_assert(sizeof(struct ieee80211_mesh_getkey_params) == 10,
+	      "ABI size mismatch: ieee80211_mesh_getkey_params");
+
+/**
+ * struct ieee80211_mesh_key_info - Key information returned to userspace.
+ *
+ * @cipher:  Cipher suite selector (WLAN_CIPHER_SUITE_*)
+ * @key_len: Length of key material in bytes
+ * @key:     Raw key material (up to 32 bytes)
+ * @seq_len: Length of sequence/PN in bytes (0 if not applicable)
+ * @seq:     TX sequence number / packet number
+ */
+struct ieee80211_mesh_key_info {
+	u32 cipher;
+	u8  key_len;
+	u8  key[32];
+	u8  seq_len;
+	u8  seq[16];
+} __packed;
+static_assert(sizeof(struct ieee80211_mesh_key_info) == 54,
+	      "ABI size mismatch: ieee80211_mesh_key_info");
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 struct bw240MHz_parameters_extn {
@@ -564,6 +603,7 @@ int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
  * @add_local_peer: Add a local mesh peer with specified configuration
  * @authorize_peer: Authorize a mesh peer for data exchange
  * @delete_local_peer: Delete a local mesh peer
+ * @get_key: Retrieve key material for a mesh peer
  */
 struct ieee80211_vendor_mesh_ops {
        int (*add_local_peer)(struct wiphy *wiphy,
@@ -575,6 +615,10 @@ struct ieee80211_vendor_mesh_ops {
        int (*delete_local_peer)(struct wiphy *wiphy,
                                 struct ieee80211_vif *vif,
                                 const u8 *peer_addr);
+       int (*get_key)(struct wiphy *wiphy,
+                      struct ieee80211_vif *vif,
+                      const struct ieee80211_mesh_getkey_params *params,
+                      struct ieee80211_mesh_key_info *key_info);
 };
 
 /**
@@ -586,6 +630,12 @@ struct ieee80211_vendor_mesh_ops {
  * Return: Pointer to ieee80211_vendor_mesh_ops structure
  */
 const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void);
+
+int
+ieee80211_vendor_mesh_get_key(struct wiphy *wiphy,
+			      struct ieee80211_vif *vif,
+			      const struct ieee80211_mesh_getkey_params *params,
+			      struct ieee80211_mesh_key_info *key_info);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 #endif /* CPTCFG_QCN_EXTN */

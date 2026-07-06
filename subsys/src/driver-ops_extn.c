@@ -2389,6 +2389,86 @@ int ieee80211_vendor_mesh_peer_timeout_en(struct wiphy *wiphy,
 EXPORT_SYMBOL(ieee80211_vendor_mesh_peer_timeout_en);
 
 /**
+ * ieee80211_vendor_mesh_get_key - Retrieve key material for a mesh peer.
+ *
+ * Looks up the key identified by @params->key_idx, @params->link_id and
+ * @params->peer_mac using ieee80211_lookup_key (already exported by mac80211)
+ * and fills in @key_info with the cipher, raw key bytes and TX sequence number.
+ *
+ * Caller must hold the wiphy mutex (lockdep_assert_wiphy is enforced).
+ *
+ * @wiphy:    Wiphy instance
+ * @vif:      Virtual interface
+ * @params:   Request parameters (key index, link ID, peer MAC)
+ * @key_info: Output: filled with cipher / key / seq on success
+ *
+ * Return: 0 on success, -EINVAL for bad args, -ENOENT if key not found.
+ */
+int ieee80211_vendor_mesh_get_key(struct wiphy *wiphy,
+				  struct ieee80211_vif *vif,
+				  const struct ieee80211_mesh_getkey_params *params,
+				  struct ieee80211_mesh_key_info *key_info)
+{
+	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_key *key;
+	bool pairwise;
+	int link_id;
+	u64 pn;
+
+	if (!vif || !params || !key_info)
+		return -EINVAL;
+
+	sdata = vif_to_sdata(vif);
+	if (!sdata)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	pairwise = params->pairwise;
+	link_id  = (params->link_id >= 0) ? (int)params->link_id : -1;
+
+	rcu_read_lock();
+
+	key = ieee80211_lookup_key(sdata, link_id, params->key_idx,
+				   pairwise, pairwise ? params->peer_mac : NULL);
+	if (!key) {
+		rcu_read_unlock();
+		return -ENOENT;
+	}
+
+	memset(key_info, 0, sizeof(*key_info));
+	key_info->cipher  = key->conf.cipher;
+	key_info->key_len = key->conf.keylen;
+	if (key_info->key_len > sizeof(key_info->key))
+		key_info->key_len = sizeof(key_info->key);
+	memcpy(key_info->key, key->conf.key, key_info->key_len);
+
+	/* All supported ciphers store a 48-bit PN/TSC in tx_pn, LSB first. */
+	switch (key->conf.cipher) {
+	case WLAN_CIPHER_SUITE_CCMP:
+	case WLAN_CIPHER_SUITE_CCMP_256:
+	case WLAN_CIPHER_SUITE_GCMP:
+	case WLAN_CIPHER_SUITE_GCMP_256:
+	case WLAN_CIPHER_SUITE_TKIP:
+		pn = atomic64_read(&key->conf.tx_pn);
+		key_info->seq[0] = (u8)(pn);
+		key_info->seq[1] = (u8)(pn >> 8);
+		key_info->seq[2] = (u8)(pn >> 16);
+		key_info->seq[3] = (u8)(pn >> 24);
+		key_info->seq[4] = (u8)(pn >> 32);
+		key_info->seq[5] = (u8)(pn >> 40);
+		key_info->seq_len = 6;
+		break;
+	default:
+		break;
+	}
+
+	rcu_read_unlock();
+	return 0;
+}
+EXPORT_SYMBOL(ieee80211_vendor_mesh_get_key);
+
+/**
  * Vendor mesh operations structure - provides function pointers
  * for mesh peer management operations
  */
@@ -2396,6 +2476,7 @@ static const struct ieee80211_vendor_mesh_ops vendor_mesh_ops = {
        .add_local_peer = ieee80211_vendor_mesh_add_local_peer,
        .authorize_peer = ieee80211_vendor_mesh_authorize_peer,
        .delete_local_peer = ieee80211_vendor_mesh_delete_local_peer,
+       .get_key = ieee80211_vendor_mesh_get_key,
 };
 
 /**

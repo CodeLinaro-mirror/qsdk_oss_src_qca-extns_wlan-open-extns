@@ -985,6 +985,14 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 #endif
 }
 
+void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
+{
+	struct ath12k *ar = arvif->ar;
+
+	if (ar->ar_extn.cbs.arvif && ar->ar_extn.cbs.arvif == arvif)
+		ath12k_cbs_deinit(ar);
+}
+
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb)
 {

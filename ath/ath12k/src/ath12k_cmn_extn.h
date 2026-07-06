@@ -565,6 +565,11 @@ static inline void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 	return;
 }
 
+static inline void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
+{
+	return;
+}
+
 static inline void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif)
 {
 	return;
@@ -1023,6 +1028,7 @@ void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
 void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
 
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif);
+void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif);
 
 const void **ath12k_wmi_tlv_parse_alloc(struct ath12k_base *ab,
 					struct sk_buff *skb, gfp_t gfp);

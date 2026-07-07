@@ -362,14 +362,17 @@ int ath12k_dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 			ath12k_err(ab, "IPA: SMMU map failed: ret=%d\n", ret);
 			return ret;
 		}
+		ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 		if (mem_map_table.result != 0) {
-			ath12k_err(ab, "IPA: SMMU map result error: %d (iova=0x%lx pa=0x%llx)\n",
+			ath12k_err(ab, "IPA: SMMU map result error: %d (iova=0x%lx pa=0x%llx) — releasing leaked SMMU IOVA\n",
 				   mem_map_table.result,
 				   mem_map_table.iova,
 				   (unsigned long long)mem_map_table.pa);
+			/* Release the SMMU mapping that IPA successfully inserted */
+			ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
+			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
 			return -EIO;
 		}
-		ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
 	} else {
 		/* Skip if not mapped */
 		if (!(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
@@ -3366,6 +3369,8 @@ void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
 			       u32 vdev_id, bool connect)
 {
 	struct ath12k_base *ab;
+	struct ath12k_ipa *ipa_ctx;
+	bool has_client_ops;
 	const u8 *peer_addr;
 	enum ipa_wlan_event evt;
 	bool is_mlo;
@@ -3381,6 +3386,19 @@ void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
 
 	if (!peer->primary_link)
 		return;
+
+	ipa_ctx = IPA_CTX(ab);
+
+	if (!ipa_ctx)
+		return;
+
+	/* Avoid peer Connect/Disconnect event to IPA for QCN96XX */
+	if (ipa_ctx->arch_ops) {
+		has_client_ops = (connect && ipa_ctx->arch_ops->ipa_client_connect_ex) ||
+				 (!connect && ipa_ctx->arch_ops->ipa_client_disconnect);
+		if (!has_client_ops)
+			return;
+	}
 
 	evt = connect ? WLAN_CLIENT_CONNECT_EX : WLAN_CLIENT_DISCONNECT;
 

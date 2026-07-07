@@ -137,12 +137,12 @@ static int sa_test_init(struct ath12k_sa_config *cfg, int new_init)
 		radio->init_done = 1;
 		radio->sa_dbg_level = SA_DEBUG_LVL1;
 		radio->default_antenna = SA_DEFAULT_ANTENNA;
+		radio->bcn_antenna = SA_DEFAULT_ANTENNA;
+		cfg->txrx_feedback = SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK;
 		sa_set_gpio_config(&radio->gpio_cfg);
 		sa_reset_global_training_param();
 	}
 
-	radio->bcn_antenna = SA_DEFAULT_ANTENNA;
-	cfg->txrx_feedback = SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK;
 	memcpy(&radio->init_config, cfg, sizeof(struct ath12k_sa_config));
 
 	SA_DEBUG_PRINT(SA_DEBUG_LVL1, cfg->radio_id, " %s: RadioId: %d channel:"

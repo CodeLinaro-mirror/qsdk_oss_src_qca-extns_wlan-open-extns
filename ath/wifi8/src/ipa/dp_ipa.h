@@ -24,6 +24,9 @@
 #define ATH12K_DP_WIFI8_IPA2TCL_RING_SIZE	8192
 #define ATH12K_DP_WIFI8_TQM2IPA_RING_SIZE	8192
 
+/* WiFi8: single cumac ipa_ctx handles 3 SoCs × 16 ifaces each */
+#define ATH12K_IPA_MAX_IFACE_WIFI8          (3 * MAX_IPA_IFACE)
+
 /**
  * enum ath12k_dp_wifi8_ipa2wbm_ring_e - IPA to WBM ring types
  * @ATH12K_DP_WIFI8_IPA2WBM_IPA: ring given to IPA for refill

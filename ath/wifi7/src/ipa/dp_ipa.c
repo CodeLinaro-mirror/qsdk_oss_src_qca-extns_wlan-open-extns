@@ -27,7 +27,7 @@ int ath12k_wifi7_dp_ipa_client_connect_ex(struct ath12k_ipa *ipa_ctx,
 					  bool is_mlo)
 {
 	struct ath12k_base *ab;
-	u8 session_id = vdev_id;
+	u16 session_id = vdev_id;
 
 	ab = ipa_ctx->ab;
 	if (!ab) {
@@ -47,9 +47,9 @@ int ath12k_wifi7_dp_ipa_client_connect_ex(struct ath12k_ipa *ipa_ctx,
 		if (ath12k_wlan_ipa_uc_sta_is_enabled(ipa_ctx->config) &&
 		    ipa_ctx->sta_connected) {
 			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-							  WMI_STA_RX_DATA_OFFLOAD,
-							  vdev_id, true);
+			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
+								WMI_STA_RX_DATA_OFFLOAD,
+								vdev_id, true);
 			mutex_lock(&ipa_ctx->event_lock);
 		}
 		ath12k_ipa_info(ab, "First SAP client connected\n");
@@ -81,7 +81,7 @@ int ath12k_wifi7_dp_ipa_client_disconnect(struct ath12k_ipa *ipa_ctx,
 					  bool is_mlo)
 {
 	struct ath12k_base *ab;
-	u8 session_id = vdev_id;
+	u16 session_id = vdev_id;
 
 	ab = ipa_ctx->ab;
 	if (!ab) {
@@ -111,9 +111,9 @@ int ath12k_wifi7_dp_ipa_client_disconnect(struct ath12k_ipa *ipa_ctx,
 		if (ath12k_wlan_ipa_uc_sta_is_enabled(ipa_ctx->config) &&
 		    ipa_ctx->sta_connected) {
 			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-							  WMI_STA_RX_DATA_OFFLOAD,
-							  vdev_id, false);
+			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
+								WMI_STA_RX_DATA_OFFLOAD,
+								vdev_id, false);
 		} else {
 			mutex_unlock(&ipa_ctx->event_lock);
 		}
@@ -627,6 +627,183 @@ fail_free_skb:
 	return retval;
 }
 
+/**
+ * ath12k_wifi7_ipa_iface_context_init - Allocate iface_context and all
+ * session-indexed arrays for WiFi7.
+ *
+ * WiFi7 uses one ipa_ctx per SoC:
+ *   max_iface = 16 (ATH12K_IPA_MAX_IFACE)
+ *   max_session_id = 16 (ATH12K_IPA_MAX_SESSION)
+ *   invalid_session_id = 16 (ATH12K_IPA_MAX_SESSION)
+ *   wdi_version = IPA_WDI_4
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+static int ath12k_wifi7_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
+{
+	struct ath12k_ipa_iface_context *iface_context;
+	int i;
+
+	ipa_ctx->max_iface = ATH12K_IPA_MAX_IFACE;
+	ipa_ctx->max_session_id = ATH12K_IPA_MAX_SESSION;
+	ipa_ctx->invalid_session_id = ATH12K_IPA_MAX_SESSION;
+	ipa_ctx->wdi_version = IPA_WDI_4;
+
+	/* Allocate iface_context array */
+	ipa_ctx->iface_context = vzalloc(array_size(ipa_ctx->max_iface,
+					 sizeof(*ipa_ctx->iface_context)));
+
+	if (!ipa_ctx->iface_context)
+		return -ENOMEM;
+
+	/* Allocate session-indexed arrays */
+	ipa_ctx->vdev_to_iface = vzalloc(array_size(ipa_ctx->max_session_id,
+					 sizeof(*ipa_ctx->vdev_to_iface)));
+	if (!ipa_ctx->vdev_to_iface)
+		goto err_free_iface;
+	/* init to max_iface ("no iface" sentinel); vzalloc gives 0 which
+	 * is a valid iface_context index
+	 */
+	memset(ipa_ctx->vdev_to_iface, ipa_ctx->max_iface,
+	       array_size(ipa_ctx->max_session_id, sizeof(*ipa_ctx->vdev_to_iface)));
+
+	ipa_ctx->vdev_offload_enabled = vzalloc(array_size(ipa_ctx->max_session_id,
+						sizeof(*ipa_ctx->vdev_offload_enabled)));
+	if (!ipa_ctx->vdev_offload_enabled)
+		goto err_free_vdev_to_iface;
+
+	ipa_ctx->disable_intrabss_fwd = vzalloc(array_size(ipa_ctx->max_session_id,
+						sizeof(*ipa_ctx->disable_intrabss_fwd)));
+	if (!ipa_ctx->disable_intrabss_fwd)
+		goto err_free_offload;
+
+	/* Initialize iface_context slots */
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
+		iface_context = &ipa_ctx->iface_context[i];
+		iface_context->ipa_ctx = ipa_ctx;
+		iface_context->iface_id = i;
+		iface_context->dev = NULL;
+		iface_context->device_mode = ATH12K_IPA_MAX_NO_OF_MODE;
+		iface_context->session_id = ipa_ctx->invalid_session_id;
+		atomic_set(&iface_context->conn_count, 0);
+		atomic_set(&iface_context->disconn_count, 0);
+		spin_lock_init(&iface_context->interface_lock);
+	}
+
+	ath12k_ipa_info(ipa_ctx->ab,
+			"WiFi7: iface_context[%u] allocated, wdi_version=%u",
+			ipa_ctx->max_iface, ipa_ctx->wdi_version);
+	return 0;
+
+err_free_offload:
+	vfree(ipa_ctx->vdev_offload_enabled);
+	ipa_ctx->vdev_offload_enabled = NULL;
+err_free_vdev_to_iface:
+	vfree(ipa_ctx->vdev_to_iface);
+	ipa_ctx->vdev_to_iface = NULL;
+err_free_iface:
+	vfree(ipa_ctx->iface_context);
+	ipa_ctx->iface_context = NULL;
+	return -ENOMEM;
+}
+
+/**
+ * ath12k_wifi7_ipa_iface_context_deinit - Free all WiFi7 IPA arrays.
+ */
+static void ath12k_wifi7_ipa_iface_context_deinit(struct ath12k_ipa *ipa_ctx)
+{
+	vfree(ipa_ctx->disable_intrabss_fwd);
+	ipa_ctx->disable_intrabss_fwd = NULL;
+	vfree(ipa_ctx->vdev_offload_enabled);
+	ipa_ctx->vdev_offload_enabled = NULL;
+	vfree(ipa_ctx->vdev_to_iface);
+	ipa_ctx->vdev_to_iface = NULL;
+	vfree(ipa_ctx->iface_context);
+	ipa_ctx->iface_context = NULL;
+	ipa_ctx->max_iface = 0;
+	ipa_ctx->max_session_id = 0;
+	ipa_ctx->invalid_session_id = ATH12K_IPA_MAX_SESSION;
+}
+
+/**
+ * ath12k_wifi7_ipa_get_session_id - Return the per-SoC vdev_id as session ID.
+ *
+ * WiFi7 uses one ipa_ctx per SoC, so the per-SoC vdev_id (0..15) is the
+ * correct session identifier. No collision is possible.
+ */
+static u16 ath12k_wifi7_ipa_get_session_id(struct ath12k_link_vif *arvif)
+{
+	return arvif->vdev_id;
+}
+
+static void ath12k_wifi7_ipa_initialize_default(struct ath12k_ipa *ipa_ctx, u16 i)
+{
+	ipa_ctx->vdev_offload_enabled[i] = false;
+	ipa_ctx->disable_intrabss_fwd[i] = false;
+}
+
+static void ath12k_wifi7_ipa_intrabss_enable_disable(struct ath12k_ipa *ipa_ctx,
+						     u32 vdev_id, bool enable)
+{
+	struct ipa_intrabss_control_params intrabss_req = {0};
+	struct ath12k_base *ab = ipa_ctx->ab;
+
+	u32 intra_bss_fwd = 0;
+
+	if (!enable || ipa_ctx->disable_intrabss_fwd[vdev_id]) {
+		ath12k_info(ab, "%s: ipa_offload->enable=%d, rx_fwd_disabled=%d\n",
+				__func__, enable,
+				ipa_ctx->disable_intrabss_fwd[vdev_id]);
+		intra_bss_fwd = 1;
+	}
+
+	intrabss_req.vdev_id = vdev_id;
+	intrabss_req.enable = intra_bss_fwd;
+
+	if (ath12k_ipa_send_intrabss_enable_disable(ab,
+							&intrabss_req)) {
+		ath12k_err(ab, "intrabss offload vdev_id=%d, enable=%d failure\n",
+				vdev_id, intra_bss_fwd);
+	}
+}
+
+static void ath12k_wifi7_ipa_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
+					u32 offload_type, u32 vdev_id,
+					bool enable)
+{
+	struct ipa_uc_offload_control_params req = {0};
+	struct ath12k_base *ab = ipa_ctx->ab;
+
+	if (vdev_id >= ipa_ctx->max_session_id) {
+		ath12k_err(ab, "invalid vdev id: %d\n", vdev_id);
+		return;
+	}
+
+	if (enable == ipa_ctx->vdev_offload_enabled[vdev_id]) {
+		ath12k_info(ab,
+			    "IPA ofld status already set: ofld_type=%d, vdev_id=%d, en=%d\n",
+			    offload_type, vdev_id, enable);
+		return;
+	}
+
+	ath12k_info(ab, "offload_type=%d, vdev_id=%d, enable=%d\n",
+		    offload_type, vdev_id, enable);
+
+	req.offload_type = offload_type;
+	req.vdev_id = vdev_id;
+	req.enable = enable;
+
+	if (ath12k_ipa_send_uc_offload_enable_disable(ab, &req)) {
+		ath12k_err(ab,
+			   "Fail to enable IPA ofld: ofld type=%d, vdev_id=%d, en=%d\n",
+			   offload_type, vdev_id, enable);
+	} else {
+		ipa_ctx->vdev_offload_enabled[vdev_id] = enable;
+	}
+
+	ath12k_wifi7_ipa_intrabss_enable_disable(ipa_ctx, vdev_id, enable);
+}
+
 static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.dp_srng_cleanup = NULL,
 	.dp_srng_setup = NULL,
@@ -646,6 +823,11 @@ static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.ipa_iface_setup_set_intf_idx = NULL,
 	.ipa_client_connect_ex = ath12k_wifi7_dp_ipa_client_connect_ex,
 	.ipa_client_disconnect = ath12k_wifi7_dp_ipa_client_disconnect,
+	.ipa_iface_context_init = ath12k_wifi7_ipa_iface_context_init,
+	.ipa_iface_context_deinit = ath12k_wifi7_ipa_iface_context_deinit,
+	.ipa_get_session_id = ath12k_wifi7_ipa_get_session_id,
+	.ipa_initialize_default = ath12k_wifi7_ipa_initialize_default,
+	.ipa_uc_offload_enable = ath12k_wifi7_ipa_uc_offload_enable,
 };
 
 int

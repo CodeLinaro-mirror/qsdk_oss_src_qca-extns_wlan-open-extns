@@ -10,6 +10,7 @@
 #include "../../../dp.h"
 #include "../../dp_tx.h"
 #include "../../hal.h"
+#include "../../../dp_cmn.h"
 
 void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
 {
@@ -294,6 +295,96 @@ static int ath12k_wifi8_dp_ipa_srng_cleanup(struct ath12k_base *ab)
 	return 0;
 }
 
+/**
+ * ath12k_wifi8_ipa_iface_context_init - Allocate iface_context and all
+ * session-indexed arrays for the WiFi8 cumac ipa_ctx.
+ *
+ * WiFi8 uses a single cumac ipa_ctx for the entire group (3 SoCs):
+ *   max_iface = 48 (ATH12K_IPA_MAX_IFACE_WIFI8 = 3 × 16)
+ *   max_session_id =  256 (ATH12K_MAX_AHVIF_ID + 1)
+ *   invalid_session_id = 0 (ATH12K_INVALID_AHVIF_ID)
+ *   wdi_version = IPA_WDI_6
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
+{
+	struct ath12k_ipa_iface_context *iface_context;
+	int i;
+
+	ipa_ctx->max_iface = ATH12K_IPA_MAX_IFACE_WIFI8;
+	ipa_ctx->max_session_id = ATH12K_MAX_AHVIF_ID + 1;
+	ipa_ctx->invalid_session_id = ATH12K_INVALID_AHVIF_ID;
+	ipa_ctx->wdi_version = IPA_WDI_6;
+
+	/* Allocate iface_context array */
+	ipa_ctx->iface_context = vzalloc(array_size(ipa_ctx->max_iface,
+					 sizeof(*ipa_ctx->iface_context)));
+	if (!ipa_ctx->iface_context)
+		return -ENOMEM;
+
+	/* Allocate session-indexed arrays */
+	ipa_ctx->vdev_to_iface = vzalloc(array_size(ipa_ctx->max_session_id,
+					 sizeof(*ipa_ctx->vdev_to_iface)));
+	if (!ipa_ctx->vdev_to_iface)
+		goto err_free_iface;
+	/* init to max_iface ("no iface" sentinel); vzalloc gives 0 which
+	 * collides with valid iface_context index 0 for WiFi8
+	 */
+	memset(ipa_ctx->vdev_to_iface, ipa_ctx->max_iface,
+	       array_size(ipa_ctx->max_session_id, sizeof(*ipa_ctx->vdev_to_iface)));
+
+	/* Initialize iface_context slots */
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
+		iface_context = &ipa_ctx->iface_context[i];
+		iface_context->ipa_ctx = ipa_ctx;
+		iface_context->iface_id = i;
+		iface_context->dev = NULL;
+		iface_context->device_mode = ATH12K_IPA_MAX_NO_OF_MODE;
+		iface_context->session_id = ipa_ctx->invalid_session_id;
+		atomic_set(&iface_context->conn_count, 0);
+		atomic_set(&iface_context->disconn_count, 0);
+		spin_lock_init(&iface_context->interface_lock);
+	}
+
+	ath12k_ipa_info(ipa_ctx->ab,
+			"WiFi8: iface_context[%u] allocated (cumac), wdi_version=%u",
+			ipa_ctx->max_iface, ipa_ctx->wdi_version);
+	return 0;
+
+err_free_iface:
+	vfree(ipa_ctx->iface_context);
+	ipa_ctx->iface_context = NULL;
+	return -ENOMEM;
+}
+
+/**
+ * ath12k_wifi8_ipa_iface_context_deinit - Free all WiFi8 IPA arrays.
+ */
+static void ath12k_wifi8_ipa_iface_context_deinit(struct ath12k_ipa *ipa_ctx)
+{
+	vfree(ipa_ctx->vdev_to_iface);
+	ipa_ctx->vdev_to_iface = NULL;
+	vfree(ipa_ctx->iface_context);
+	ipa_ctx->iface_context = NULL;
+	ipa_ctx->max_iface = 0;
+	ipa_ctx->max_session_id = 0;
+	ipa_ctx->invalid_session_id = ATH12K_INVALID_AHVIF_ID;
+}
+
+/**
+ * ath12k_wifi8_ipa_get_session_id - Return the group-wide ahvif_id as session ID.
+ *
+ * WiFi8 uses a single cumac ipa_ctx for all SoCs in the group. Each vif
+ * gets a globally unique ahvif_id (1..63) allocated from a 64-bit bitmap.
+ * The firmware sets global_vdev_id = ahvif_id, so the skb CB vdev_id field
+ * already contains ahvif_id in the RX exception path — no changes needed there.
+ */
+static u16 ath12k_wifi8_ipa_get_session_id(struct ath12k_link_vif *arvif)
+{
+	return arvif->ahvif->dp_vif.ahvif_id;
+}
+
 static int
 ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(struct ath12k_ipa *ipa_ctx)
 {
@@ -336,6 +427,11 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_iface_setup_set_intf_idx = ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx,
 	.ipa_client_connect_ex = NULL,
 	.ipa_client_disconnect = NULL,
+	.ipa_iface_context_init = ath12k_wifi8_ipa_iface_context_init,
+	.ipa_iface_context_deinit = ath12k_wifi8_ipa_iface_context_deinit,
+	.ipa_get_session_id = ath12k_wifi8_ipa_get_session_id,
+	.ipa_initialize_default = NULL,
+	.ipa_uc_offload_enable = NULL,
 };
 
 int

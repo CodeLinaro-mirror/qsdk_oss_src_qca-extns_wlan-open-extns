@@ -820,6 +820,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.ipa_get_wdi_version = ath12k_wifi7_dp_ipa_get_wdi_version,
 	.ipa_iface_setup_set_metadata = ath12k_wifi7_dp_ipa_set_metadata,
 	.ipa_iface_setup_set_vp_num = NULL,
+	.ipa_iface_cleanup_vp_num = NULL,
 	.ipa_iface_setup_set_intf_idx = NULL,
 	.ipa_client_connect_ex = ath12k_wifi7_dp_ipa_client_connect_ex,
 	.ipa_client_disconnect = ath12k_wifi7_dp_ipa_client_disconnect,

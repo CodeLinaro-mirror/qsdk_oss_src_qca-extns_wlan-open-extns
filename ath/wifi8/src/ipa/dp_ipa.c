@@ -17,8 +17,104 @@ void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
 	in->is_meta_data_valid = 0;
 }
 
-void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(struct ipa_wdi_reg_intf_in_params *in)
+static struct ath12k_vif *get_ahvif_from_dev_name(const char *net_dev_name)
 {
+	struct wireless_dev *wdev;
+	struct ieee80211_vif *vif;
+	struct net_device *dev = dev_get_by_name(&init_net, net_dev_name);
+
+	if (!dev)
+		goto err;
+	wdev = dev->ieee80211_ptr;
+	if (!wdev)
+		goto err;
+
+	vif = wdev_to_ieee80211_vif_vlan(wdev, false);
+	if (!vif)
+		goto err;
+
+	dev_put(dev);
+	return ath12k_vif_to_ahvif(vif);
+err:
+	dev_put(dev);
+	return NULL;
+}
+
+static int get_vp_num_from_dev_name(const char *net_dev_name, struct ath12k_vif *ahvif)
+{
+	int vp_num;
+	struct net_device *dev = dev_get_by_name(&init_net, net_dev_name);
+
+	vp_num = ath12k_dp_ipa_alloc_vp_num(ahvif, dev);
+	dev_put(dev);
+	return vp_num;
+}
+
+void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
+						struct ipa_wdi_reg_intf_in_params *in)
+{
+	int vp_num;
+	struct ath12k_vif *ahvif;
+	struct ath12k_link_vif *arvif;
+	struct ath12k_ipa_vp_profile vp_profile;
+	struct net_device *dev;
+
+	ahvif = get_ahvif_from_dev_name(in->netdev_name);
+	if (!ahvif) {
+		ath12k_warn(NULL, "ipa vp_num setup: ahvif not found for netdev=%s\n",
+			    in->netdev_name);
+		return;
+	}
+
+	vp_num = get_vp_num_from_dev_name(in->netdev_name, ahvif);
+	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
+		ath12k_warn(NULL, "ipa vp_num setup: invalid vp_num=%d for netdev=%s\n",
+			    vp_num, in->netdev_name);
+		return;
+	}
+
+	rcu_read_lock();
+	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
+	if (!arvif) {
+		ath12k_warn(NULL, "ipa vp_num setup: arvif not found for link_id=%u netdev=%s\n",
+			    link_id, in->netdev_name);
+		goto err;
+	}
+
+	dev = dev_get_by_name(&init_net, in->netdev_name);
+	if (!dev) {
+		ath12k_warn(NULL, "ipa vp_num setup: net_device not found for netdev=%s\n",
+			    in->netdev_name);
+		goto err;
+	}
+
+	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, dev, arvif);
+	dev_put(dev);
+
+	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, &vp_profile);
+err:
+	rcu_read_unlock();
+}
+
+void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
+{
+	struct ath12k_vif *ahvif;
+	struct ath12k_link_vif *arvif;
+	int vp_num;
+
+	ahvif = get_ahvif_from_dev_name(dev_name);
+	if (!ahvif)
+		return;
+
+	vp_num = get_vp_num_from_dev_name(dev_name, ahvif);
+	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num))
+		return;
+
+	rcu_read_lock();
+	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
+	ath12k_dp_ipa_dealloc_vp_num(ahvif);
+	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, NULL);
+	rcu_read_unlock();
 
 }
 
@@ -424,6 +520,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_get_wdi_version = ath12k_wifi8_dp_ipa_get_wdi_version,
 	.ipa_iface_setup_set_metadata = ath12k_wifi8_dp_ipa_set_metadata,
 	.ipa_iface_setup_set_vp_num = ath12k_wifi8_dp_ipa_iface_setup_set_vp_num,
+	.ipa_iface_cleanup_vp_num = ath12k_wifi8_dp_ipa_iface_cleanup_vp_num,
 	.ipa_iface_setup_set_intf_idx = ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx,
 	.ipa_client_connect_ex = NULL,
 	.ipa_client_disconnect = NULL,

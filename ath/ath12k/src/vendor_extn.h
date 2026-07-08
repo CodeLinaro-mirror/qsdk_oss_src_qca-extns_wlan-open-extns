@@ -505,6 +505,11 @@ static inline int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
 {
 	return -1;
 }
+
+static inline int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value)
+{
+	return -1;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -772,6 +777,8 @@ enum ath12k_chan_144_state {
 
 int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
 				    const struct ath12k_wmi_nfcal_power_event *param);
+
+int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value);
 
 #endif /* CPTCFG_QCN_EXTN */
 

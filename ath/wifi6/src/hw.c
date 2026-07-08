@@ -69,12 +69,10 @@ void ath12k_hw_qcn9074_fill_cfr_hdr_info(struct ath12k *ar,
 {
 	header->start_magic_num = ATH12K_CFR_START_MAGIC;
 	header->vendorid = VENDOR_QCA;
-	header->pltform_type = PLATFORM_TYPE_ARM;
 	header->cfr_metadata_len = sizeof(struct cfr_enh_metadata);
-	header->cfr_data_version = ATH12K_CFR_DATA_VERSION_1;
 	header->host_real_ts = ktime_to_ns(ktime_get_real());
 
-	header->cfr_metadata_version = ATH12K_CFR_META_VERSION_9;
+	header->cfr_metadata_version = ATH12K_CFR_META_VERSION_11;
 	if (ar->ab->hw_rev == ATH12K_HW_QCN6432_HW10)
 		header->chip_type = ATH12K_CFR_RADIO_QCN6432;
 	else if (ar->ab->hw_rev == ATH12K_HW_IPQ5424_HW10)
@@ -84,33 +82,28 @@ void ath12k_hw_qcn9074_fill_cfr_hdr_info(struct ath12k *ar,
 	else
 		header->chip_type = ATH12K_CFR_RADIO_QCN9274;
 
-	header->u.meta_enh.status = FIELD_GET(WMI_CFR_PEER_CAPTURE_STATUS,
-					      params->status);
-	header->u.meta_enh.capture_bw = params->bandwidth;
-	header->u.meta_enh.phy_mode = params->phy_mode;
-	header->u.meta_enh.prim20_chan = params->primary_20mhz_chan;
-	header->u.meta_enh.center_freq1 = params->band_center_freq1;
-	header->u.meta_enh.center_freq2 = params->band_center_freq2;
-	header->u.meta_enh.capture_mode = params->bandwidth ?
-		ATH12K_CFR_CAPTURE_DUP_LEGACY_ACK : ATH12K_CFR_CAPTURE_LEGACY_ACK;
-	header->u.meta_enh.capture_type = params->capture_method;
-	header->u.meta_enh.num_rx_chain = ar->cfg_rx_chainmask;
-	header->u.meta_enh.sts_count = params->spatial_streams;
-	header->u.meta_enh.timestamp = params->timestamp_us;
-	header->u.meta_enh.rx_start_ts = params->rx_start_ts;
-	header->u.meta_enh.cfo_measurement = params->cfo_measurement;
-	header->u.meta_enh.mcs_rate = params->mcs_rate;
-	header->u.meta_enh.gi_type = params->gi_type;
+	header->meta_enh.status = FIELD_GET(WMI_CFR_PEER_CAPTURE_STATUS,
+					    params->status);
+	header->meta_enh.tx_pkt_bw = params->bandwidth;
+	header->meta_enh.phy_mode = params->phy_mode;
+	header->meta_enh.center_freq1 = params->band_center_freq1;
+	header->meta_enh.center_freq2 = params->band_center_freq2;
+	header->meta_enh.num_mu_users = 0;
+	header->meta_enh.rx_start_ts = params->rx_start_ts;
+	header->meta_enh.cfo_measurement = params->cfo_measurement;
+	header->meta_enh.mcs_rate = params->mcs_rate;
+	header->meta_enh.gi_type = params->gi_type;
+	header->meta_enh.beamformed = 0;
 
-	memcpy(header->u.meta_enh.peer_addr.su_peer_addr,
+	memcpy(header->meta_enh.su_peer_addr,
 	       params->peer_mac_addr, ETH_ALEN);
-	memcpy(header->u.meta_enh.chain_rssi, params->chain_rssi,
+	memcpy(header->meta_enh.chain_rssi, params->chain_rssi,
 	       sizeof(params->chain_rssi));
-	memcpy(header->u.meta_enh.chain_phase, params->chain_phase,
+	memcpy(header->meta_enh.chain_phase, params->chain_phase,
 	       sizeof(params->chain_phase));
-	memcpy(header->u.meta_enh.agc_gain, params->agc_gain,
+	memcpy(header->meta_enh.agc_gain, params->agc_gain,
 	       sizeof(params->agc_gain));
-	memcpy(header->u.meta_enh.agc_gain_tbl_index, params->agc_gain_tbl_index,
+	memcpy(header->meta_enh.agc_gain_tbl_index, params->agc_gain_tbl_index,
 	       sizeof(params->agc_gain_tbl_index));
 }
 
@@ -122,6 +115,7 @@ static const struct ath12k_hw_ops qcn9074_ops = {
 	.get_ring_selector = ath12k_wifi6_hw_get_ring_selector_qcn9074,
 	.dp_srng_is_tx_comp_ring = ath12k_wifi6_dp_srng_is_comp_ring_qcn9074,
 	.fill_cfr_hdr_info = ath12k_hw_qcn9074_fill_cfr_hdr_info,
+	.parse_cfr_enh_dma_hdr = ath12k_cfr_parse_enh_dma_hdr,
 };
 
 static const struct ath12k_hw_ops qcn9160_ops = {
@@ -131,6 +125,7 @@ static const struct ath12k_hw_ops qcn9160_ops = {
 	.rxdma_ring_sel_config = ath12k_wifi6_dp_rxdma_ring_sel_config_qcn9160,
 	.get_ring_selector = ath12k_wifi6_hw_get_ring_selector_qcn9074,
 	.dp_srng_is_tx_comp_ring = ath12k_wifi6_dp_srng_is_comp_ring_qcn9074,
+	.parse_cfr_enh_dma_hdr = ath12k_cfr_parse_enh_dma_hdr,
 };
 
 #define ATH12K_TX_RING_MASK_0 0x1

@@ -63,6 +63,17 @@ ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 }
 
 static inline int
+ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
+			  const struct ath12k_skb_cb *skb_cb,
+			  struct ath12k_vif *ahvif,
+			  struct ath12k_sta *ahsta,
+			  struct ath12k_link_vif *arvif,
+			  bool is_mcast)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int
 ath12k_wifi7_dp_ipa_init(struct ath12k_base *ab)
 {
 	return 0;

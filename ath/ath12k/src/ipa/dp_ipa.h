@@ -873,6 +873,23 @@ struct ath12k_ipa {
 	u8 instance_id;
 	bool handle_initialized;
 	ipa_wdi_hdl_t hdl;
+	/* IPA offload TX capabilities reported by ipa_wdi_init_per_inst().
+	 * offload_supported: true when IPA HW supports ULSO/segmentation offload
+	 *   and ipa_wdi_offload_tx_dp_per_inst() may be used.
+	 * offload_headroom:  bytes to reserve in dev->needed_headroom for the
+	 *   QMAP extension header prepended by ipa_wdi_offload_tx_dp_per_inst().
+	 * offload_features:  netdev HW feature flags to OR into hw_features.
+	 * offload_gso_max_size: value to assign to netdev->gso_max_size.
+	 * offload_max_pkts:  high watermark for in-flight offload TX packets;
+	 *   stop the TX queue at this level, restart at offload_max_pkts/2.
+	 */
+	bool offload_supported;
+	u32  offload_headroom;
+	netdev_features_t offload_features;
+	u32  offload_gso_max_size;
+	u32  offload_max_pkts;
+	atomic_t tx_outstanding;
+	atomic_t queues_stopped; /* 1 when netdev TX queues are stopped by IPA */
 	u8 curr_bw_level;
 	struct uc_op_work_struct uc_op_work[ATH12K_IPA_UC_OPCODE_MAX];
 	u8 *vdev_to_iface;
@@ -1296,5 +1313,15 @@ ath12k_dp_ipa_arch_op_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
 	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_uc_offload_enable)
 		return ipa_ctx->arch_ops->ipa_uc_offload_enable(ipa_ctx, offload_type, vdev_id, enable);
 }
+
+void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
+			       struct ath12k_dp_link_peer *peer,
+			       struct ath12k_link_vif *arvif,
+			       u32 vdev_id, bool connect);
+void ath12k_dp_ipa_vif_notify(struct ath12k_link_vif *arvif,
+			      bool restart, bool connect);
+int ath12k_dp_ipa_hw_group_init(struct ath12k_base *ab,
+				struct ath12k_dp_hw_group *dp_hw_grp);
+void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp);
 
 #endif

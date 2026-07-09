@@ -265,3 +265,56 @@ void ath12k_debugfs_register_ipa_extn(struct ath12k *ar)
 			    ar->debug.debugfs_pdev, ar,
 			    &fops_wlan_ipa_stats);
 }
+
+/*
+ * wifi8 IPA TX offload stats — only compiled when building the wifi8 module.
+ * __ATH12K_WIFI8_EXTNS_DP_IPA_H__ is defined by wifi8/src/ipa/dp_ipa.h which
+ * is the dp_ipa.h seen in the wifi8 module build context (#include "dp_ipa.h"
+ * above resolves to it).  In the arch module build, arch/dp_ipa.h is included
+ * instead and this guard is not defined, so the block is skipped.
+ */
+#ifdef __ATH12K_WIFI8_EXTNS_DP_IPA_H__
+static int ipa_tx_stats_show(struct seq_file *m, void *v)
+{
+	struct ath12k_ipa *ctx = m->private;
+	int outstanding = ctx ? atomic_read(&ctx->tx_outstanding) : -1;
+	int max_pkts    = ctx ? (int)ctx->offload_max_pkts : -1;
+
+	seq_printf(m, "ipa_tx:      %lld\n", atomic64_read(&ipa_tx_ipa_count));
+	seq_printf(m, "sw_tx:       %lld\n", atomic64_read(&ipa_tx_sw_count));
+	seq_printf(m, "total_sw_tx: %lld\n", atomic64_read(&ipa_tx_total_sw_count));
+	seq_printf(m, "qstop:       %lld\n", atomic64_read(&ipa_tx_qstop_count));
+	seq_printf(m, "qwake:       %lld\n", atomic64_read(&ipa_tx_qwake_count));
+	seq_printf(m, "pm_wake:     %lld\n", atomic64_read(&ipa_tx_pm_wake));
+	seq_printf(m, "ipa_busy:    %lld\n", atomic64_read(&ipa_tx_busy_count));
+	seq_printf(m, "outstanding: %d / %d\n", outstanding, max_pkts);
+	seq_printf(m, "\ntx_queue[0/VO]: %lld\n", atomic64_read(&ipa_tx_queue_count[0]));
+	seq_printf(m, "tx_queue[1/VI]: %lld\n", atomic64_read(&ipa_tx_queue_count[1]));
+	seq_printf(m, "tx_queue[2/BE]: %lld\n", atomic64_read(&ipa_tx_queue_count[2]));
+	seq_printf(m, "tx_queue[3/BK]: %lld\n", atomic64_read(&ipa_tx_queue_count[3]));
+	seq_printf(m, "\nqueue_stuck: %s\n",
+		   atomic64_read(&ipa_tx_qstop_count) >
+		   atomic64_read(&ipa_tx_qwake_count) ? "YES" : "no");
+	return 0;
+}
+
+static int ipa_tx_stats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ipa_tx_stats_show, inode->i_private);
+}
+
+static const struct file_operations ipa_tx_stats_fops = {
+	.open    = ipa_tx_stats_open,
+	.read    = seq_read,
+	.llseek  = seq_lseek,
+	.release = single_release,
+};
+
+void ath12k_wifi8_dp_ipa_debugfs_init(struct dentry *root,
+				      struct ath12k_ipa *ipa_ctx)
+{
+	debugfs_create_file("ipa_tx_stats", 0444, root, ipa_ctx,
+			    &ipa_tx_stats_fops);
+}
+EXPORT_SYMBOL(ath12k_wifi8_dp_ipa_debugfs_init);
+#endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

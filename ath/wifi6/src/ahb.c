@@ -4,8 +4,10 @@
  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
+#include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/remoteproc.h>
 #include <linux/soc/qcom/mdt_loader.h>
 #include "../../ahb.h"
 #include "ahb.h"
@@ -29,6 +31,39 @@ static const struct ath12k_ahb_ops ahb_ops_qcn9160 = {
 	.mdt_load = qcom_mdt_load,
 };
 
+/* Fetch the state of the shared Q6 root PD, which is owned by the
+ * IPQ5332 (wifi7) radio. QCN9160 is a userPD and its firmware can only
+ * come up once that root PD is running. Returns the rproc state on
+ * success, or a negative error code if the rproc handle could not be
+ * obtained. The caller decides what to do with a not-running state.
+ */
+static int ath12k_wifi6_ahb_get_rproc_state(struct ath12k_base *ab)
+{
+	struct device *dev = ab->dev;
+	struct device_node *np;
+	struct rproc *prproc;
+	enum rproc_state state;
+
+	np = of_parse_phandle(dev->of_node, "qcom,rproc", 0);
+	if (!np) {
+		ath12k_err(ab, "failed to get q6_rproc handle\n");
+		return -ENOENT;
+	}
+
+	prproc = rproc_get_by_phandle(np->phandle);
+	of_node_put(np);
+	if (!prproc) {
+		ath12k_err(ab, "failed to get rproc\n");
+		return RPROC_OFFLINE;
+	}
+
+	state = prproc->state;
+	rproc_put(prproc);
+
+	return state;
+}
+
+
 static int ath12k_wifi6_ahb_probe(struct platform_device *pdev)
 {
 	struct ath12k_ahb *ab_ahb;
@@ -45,6 +80,16 @@ static int ath12k_wifi6_ahb_probe(struct platform_device *pdev)
 		break;
 	default:
 		return -EOPNOTSUPP;
+	}
+
+	ret = ath12k_wifi6_ahb_get_rproc_state(ab);
+	if (ret < 0)
+		return ret;
+
+	if (ret != RPROC_RUNNING) {
+		ath12k_err(ab, "root PD not running, deferring probe\n");
+		return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
+			"waiting for root PD to be running\n");
 	}
 
  	ab_ahb->window_reg_addr = PCIE_WINDOW_REG_ADDRESS;

@@ -130,4 +130,33 @@ ath12k_ipa_cb_get_hw_link_id(const struct ipa_wdi6_rx_skb_cb *cb)
 		    IPA_WDI6_CB_HW_LINK_ID_MASK);
 }
 
+/**
+ * ath12k_wifi8_dp_ipa_xmit() - IPA TX bypass entry point
+ *
+ * Called from ath12k_wifi8_mac_op_tx() for every unicast data frame.
+ * Performs eligibility checks, in-flight flow control, and IPA submission.
+ *
+ * Returns 0 if skb was consumed (IPA success or flow-control drop with
+ * queues stopped); negative if skb was not consumed (fall through to TCL).
+ */
+int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
+			      const struct ath12k_skb_cb *skb_cb,
+			      struct ath12k_vif *ahvif,
+			      struct ath12k_sta *ahsta,
+			      struct ath12k_link_vif *arvif,
+			      bool is_mcast);
+
+void ath12k_wifi8_dp_ipa_debugfs_init(struct dentry *root,
+				      struct ath12k_ipa *ipa_ctx);
+
+/* TX stats counters (defined in dp_ipa.c, used in dp_ipa_debugfs.c) */
+extern atomic64_t ipa_tx_ipa_count;
+extern atomic64_t ipa_tx_sw_count;
+extern atomic64_t ipa_tx_qstop_count;
+extern atomic64_t ipa_tx_qwake_count;
+extern atomic64_t ipa_tx_pm_wake;
+extern atomic64_t ipa_tx_busy_count;
+extern atomic64_t ipa_tx_total_sw_count;
+extern atomic64_t ipa_tx_queue_count[];
+
 #endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

@@ -848,6 +848,13 @@ int ath12k_dp_ipa_wdi_init(struct ath12k_ipa *ipa_ctx)
 	ipa_ctx->over_gsi = out.is_over_gsi;
 	ipa_ctx->is_smmu_enabled = out.is_smmu_enabled;
 	ipa_ctx->hdl = out.hdl;
+	ipa_ctx->offload_supported  = out.offload_supported;
+	ipa_ctx->offload_headroom   = out.offload_headroom;
+	ipa_ctx->offload_features   = out.offload_features;
+	ipa_ctx->offload_gso_max_size = out.offload_gso_max_size;
+	ipa_ctx->offload_max_pkts   = out.offload_max_pkts ?
+					out.offload_max_pkts :
+					IPA_WDI_OFFLOAD_MAX_PKTS;
 
 	ath12k_info(ipa_ctx->ab, "ipa_over_gsi: %d, is_smmu_enabled: %d, handle: %d "
 			"inst_id: %d", ipa_ctx->over_gsi, ipa_ctx->is_smmu_enabled,
@@ -859,7 +866,13 @@ int ath12k_dp_ipa_wdi_init(struct ath12k_ipa *ipa_ctx)
 	else
 		return -EBUSY;
 
-	ath12k_info(ipa_ctx->ab, "Exit: IPA WDI INIT SUCCESS for HDL:%d",ipa_ctx->hdl);
+	if (ipa_ctx->offload_supported)
+		ath12k_info(ipa_ctx->ab,
+			    "IPA TX offload ready: hdl %d headroom %u max_pkts %u\n",
+			    ipa_ctx->hdl, ipa_ctx->offload_headroom,
+			    ipa_ctx->offload_max_pkts);
+
+	ath12k_info(ipa_ctx->ab, "Exit: IPA WDI INIT SUCCESS for HDL:%d", ipa_ctx->hdl);
 	return 0;
 }
 
@@ -867,6 +880,12 @@ void ath12k_dp_ipa_obj_cleanup(struct ath12k_ipa *ipa_ctx)
 {
 	complete(&ipa_ctx->ipa_resource_comp);
 	/*TODO: check if memset is needed for ipa_resource_comp ? */
+
+	if (ipa_ctx->offload_supported) {
+		WRITE_ONCE(ipa_ctx->handle_initialized, false);
+		synchronize_rcu();
+		atomic_set(&ipa_ctx->tx_outstanding, 0);
+	}
 
 	if (ipa_wdi_cleanup_per_inst(ipa_ctx->hdl))
 		ath12k_err(ipa_ctx->ab, "IPA_WDI_CLEANUP is failed !!");
@@ -1882,7 +1901,7 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id,
 }
 
 
-int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
+static int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 		       u8 *mac_addr,
 		       enum ipa_client_type prod_client,
 		       enum ipa_client_type cons_client,
@@ -2081,6 +2100,37 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 	ether_addr_copy(iface_context->mac_addr, mac_addr);
 
 	spin_unlock_bh(&iface_context->interface_lock);
+
+	/* Apply IPA offload TX capabilities to the netdev so the stack
+	 * allocates skbs with enough headroom for the QMAP header prepended
+	 * by ipa_wdi_offload_tx_dp_per_inst(), and enables TSO/checksum
+	 * offload HW features needed by the ULSO path.
+	 */
+	if (ipa_ctx->offload_supported) {
+		struct net_device *ndev =
+			dev_get_by_name(&init_net, net_dev_priv->name);
+
+		if (ndev) {
+			if (ipa_ctx->offload_headroom)
+				ndev->needed_headroom =
+					max_t(u16, ndev->needed_headroom,
+					      (u16)ipa_ctx->offload_headroom);
+			if (ipa_ctx->offload_features) {
+				ndev->hw_features      |= ipa_ctx->offload_features;
+				ndev->wanted_features  |= ipa_ctx->offload_features;
+				ndev->features         |= ipa_ctx->offload_features;
+			}
+			if (ipa_ctx->offload_gso_max_size)
+				ndev->gso_max_size = ipa_ctx->offload_gso_max_size;
+
+			dev_put(ndev);
+		} else {
+			ath12k_warn(ipa_ctx->ab,
+				    "wlan_ipa_setup_iface: netdev %s not found, "
+				    "headroom/features/gso_max not applied\n",
+				    net_dev_priv->name);
+		}
+	}
 
 	if (ipa_ctx->uc_loaded) {
 		sessid = wlan_ipa_set_session_id(session_id, is_2g_iface);

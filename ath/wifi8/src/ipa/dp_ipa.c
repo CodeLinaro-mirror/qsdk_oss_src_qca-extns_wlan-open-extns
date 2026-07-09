@@ -12,7 +12,7 @@
 #include "../../hal.h"
 #include "../../../dp_cmn.h"
 
-void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
+static void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
 {
 	in->is_meta_data_valid = 0;
 }
@@ -106,6 +106,7 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 	dev_put(dev);
 
 	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, &vp_profile);
+
 err:
 	rcu_read_unlock();
 }
@@ -485,6 +486,8 @@ static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
 	ath12k_ipa_info(ipa_ctx->ab,
 			"WiFi8: iface_context[%u] allocated (cumac), wdi_version=%u",
 			ipa_ctx->max_iface, ipa_ctx->wdi_version);
+
+	ath12k_wifi8_dp_ipa_debugfs_init(ipa_ctx->ab->debugfs_soc, ipa_ctx);
 	return 0;
 
 err_free_vdev_to_iface:
@@ -547,17 +550,240 @@ ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(struct ath12k_ipa *ipa_ctx)
 	return 0;
 }
 
+/* ieee80211_stop/wake_queues() are no-ops for ath12k: HAS_TX_QUEUE is set
+ * unconditionally in ath12k_mac_hw_register(), so mac80211 never sets up
+ * wake_txqs_tasklet and the stop/wake calls never propagate to the netdev.
+ * Use netif_tx_{stop,wake}_all_queues() directly on each vif's netdev so
+ * that real backpressure reaches the kernel qdisc and the TCP stack.
+ */
+
+/* TX path counters exposed via /sys/kernel/debug/ath12k/ipa_tx_stats */
+atomic64_t ipa_tx_ipa_count   = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_sw_count    = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_qstop_count = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_qwake_count = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_pm_wake     = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_busy_count  = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_total_sw_count = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_queue_count[IEEE80211_NUM_ACS];
+
+static void ath12k_wifi8_ipa_vif_netdev_stop(void *data, u8 *mac,
+					     struct ieee80211_vif *vif)
+{
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+
+	if (wdev && wdev->netdev)
+		netif_tx_stop_all_queues(wdev->netdev);
+}
+
+static void ath12k_wifi8_ipa_vif_netdev_wake(void *data, u8 *mac,
+					     struct ieee80211_vif *vif)
+{
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+
+	if (wdev && wdev->netdev)
+		netif_tx_wake_all_queues(wdev->netdev);
+}
+
+static void ath12k_wifi8_dp_ipa_tx_complete(struct ath12k_ipa *ipa_ctx,
+					    struct sk_buff *skb)
+{
+	static atomic_t dbg_complete_total = ATOMIC_INIT(0);
+	struct ath12k_hw_group *ag = ath12k_ab_to_ag(ipa_ctx->ab);
+	int i;
+
+	atomic_inc(&dbg_complete_total);
+	atomic_dec(&ipa_ctx->tx_outstanding);
+
+	/*
+	 * Wake queues only when:
+	 *   1. they were explicitly stopped (queues_stopped == 1), AND
+	 *   2. outstanding has drained to the low watermark (max/2)
+	 * This avoids calling ieee80211_iterate_active_interfaces_atomic on
+	 * every completion — the common case when queues are running fine.
+	 */
+	if (ipa_ctx->offload_max_pkts &&
+	    atomic_read(&ipa_ctx->queues_stopped) &&
+	    atomic_read(&ipa_ctx->tx_outstanding) <=
+			(int)(ipa_ctx->offload_max_pkts / 2) &&
+	    atomic_cmpxchg(&ipa_ctx->queues_stopped, 1, 0)) {
+		atomic64_inc(&ipa_tx_qwake_count);
+		for (i = 0; i < ag->num_hw; i++) {
+			struct ath12k_hw *ah = ath12k_ag_to_ah(ag, i);
+
+			if (ah && ah->hw)
+				ieee80211_iterate_active_interfaces_atomic(
+					ah->hw,
+					IEEE80211_IFACE_ITER_NORMAL,
+					ath12k_wifi8_ipa_vif_netdev_wake,
+					NULL);
+		}
+	}
+
+	dev_kfree_skb_any(skb);
+}
+
+int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
+			      const struct ath12k_skb_cb *skb_cb,
+			      struct ath12k_vif *ahvif,
+			      struct ath12k_sta *ahsta,
+			      struct ath12k_link_vif *arvif,
+			      bool is_mcast)
+{
+	struct ath12k_ipa *ipa_ctx;
+	const char *notelig_reason = "unknown";
+	u16 qmap;
+	int ret;
+
+	rcu_read_lock();
+
+	qmap = skb_get_queue_mapping(skb);
+	if (qmap < IEEE80211_NUM_ACS)
+		atomic64_inc(&ipa_tx_queue_count[qmap]);
+
+	ipa_ctx = IPA_CTX(ar->ab);
+	if (!ipa_ctx) {
+		notelig_reason = "ipa_ctx NULL";
+		goto not_eligible;
+	}
+	if (!READ_ONCE(ipa_ctx->handle_initialized)) {
+		notelig_reason = "handle_initialized=false";
+		goto not_eligible;
+	}
+	if (!ipa_ctx->offload_supported) {
+		notelig_reason = "offload_supported=false";
+		goto not_eligible;
+	}
+
+	/* ---- Per-packet eligibility ---- */
+
+	/* Only Ethernet-encap (HW 802.11 encap) — IPA parses Ethernet frames */
+	if (!(skb_cb->flags & ATH12K_SKB_HW_80211_ENCAP)) {
+		notelig_reason = "no HW_80211_ENCAP";
+		goto not_eligible;
+	}
+
+	/* Unicast only — multicast needs per-link copy and GSN for MLO */
+	if (is_mcast) {
+		notelig_reason = "mcast";
+		goto not_eligible;
+	}
+
+	/* EAPOL must reach firmware for key negotiation */
+	if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
+		notelig_reason = "EAPOL";
+		goto not_eligible;
+	}
+
+	/* 4-addr WDS needs per-peer AST index override in TCL metadata */
+	if (ahsta && ahsta->use_4addr_set) {
+		notelig_reason = "4addr WDS";
+		goto not_eligible;
+	}
+
+	/* NAWDS requires SW multicast-to-unicast conversion */
+	if (arvif->nawds_support) {
+		notelig_reason = "NAWDS";
+		goto not_eligible;
+	}
+
+	/* Raw mode: verbatim 802.11 frames; IPA expects Ethernet */
+	if (test_bit(ATH12K_GROUP_FLAG_RAW_MODE, &ar->ab->ag->flags)) {
+		notelig_reason = "raw mode";
+		goto not_eligible;
+	}
+
+	/* SW-crypto (native 802.11 pre-encrypted by mac80211): hw_key is NULL
+	 * so ATH12K_SKB_HW_80211_ENCAP would not be set — already blocked above.
+	 * ATH12K_SKB_CIPHER_SET on HW-encap frames means hw_key IS present and
+	 * HW will encrypt after TCL; IPA can deliver these frames safely.
+	 * Do NOT check ATH12K_SKB_CIPHER_SET here — it blocks all WPA2/WPA3 data.
+	 */
+
+	/* AP_VLAN (WDS client) and P2P-GO (NOA IE injection) */
+	if (ahvif->vdev_type == WMI_VDEV_TYPE_AP && ahvif->vif->p2p) {
+		notelig_reason = "P2P-GO";
+		goto not_eligible;
+	}
+	if (ahvif->vif->type == NL80211_IFTYPE_AP_VLAN) {
+		notelig_reason = "AP_VLAN";
+		goto not_eligible;
+	}
+
+	/* SAWF/SDWF QoS-tagged frames need TCL per-TID queue steering */
+	if (skb->mark & (SDWF_VALID_MASK | QOS_TAG_MASK)) {
+		notelig_reason = "SAWF/SDWF mark";
+		goto not_eligible;
+	}
+
+	if (ipa_ctx->offload_max_pkts) {
+		int hi = (int)ipa_ctx->offload_max_pkts;
+		int cur = atomic_inc_return(&ipa_ctx->tx_outstanding);
+
+		if (cur > hi) {
+			atomic_dec(&ipa_ctx->tx_outstanding);
+			rcu_read_unlock();
+			atomic64_inc(&ipa_tx_qstop_count);
+			atomic_set(&ipa_ctx->queues_stopped, 1);
+			ieee80211_iterate_active_interfaces_atomic(
+				ar->ah->hw, IEEE80211_IFACE_ITER_NORMAL,
+				ath12k_wifi8_ipa_vif_netdev_stop, NULL);
+			atomic64_inc(&ipa_tx_total_sw_count);
+			dev_kfree_skb_any(skb);
+			return 0;
+		}
+	}
+
+	/* ---- Hand skb to IPA ---- */
+	ret = ipa_wdi_offload_tx_dp_per_inst(ipa_ctx->hdl, skb);
+	rcu_read_unlock();
+
+	if (likely(!ret)) {
+		atomic64_inc(&ipa_tx_ipa_count);
+		return 0;
+	}
+
+	/* Submission failed — undo counter increment */
+	if (ipa_ctx->offload_max_pkts)
+		atomic_dec(&ipa_ctx->tx_outstanding);
+
+	if (ret == -EAGAIN || ret == -ENOSPC) {
+		atomic64_inc(&ipa_tx_busy_count);
+		atomic_set(&ipa_ctx->queues_stopped, 1);
+		ieee80211_iterate_active_interfaces_atomic(
+			ar->ah->hw, IEEE80211_IFACE_ITER_NORMAL,
+			ath12k_wifi8_ipa_vif_netdev_stop, NULL);
+		atomic64_inc(&ipa_tx_total_sw_count);
+		dev_kfree_skb_any(skb);
+		return 0;
+	}
+
+	atomic64_inc(&ipa_tx_total_sw_count);
+	return ret;
+
+not_eligible:
+	rcu_read_unlock();
+	atomic64_inc(&ipa_tx_sw_count);
+	atomic64_inc(&ipa_tx_total_sw_count);
+	return -EINVAL;
+}
+EXPORT_SYMBOL(ath12k_wifi8_dp_ipa_xmit);
+
 /**
- * ath12k_wifi8_dp_ipa_w2i() - IPA exception flow handler (WLAN to IPA)
- * @priv: private context (ath12k_wlan_ipa_priv)
- * @evt: IPA event type
- * @data: event data (typically sk_buff pointer)
+ * ath12k_wifi8_dp_ipa_w2i() - IPA RX-exception and TX-completion handler
+ * @priv: ath12k_ipa context registered at pipe-connect time
+ * @evt:  IPA_WRITE_DONE (TX completion) or IPA_RECEIVE (RX exception)
+ * @data: skb pointer
  *
- * Valid data packets are submitted to mac80211
- * for processing.
+ * IPA_WRITE_DONE: a skb previously submitted via
+ *   ipa_wdi_offload_tx_dp_per_inst() has been consumed by IPA HW.
+ *   Decrement the in-flight counter and wake mac80211 TX queues when
+ *   the counter falls to or below the low watermark.
  *
- * Context: Can be called from process context
- * Return: None
+ * IPA_RECEIVE: an RX exception frame has been delivered by IPA.
+ *   Look up the peer and hand the frame to mac80211.
+ *
+ * Context: softirq (GSI NAPI); must not sleep.
  */
 static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 				    enum ipa_dp_evt_type evt,
@@ -582,6 +808,44 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 	int i;
 	u16 peer_id;
 	u8 vdev_id, hw_link_id;
+
+	/* IPA_WRITE_DONE: TX completion for a skb previously submitted via
+	 * ipa_wdi_offload_tx_dp_per_inst().  Handle before IPA_RECEIVE to
+	 * keep the TX hot-path branch prediction efficient.
+	 */
+	if (evt == IPA_WRITE_DONE) {
+		ipa_ctx = (struct ath12k_ipa *)priv;
+		if (unlikely(!ipa_ctx)) {
+			ath12k_ipa_err(NULL, "IPA_WRITE_DONE: ipa_ctx is NULL");
+			if (skb)
+				dev_kfree_skb_any(skb);
+			return;
+		}
+
+		if (!skb) {
+			struct ath12k_hw_group *ag = ath12k_ab_to_ag(ipa_ctx->ab);
+			int i;
+
+			if (!atomic_cmpxchg(&ipa_ctx->queues_stopped, 1, 0))
+				return;
+			atomic64_inc(&ipa_tx_pm_wake);
+			for (i = 0; i < ag->num_hw; i++) {
+				struct ath12k_hw *ah = ath12k_ag_to_ah(ag, i);
+
+				if (ah && ah->hw)
+					ieee80211_iterate_active_interfaces_atomic(
+						ah->hw,
+						IEEE80211_IFACE_ITER_NORMAL,
+						ath12k_wifi8_ipa_vif_netdev_wake,
+						NULL);
+			}
+			return;
+		}
+
+		ath12k_wifi8_dp_ipa_tx_complete(ipa_ctx, skb);
+		return;
+	}
+
 	if (!skb) {
 		ath12k_ipa_err(NULL, "skb is NULL");
 		return;

@@ -8,6 +8,9 @@
 
 #include "../../core.h"
 #include "../dp_tx.h"
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+#include "ipa/dp_ipa.h"
+#endif
 
 int ath12k_wifi8_tx_setup_link(struct ieee80211_vif *vif,
                                struct ieee80211_sta *sta,
@@ -121,6 +124,19 @@ bool ath12k_wifi8_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 		arvif = rcu_dereference(ahvif->link[link_id]);
 		if (unlikely(!arvif || !arvif->ar))
 			goto drop;
+
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+		/* ULSO: try IPA before TCL */
+		struct ath12k_skb_cb *skb_cb = ATH12K_SKB_CB(skb);
+
+		memset(skb_cb, 0, sizeof(*skb_cb));
+		skb_cb->flags |= ATH12K_SKB_HW_80211_ENCAP;
+		if (ath12k_wifi8_dp_ipa_xmit(arvif->ar, skb, skb_cb,
+					      ahvif, NULL, arvif,
+					      false) == 0)
+			return true;
+		/* IPA not eligible or error — fall through to TCL */
+#endif
 
 		skb_ctrl->flags |= DP_SKB_FAST_TX;
 		is_recycler = (skb->fast_recycled = !!skb->is_from_recycler);

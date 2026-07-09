@@ -222,6 +222,7 @@ void ath12k_dp_ipa_set_ppe_vp_entry_config(struct ath12k_ipa_vp_profile *vp_prof
 
 #define HAL_TX_PPE_VP_CONFIG_TABLE_ADDR  0x00F1336C
 #define HAL_TX_PPE_VP_CONFIG_TABLE_OFFSET 4
+
 /**
  * ath12k_dp_ipa_hal_tx_set_ppe_vp_entry - program PPE VP config table entry
  * @ab: device base pointer

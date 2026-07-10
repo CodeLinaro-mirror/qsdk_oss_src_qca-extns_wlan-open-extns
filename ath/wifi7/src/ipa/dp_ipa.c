@@ -804,6 +804,177 @@ static void ath12k_wifi7_ipa_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
 	ath12k_wifi7_ipa_intrabss_enable_disable(ipa_ctx, vdev_id, enable);
 }
 
+/**
+ * ath12k_wifi7_dp_ipa_w2i() - IPA exception flow handler (WLAN to IPA)
+ * @priv: private context (ath12k_wlan_ipa_priv)
+ * @evt: IPA event type
+ * @data: event data (typically sk_buff pointer)
+ *
+ * Handles packets received from IPA in the exception path. This includes
+ * EAPOL and WAPI packets that need special handling, as well as packets
+ * for unauthorized peers. Valid data packets are submitted to mac80211
+ * for processing.
+ *
+ * Context: Can be called from process context
+ * Return: None
+ */
+static void ath12k_wifi7_dp_ipa_w2i(void *priv,
+				    enum ipa_dp_evt_type evt,
+				    unsigned long data)
+{
+	struct ath12k_ipa *ipa_ctx;
+	struct sk_buff *skb;
+	u8 if_idx;
+	struct ath12k_ipa_iface_context *if_ctx;
+	struct ethhdr *eth;
+	struct net_device *dev;
+	struct ath12k_base *ab;
+	struct ath12k_dp *dp;
+	struct ath12k_pdev_dp *dp_pdev;
+	struct ath12k *ar;
+	struct ieee80211_hw *hw;
+	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_link_vif *arvif;
+	u16 peer_id;
+	u8 vdev_id;
+	struct ieee80211_rx_status *status;
+#ifdef CPTCFG_EXT_IPA_STATS
+	struct ath12k_dp_ipa_stats_vif_hw_stats *link_vif_stats;
+	bool is_mcast, is_bcast;
+#endif
+
+	skb = (struct sk_buff *)data;
+	if (!skb) {
+		ath12k_err(NULL, "skb is NULL");
+		return;
+	}
+
+	if (evt != IPA_RECEIVE) {
+		ath12k_err(NULL, "ipa gave wrong event: 0x%X", evt);
+		goto drop;
+	}
+
+	ipa_ctx = (struct ath12k_ipa *)priv;
+	if (!ipa_ctx) {
+		ath12k_err(NULL, "ipa_ctx is NULL, dropping pkt");
+		if (evt == IPA_RECEIVE)
+			dev_kfree_skb_any(skb);
+		return;
+	}
+
+	ipa_ctx->stats.rx_excep++;
+
+	ab = ipa_ctx->ab;
+	dp = ath12k_ab_to_dp(ab);
+
+	eth = skb_eth_hdr(skb);
+	peer_id = ath12k_dp_ipa_skb_get_peer_id(skb);
+	vdev_id = ath12k_dp_ipa_skb_get_vdev_id(skb);
+
+	/* TODO: add check for WLAN_IPA_UC_ENABLE_MASK */
+	if_idx = ipa_ctx->vdev_to_iface[vdev_id];
+
+	if (if_idx >= ipa_ctx->max_iface) {
+		ath12k_err(ab, "pkt received before intf setup vdev_id=%d",
+			   vdev_id);
+		ipa_ctx->stats.rx_no_iface++;
+		/* TODO: If EAPOL is rx before iface setup, send them to nw stack */
+		goto drop;
+	}
+
+	if_ctx = &ipa_ctx->iface_context[if_idx];
+	if (if_ctx->session_id == ipa_ctx->invalid_session_id) {
+		ath12k_err(ab, "vdev_id of if_idx %u is invalid:%d",
+			   if_idx, if_ctx->session_id);
+		goto drop;
+	}
+
+	if (eth->h_proto == cpu_to_be16(ETH_P_PAE) ||
+		eth->h_proto == cpu_to_be16(ETH_P_WAPI)) {
+		ipa_ctx->stats.rx_eapol++;
+		dev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
+		if (!dev) {
+			ath12k_err(ab, "netdev is null for '%s'",
+				   if_ctx->net_dev.name);
+			goto drop;
+		}
+		skb->protocol = eth_type_trans(skb, dev);
+		cfg80211_rx_control_port(dev, skb, false, -1);
+		dev_put(dev);
+		return;
+	}
+
+	rcu_read_lock();
+
+	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
+	if (!arvif) {
+		ath12k_err(ab, "arvif is NULL");
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	ar = arvif->ar;
+	if (!ar) {
+		ath12k_err(ab, "ar is NULL");
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	dp_pdev = ath12k_dp_to_dp_pdev(dp, ar->pdev_idx);
+
+	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
+	if (!dp_peer) {
+		ath12k_err(ab, "dp_peer is null (peer_id=%d mac=%pM)", peer_id,
+			   eth->h_source);
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	if (!dp_peer->is_authorized) {
+		ath12k_err(ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
+			   peer_id, eth->h_source, eth->h_dest,
+			   cpu_to_be16(eth->h_proto), dp_peer->addr);
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	hw = ath12k_ar_to_hw(ar);
+	skb->protocol = eth->h_proto;
+
+	/* reset skb cb and fill with ieee80211_rx_status */
+	memset(skb->cb, 0, sizeof(skb->cb));
+	status = IEEE80211_SKB_RXCB(skb);
+
+	status->flag |= RX_FLAG_8023;
+	status->band = ar->rx_channel->band;
+
+	status->link_id = dp_peer->hw_links[dp_pdev->hw_link_id];
+	status->link_valid = true;
+
+#ifdef CPTCFG_EXT_IPA_STATS
+	if (arvif) {
+		link_vif_stats = arvif->extn.stats;
+		is_bcast = is_broadcast_ether_addr(eth->h_dest);
+		is_mcast = is_bcast ? false : is_multicast_ether_addr(eth->h_dest);
+
+		if (ar->fw_stats.en_vdev_stats_ol && (is_mcast || is_bcast))
+			ath12k_dp_ipa_tx_rx_mcbc_stats(&link_vif_stats->rx.stats,
+						       is_mcast, is_bcast,
+						       skb->len);
+	}
+#endif
+
+	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
+	ipa_ctx->stats.sent_to_mac++;
+
+	rcu_read_unlock();
+	return;
+drop:
+	ipa_ctx->stats.rx_drop_excep++;
+	dev_kfree_skb_any(skb);
+	return;
+}
+
 static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.dp_srng_cleanup = NULL,
 	.dp_srng_setup = NULL,
@@ -829,6 +1000,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi7_arch_ops = {
 	.ipa_get_session_id = ath12k_wifi7_ipa_get_session_id,
 	.ipa_initialize_default = ath12k_wifi7_ipa_initialize_default,
 	.ipa_uc_offload_enable = ath12k_wifi7_ipa_uc_offload_enable,
+	.dp_ipa_w2i = ath12k_wifi7_dp_ipa_w2i,
 };
 
 int

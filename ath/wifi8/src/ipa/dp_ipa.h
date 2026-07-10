@@ -11,6 +11,8 @@
 #include "../../hal.h"
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 
+#include <linux/ipa_wdi3.h>
+
 #define ath12k_wifi8_get_ipa_dp(__dp_wifi8) ((__dp_wifi8)->extn.ipa)
 
 #define ATH12K_DP_WIFI8_IPA2WBM_IDLE_RING_SZ	(3 * 4096)
@@ -109,5 +111,19 @@ int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab);
 void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab);
 int ath12k_wifi8_dp_fill_tx_src(struct ath12k_base *ab);
 int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create);
+
+static inline u8
+ath12k_ipa_cb_get_vap_id(const struct ipa_wdi6_rx_skb_cb *cb)
+{
+	return (u8)((cb->packed >> IPA_WDI6_CB_VAP_ID_SHIFT) &
+		    IPA_WDI6_CB_VAP_ID_MASK);
+}
+
+static inline u16
+ath12k_ipa_cb_get_ta_peer_id(const struct ipa_wdi6_rx_skb_cb *cb)
+{
+	return (u16)((cb->packed >> IPA_WDI6_CB_TA_PEER_ID_SHIFT) &
+		     IPA_WDI6_CB_TA_PEER_ID_MASK);
+}
 
 #endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

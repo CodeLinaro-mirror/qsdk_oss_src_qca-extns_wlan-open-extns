@@ -23,7 +23,7 @@ struct sa_txrx_fb_ctx {
 	struct ath12k_sa_rx_feedback *rx;
 	struct ath12k_sa_tx_feedback *tx;
 	struct smart_ant_train_info param;
-	u8 status;
+	u32 status;
 	s8 ret;
 	u32 pdev_id;
 	u32 vdev_id;
@@ -223,19 +223,20 @@ static inline int sa_core_get_node_config(void *ccp, u32 id, u32 *config)
 }
 
 static inline
-int sa_core_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th)
+int sa_core_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th, u32 *extn_flag)
 {
 	struct ath12k_smart_ant_ops *ops;
 	int ret;
 
 	rcu_read_lock();
 	ops = rcu_dereference(g_sa_ops);
-	if (!ops || !ops->sa_get_ext_traininginfo || !minpkts || !per_th) {
+	if (!ops || !ops->sa_get_ext_traininginfo || !minpkts ||
+	    !per_th || !extn_flag) {
 		rcu_read_unlock();
 		ath12k_err(NULL, "sa_core: get_ext_traininginfo invalid ops/args\n");
 		return -1;
 	}
-	ret = ops->sa_get_ext_traininginfo(ccp, minpkts, per_th);
+	ret = ops->sa_get_ext_traininginfo(ccp, minpkts, per_th, extn_flag);
 	rcu_read_unlock();
 	if (ret)
 		ath12k_err(NULL, "sa_core: get_ext_traininginfo op failed (%d)\n", ret);
@@ -264,6 +265,67 @@ int sa_core_get_gpio_config(u8 radio_id, struct ath12k_sa_gpio_config *gpio_cfg)
 	return ret;
 }
 
+static inline int sa_core_get_rts_ant_flag(u8 radio_id, u32 *en_rts)
+{
+	struct ath12k_smart_ant_ops *ops;
+	int ret;
+
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_enable_rts_ant || !en_rts) {
+		rcu_read_unlock();
+		return -1;
+	}
+	ret = ops->sa_get_enable_rts_ant(radio_id, en_rts);
+	rcu_read_unlock();
+	if (ret)
+		ath12k_dbg(NULL, ATH12K_DBG_ANY,
+			   "sa_core: sa_get_enable_rts_ant op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline
+int sa_core_get_max_mpdu_count_for_training(u8 radio_id, u32 *value)
+{
+	struct ath12k_smart_ant_ops *ops;
+	int ret;
+
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_max_mpdu_count_for_training || !value) {
+		rcu_read_unlock();
+		return -1;
+	}
+	ret = ops->sa_get_max_mpdu_count_for_training(radio_id, value);
+	rcu_read_unlock();
+	if (ret)
+		ath12k_dbg(NULL, ATH12K_DBG_ANY,
+			   "sa_core: sa_get_max_mpdu_count_for_training op failed (%d)\n", ret);
+
+	return ret;
+}
+
+static inline int sa_core_get_mcs_margin(u8 radio_id, u32 *value)
+{
+	struct ath12k_smart_ant_ops *ops;
+	int ret;
+
+	rcu_read_lock();
+	ops = rcu_dereference(g_sa_ops);
+	if (!ops || !ops->sa_get_mcs_margin || !value) {
+		rcu_read_unlock();
+		return -1;
+	}
+	ret = ops->sa_get_mcs_margin(radio_id, value);
+	rcu_read_unlock();
+	if (ret)
+		ath12k_dbg(NULL, ATH12K_DBG_ANY,
+			   "sa_core: sa_get_mcs_margin op failed (%d)\n", ret);
+
+	return ret;
+}
+
 void sa_get_cfg_flags(struct ath12k_base *ab, u8 *sa_en, u8 *sa_sw_test)
 {
 	struct sa_base_extn *sa_base;
@@ -276,6 +338,8 @@ void sa_get_cfg_flags(struct ath12k_base *ab, u8 *sa_en, u8 *sa_sw_test)
 		sa_base = &ab->ath12k_base_extn.sa_base;
 		sa_base->sa_mode_overwrite =
 					ath12k_cfg_get(ab, ATH12K_CFG_SA_MODE);
+		sa_base->sa_en_rts_overwrite =
+					ath12k_cfg_get(ab, ATH12K_CFG_EN_RTS_ANT);
 	}
 }
 
@@ -304,10 +368,12 @@ static void sa_core_peer_connect_notify(struct ath12k *ar,
 	sa_sta = &arsta->arsta_extn.sa_sta;
 	ether_addr_copy(node_info.mac_addr, arsta->addr);
 	node_info.radio_id = ar->radio_idx;
-	node_info.max_ch_bw = arsta->bw;
+	node_info.max_ch_bw = link_sta->bandwidth;
 	node_info.nss_tx = arsta->peer_nss;
 	node_info.nss_rx = link_sta->rx_nss;
-	memcpy(&node_info.rate_cap, &param->rate_cap, sizeof(param->rate_cap));
+	if (param)
+		memcpy(&node_info.rate_cap, &param->rate_cap,
+		       sizeof(param->rate_cap));
 
 	chan = arvif->chanctx.def.chan;
 	if (chan) {
@@ -386,7 +452,8 @@ sa_core_wmi_send_parallel_mode_gpio_drive(struct ath12k *ar, u32 value)
 
 static int
 sa_core_wmi_send_smart_ant_enable(struct ath12k *ar, u32 tx_ant, u32 rx_ant,
-				  struct ath12k_sa_gpio_config *gpio_cfg)
+				  struct ath12k_sa_gpio_config *gpio_cfg,
+				  u32 sa_flag)
 {
 	struct ath12k_wmi_pdev *wmi = ar->wmi;
 	struct sa_ar_extn *sa_ar = &ar->ar_extn.sa_ar;
@@ -396,9 +463,11 @@ sa_core_wmi_send_smart_ant_enable(struct ath12k *ar, u32 tx_ant, u32 rx_ant,
 	struct sk_buff *skb;
 	int i, ret, len;
 	void *ptr;
+	u32 *pdev_sa_flag;
 
 	len = sizeof(*cmd) + TLV_HDR_SIZE +
-	      WMI_SMART_ANT_HAL_MAX * sizeof(*gpio_param);
+	      WMI_SMART_ANT_HAL_MAX * sizeof(*gpio_param) +
+	      TLV_HDR_SIZE + sizeof(u32);
 	skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, len);
 	if (!skb)
 		return -ENOMEM;
@@ -444,6 +513,14 @@ sa_core_wmi_send_smart_ant_enable(struct ath12k *ar, u32 tx_ant, u32 rx_ant,
 		gpio_param->pdev_id = ar->pdev->pdev_id;
 		gpio_param++;
 	}
+
+	ptr += len;
+	tlv = ptr;
+	tlv->header = FIELD_PREP(WMI_TLV_TAG, WMI_TAG_ARRAY_UINT32) |
+		      FIELD_PREP(WMI_TLV_LEN, sizeof(u32));
+	ptr += TLV_HDR_SIZE;
+	pdev_sa_flag = ptr;
+	*pdev_sa_flag = (sa_flag & 1);
 
 	ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PDEV_SMART_ANT_ENABLE_CMDID);
 	if (ret) {
@@ -578,10 +655,15 @@ static int sa_core_wmi_set_train_info(struct ath12k_base *ab,
 	if ((param->minpkts != SA_INVALID_PARAM_VALUE) ||
 	    (param->per_th != SA_INVALID_PARAM_VALUE)) {
 		cmd->per_check_bitmap = 1;
-		cmd->per_check_bitmap |= (param->per_th & SA_MASK_PER_TH) << 1;
 		cmd->per_check_bitmap |=
-				(param->minpkts & SA_MASK_MIN_PKTS) << 9;
+			(param->per_th & SA_MASK_PER_TH) << SA_PER_TH_BIT_POS;
+		cmd->per_check_bitmap |= (param->minpkts & SA_MASK_MIN_PKTS) <<
+					  SA_MIN_PKTS_BIT_POS;
 	}
+	if (param->extn_train_flags & SA_LATENCY_TRAFFIC_DISABLE)
+		cmd->per_check_bitmap |= (1 << SA_LTNC_TR_BIT_POS);
+	if (param->extn_train_flags & SA_QOS_NULL_ENABLE)
+		cmd->per_check_bitmap |= (1 << SA_EN_QOS_NULL_BIT_POS);
 
 	ptr = skb->data + sizeof(*cmd);
 
@@ -842,6 +924,9 @@ static int sa_core_get_training_info(void *sta_ctx,
 	struct ath12k_smart_ant_ops *ops;
 	int ret = 0;
 
+	if (!sta_ctx || !param)
+		return -1;
+
 	ops = rcu_dereference(g_sa_ops);
 	if (!ops)
 		return -1;
@@ -858,7 +943,8 @@ static int sa_core_get_training_info(void *sta_ctx,
 	if (!ret && ops->sa_get_ext_traininginfo)
 		ops->sa_get_ext_traininginfo(sta_ctx,
 					     &param->minpkts,
-					     &param->per_th);
+					     &param->per_th,
+					     &param->extn_train_flags);
 
 	return ret;
 }
@@ -1369,6 +1455,17 @@ int sa_core_set_configs(struct ath12k *ar, u32 *params)
 							 vdev_id, mac,
 							 SA_TX_FEEDBACK_CONFIG,
 							 1, &value);
+		} else if (ret & SA_MPDU_CNT_MCS_MRG_REQUIRED) {
+			u32 mpdu_cnt = 0;
+			u32 mcs_marg = 0;
+			sa_core_get_max_mpdu_count_for_training(ar->radio_idx,
+								&mpdu_cnt);
+			sa_core_get_mcs_margin(ar->radio_idx, &mcs_marg);
+			value = (mpdu_cnt & SA_MASK_MAX_MPDU_CNT) |
+				((mcs_marg & SA_MASK_MCS_MARGIN) << SA_MCS_MARGIN_POS);
+			ath12k_wmi_pdev_set_param(ar,
+				WMI_PDEV_PARAM_SMART_ANTENNA_CONFIG_MPDU_MCS_PARAMS,
+				value, ar->pdev->pdev_id);
 		}
 	}
 
@@ -1387,7 +1484,7 @@ int sa_core_init(struct ath12k *ar,
 	struct ieee80211_channel *chan;
 	struct ath12k_sa_gpio_config gpio_cfg = {0};
 	int sa_mode;
-	u32 rx_antenna, tx_defaultant;
+	u32 rx_antenna, tx_defaultant, en_rts;
 	u32 tx_ant[WMI_SMART_ANT_MAX_RATE_SERIES] = {0};
 	u8 i;
 	int ret;
@@ -1405,8 +1502,10 @@ int sa_core_init(struct ath12k *ar,
 		return -1;
 
 	sa_ar = &ar->ar_extn.sa_ar;
-	if (sa_ar->state == SA_INIT_DONE_STATE)
-		return -1;
+	if (init_flags & SA_NEW_CONFIG) {
+		if (sa_ar->state == SA_INIT_DONE_STATE)
+			return 0;
+	}
 
 	ath12k_dbg(ab, ATH12K_DBG_ANY,
 		   "SA Core Init Called with init_flag = %u\n", init_flags);
@@ -1457,7 +1556,6 @@ int sa_core_init(struct ath12k *ar,
 
 	sa_core_get_txdefaultantenna(ar->radio_idx, &tx_defaultant);
 	sa_core_get_rxantenna(ar->radio_idx, &rx_antenna);
-	sa_core_get_gpio_config(ar->radio_idx, &gpio_cfg);
 	/* Create smart antenna enabled and Tx/Rx feedback subscription state
 	 * bitmap. bit 0 for smart antenna enabled/disabled, bit 4 for TX
 	 * subscription state and bit 5 for RX subscription state.
@@ -1466,8 +1564,18 @@ int sa_core_init(struct ath12k *ar,
 			(SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK));
 	if (init_flags & SA_NEW_CONFIG) {
 		sa_ar->state = SA_INIT_DONE_STATE;
+		sa_core_get_gpio_config(ar->radio_idx, &gpio_cfg);
+		sa_core_get_rts_ant_flag(ar->radio_idx, &en_rts);
+		if (!sa_base->sa_en_rts_overwrite ||
+		    sa_base->sa_en_rts_overwrite == 1) {
+			en_rts = sa_base->sa_en_rts_overwrite;
+			ath12k_dbg(ab, ATH12K_DBG_ANY,
+				   "SA Overwritten RTS separate antenna enable to %d\n",
+				   en_rts);
+		}
 		ret = sa_core_wmi_send_smart_ant_enable(ar, tx_defaultant,
-							rx_antenna, &gpio_cfg);
+							rx_antenna, &gpio_cfg,
+							en_rts);
 		if (ret) {
 			ath12k_err(ab, "SA enable command failed for 0x%x\n",
 				   sa_ar->enable_mask);
@@ -1489,6 +1597,9 @@ int sa_core_init(struct ath12k *ar,
 	} else {
 		sa_core_wmi_set_rx_antenna(ab, ar->wmi, ar->pdev->pdev_id,
 					   rx_antenna);
+		ath12k_wmi_pdev_set_param(ar,
+			WMI_PDEV_PARAM_SMART_ANTENNA_DEFAULT_ANTENNA,
+			tx_defaultant, ar->pdev->pdev_id);
 	}
 
 	for (i = 0; i < WMI_SMART_ANT_MAX_RATE_SERIES; i++)
@@ -1498,6 +1609,56 @@ int sa_core_init(struct ath12k *ar,
 				   ahvif->vif->addr, tx_ant);
 
 	return 0;
+}
+
+/* Called from process context with wiphy lock held. */
+static void sa_core_peer_reconnect_iter(struct ath12k *ar,
+					struct ath12k_link_sta *arsta,
+					void *data)
+{
+	struct sa_sta_extn *sa_sta = &arsta->arsta_extn.sa_sta;
+
+	/*
+	 * Only re-notify peers that already have a valid SA context.
+	 * Peers that never completed the ratecode-list handshake have
+	 * ctx == NULL and cannot be re-notified here.
+	 */
+	if (!sa_sta->ctx)
+		return;
+
+	/* Reuse the existing peer-connect path. rate_cap is not available
+	 * from the WMI event here, so pass NULL — sa_core_peer_connect_notify
+	 * skips the memcpy when data is NULL and the algorithm module retains
+	 * its cached rate capabilities from the initial connect.
+	 */
+	rcu_read_lock();
+	sa_core_peer_connect_notify(ar, arsta, NULL);
+	rcu_read_unlock();
+}
+
+void sa_core_notify_all_peers_connected(struct ath12k *ar)
+{
+	u32 bkt;
+	struct ath12k_link_sta *arsta;
+	struct hlist_node *tmp;
+
+	if (!ar || !ath12k_smart_ant_is_enable(ar->ab))
+		return;
+
+	if (!rcu_access_pointer(g_sa_ops))
+		return;
+
+	spin_lock_bh(&ar->arsta_lock);
+	if (!ar->arsta_list) {
+		spin_unlock_bh(&ar->arsta_lock);
+		return;
+	}
+	for (bkt = 0; bkt < BIT(ar->arsta_hash_bits); bkt++) {
+		hlist_for_each_entry_safe(arsta, tmp, &ar->arsta_list[bkt],
+					  hlist_addr)
+			sa_core_peer_reconnect_iter(ar, arsta, NULL);
+	}
+	spin_unlock_bh(&ar->arsta_lock);
 }
 
 int sa_core_deinit(struct ath12k *ar, u8 init_flags)
@@ -1527,7 +1688,7 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 
 	if (sa_ar->state == SA_DEINIT_DONE_STATE) {
 		ath12k_dbg(ab, ATH12K_DBG_ANY, "SA Core Deinit already done!\n");
-		return -1;
+		return 0;
 	}
 	if (init_flags) {
 		/* Call deinit under RCU so the module cannot be unloaded
@@ -1551,7 +1712,7 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 		rcu_assign_pointer(sa_cached_ag, NULL);
 		synchronize_rcu();
 		sa_ar->enable_mask = 0;
-		ret = sa_core_wmi_send_smart_ant_enable(ar, 0, 0, &gpio_cfg);
+		ret = sa_core_wmi_send_smart_ant_enable(ar, 0, 0, &gpio_cfg, 0);
 		if (ret)
 			ath12k_err(ab, "SA disable failed %d\n", ret);
 		if (sa_ar->sa_mode == WMI_SMART_ANT_MODE_PARALLEL)

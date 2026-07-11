@@ -22,6 +22,7 @@
 #include <linux/ipa.h>
 #include <linux/ipa_wdi3.h>
 #include <linux/pci.h>
+#include <linux/vmalloc.h>
 
 struct frag_header {
 	struct {
@@ -41,16 +42,14 @@ struct ipa_header {
 #define ath12k_ipa_err(__ab, __log, ...) ath12k_err(__ab, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
 #define ath12k_ipa_dbg(__ab, __log, ...) ath12k_dbg(__ab, ATH12K_DBG_IPA, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
 
-#define DEBRUIJIN_MAGIC_IDX 0x077CB531U
-#define DEBRUIJIN_MAGIC_SHIFT 27
 #define IPA_CTX(ab) ab->ath12k_base_extn.ipa_ctx
+#define ATH12K_IPA_RX_BUF_DMA_BITS		32
 
 #define NL80211_BAND_UNSPECIFIED ((enum nl80211_band)-1)
 
 #define ATH12K_IPA_TCL_SW_RING 0
 
 #define MAX_IPA_IFACE                       16
-#define ATH12K_IPA_MAX_IFACE                MAX_IPA_IFACE
 #define ATH12K_IPA_MAX_SYSBAM_PIPE          4
 #define WLAN_IPA_WLAN_HDR_DES_MAC_OFFSET    0
 #define WLAN_IPA_UC_WLAN_HDR_DES_MAC_OFFSET \
@@ -275,8 +274,51 @@ struct dp_ipa_net_device_priv {
 	int ifindex;
 };
 
+/**
+ * struct ath12k_ipa_arch_ops - Generation-specific IPA operation callbacks.
+ *
+ * @dp_srng_cleanup:          Clean up IPA-specific datapath rings.
+ * @dp_srng_setup:            Set up IPA-specific datapath rings.
+ * @dp_srng_get_rsrc:         Populate TX/RX ring resource descriptors for IPA.
+ * @dp_rx_default_routing:    Return the REO destination ring index for IPA RX.
+ * @dp_rxdma_buf_setup:       Set up the RXDMA buffer ring for IPA.
+ * @dp_tx_set_bank_config:    Configure the TCL bank register for IPA TX.
+ * @dp_rx_buf_smmu_map_unmap: Map or unmap RX buffers in the SMMU for IPA.
+ * @dp_rx_pipe_set_rdi:       Set the RX pipe RDI (ring doorbell info) for IPA.
+ * @ipa_get_rbm_id:           Return the Return Buffer Manager ID for IPA TX.
+ * @ipa_get_ring_id:          Return the hardware ring ID for a given ring type.
+ * @dp_srng_rx_init:          Initialize the IPA-specific RX ring (WiFi8 only).
+ * @ipa_set_rx_doorbell_paddr: Program the RX ready doorbell physical address.
+ * @ipa_set_tx_doorbell_paddr: Program the TX completion doorbell physical address.
+ * @ipa_tx_comp_ring_init_hp: Initialize the TX completion ring head pointer.
+ * @ipa_get_wdi_version:      Return the WDI protocol version (e.g. IPA_WDI_4).
+ * @ipa_iface_setup_set_vp_num: Set the VP (virtual port) number in the IPA
+ *                             interface registration parameters (WiFi8 only).
+ * @ipa_iface_cleanup_vp_num: Release the VP number on interface teardown (WiFi8).
+ * @ipa_iface_setup_set_intf_idx: Set the interface index in the IPA registration
+ *                             parameters (WiFi8 only).
+ * @ipa_client_connect_ex:    Handle a WLAN_CLIENT_CONNECT_EX event; called when
+ *                             a peer associates to a SAP interface.
+ * @ipa_client_disconnect:    Handle a WLAN_CLIENT_DISCONNECT event; called when
+ *                             a peer disassociates from a SAP interface.
+ * @ipa_iface_context_init:   Allocate and initialize the iface_context array and
+ *                             all session-indexed arrays (iface_context, vdev_to_iface,
+ *                             vdev_offload_enabled, disable_intrabss_fwd).
+ *                             Must also set max_iface, max_session_id,
+ *                             invalid_session_id, and wdi_version.
+ *                             WiFi7: max_iface=16, max_session_id=16, invalid=16.
+ *                             WiFi8: max_iface=48, max_session_id=256, invalid=0.
+ *                             Returns 0 on success, negative errno on failure.
+ * @ipa_iface_context_deinit: Free all arrays allocated by @ipa_iface_context_init:
+ *                             iface_context, vdev_to_iface, vdev_offload_enabled,
+ *                             and disable_intrabss_fwd.
+ * @ipa_get_session_id:       Return the session identifier for a link VIF.
+ *                             WiFi7: returns arvif->vdev_id (per-SoC, 0..6).
+ *                             WiFi8: returns arvif->ahvif->dp_vif.ahvif_id
+ *                             (group-wide unique, 1..63; 0 = invalid sentinel).
+ *                             Called from ath12k_ipa_enqueue_evt().
+ */
 struct ath12k_ipa_arch_ops {
-	int (*dp_ipa_init)(struct ath12k_base *ab);
 	int (*dp_srng_cleanup)(struct ath12k_base *ab);
 	int (*dp_srng_setup)(struct ath12k_base *ab);
 	void (*dp_srng_get_rsrc)(struct ath12k_base *ab);
@@ -293,7 +335,9 @@ struct ath12k_ipa_arch_ops {
 				   struct ipa_wdi_pipe_setup_info_smmu *rx_smmu);
 	u8 (*ipa_get_wdi_version)(void);
 	void (*ipa_iface_setup_set_metadata)(struct ipa_wdi_reg_intf_in_params *in);
-	void (*ipa_iface_setup_set_vp_num)(struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_setup_set_vp_num)(u8 link_id,
+					   struct ipa_wdi_reg_intf_in_params *in);
+	void (*ipa_iface_cleanup_vp_num)(const char *dev_name, u8 link_id);
 	void (*ipa_iface_setup_set_intf_idx)(struct ipa_wdi_reg_intf_in_params *in,
 					     int intf_idx);
 	int (*ipa_client_connect_ex)(struct ath12k_ipa *ipa_ctx,
@@ -308,6 +352,16 @@ struct ath12k_ipa_arch_ops {
 				     const u8 mac[ETH_ALEN],
 				     struct dp_ipa_net_device_priv *dev,
 				     bool is_mlo);
+	int (*ipa_iface_context_init)(struct ath12k_ipa *ipa_ctx);
+	void (*ipa_iface_context_deinit)(struct ath12k_ipa *ipa_ctx);
+	u16 (*ipa_get_session_id)(struct ath12k_link_vif *arvif);
+	void (*ipa_initialize_default)(struct ath12k_ipa *ipa_ctx, u16 i);
+	void (*ipa_uc_offload_enable)(struct ath12k_ipa *ipa_ctx,
+					       u32 offload_type, u32 vdev_id,
+					       bool enable);
+	void (*dp_ipa_w2i)(void *priv,
+			   enum ipa_dp_evt_type evt,
+			   unsigned long data);
 };
 
 struct ath12k_ipa_mac_addr {
@@ -532,7 +586,7 @@ struct ath12k_ipa_iface_context {
 	u8 mac_addr[ATH12K_IPA_MAC_ADDR_SIZE];
 	atomic_t conn_count;
 	atomic_t disconn_count;
-	u8 session_id;
+	u16 session_id;
 	spinlock_t interface_lock;
 	u32 ifa_address;
 	struct ath12k_ipa_iface_stats stats;
@@ -689,6 +743,86 @@ struct ath12k_ipa_config {
 };
 
 
+/**
+ * struct ath12k_ipa - IPA offload context for a single ath12k device (WiFi7)
+ *                     or the entire cumac group (WiFi8).
+ * @ab:                    Back-pointer to the owning ath12k_base.
+ * @ipa_uc_tx_rsc:         Primary TX ring resources shared with IPA.
+ * @ipa_uc_rx_rsc:         Primary RX ring resources shared with IPA.
+ * @ipa_uc_tx_alt_rsc:     Alternate TX ring resources (two-pipe mode).
+ * @ipa_uc_rx_alt_rsc:     Alternate RX ring resources.
+ * @stats:                 Aggregate IPA statistics counters.
+ * @enable_disable_lock:   Spinlock protecting pipe enable/disable state.
+ * @ipa_pipes_down:        True when IPA pipes are currently down.
+ * @pipes_down_in_progress: Mutual exclusion flag for IPA disable-pipes path.
+ * @pipes_enable_in_progress: Mutual exclusion flag for IPA enable-pipes path.
+ * @pipes_disabled:        Atomic flag set when cdp_disable_ipa_pipes is called.
+ * @ipa_pipes_enabled:     Atomic flag tracking pipe-enabled state.
+ * @pending_tx_start_ticks: Timestamp (ticks) after which idle pipes are disabled.
+ * @iface_context:         Dynamically allocated array of per-interface state.
+ *                         NULL until arch_ops->ipa_iface_context_init() is called.
+ *                         WiFi7: ATH12K_IPA_MAX_IFACE (7) entries.
+ *                         WiFi8: ATH12K_IPA_MAX_IFACE_WIFI8 (21) entries (3 SoCs × 7).
+ * @max_iface:             Capacity of @iface_context[]; set by ipa_iface_context_init.
+ * @sys_pipe:              IPA system pipe array.
+ * @num_iface:             Number of currently active interfaces.
+ * @config:                Pointer to IPA configuration parameters.
+ * @wdi_version:           WDI protocol version (IPA_WDI_4 for WiFi7,
+ *                         IPA_WDI_6 for WiFi8).
+ * @pending_event:         List of pending WLAN events awaiting processing.
+ * @event_lock:            Mutex serializing WLAN event processing.
+ * @ipa_lock:              Mutex protecting IPA UC loaded handler.
+ * @rt_debug_lock:         Mutex for real-time debug operations.
+ * @g_init_deinit_lock:    Mutex serializing init/deinit sequences.
+ * @wdi_enabled:           True when WDI interface is enabled.
+ * @autonomy_disabled:     Atomic flag set when cdp_ipa_disable_autonomy is called.
+ * @ipa_resource_comp:     Completion used to synchronize resource loading.
+ * @ipa_init_state:        Current IPA initialization state machine value.
+ * @deinit_in_prog:        Atomic flag indicating deinit is in progress.
+ * @num_sap_connected:     Number of SAP interfaces currently connected to IPA.
+ * @sap_num_connected_sta: Number of non-MLO STA clients connected to SAP.
+ * @sap_num_mlo_connected_sta: Number of MLO STA clients connected to SAP.
+ * @sta_connected:         Number of STA interfaces currently connected to IPA.
+ * @tx_pipe_handle:        TX pipe handle returned by IPA.
+ * @rx_pipe_handle:        RX pipe handle returned by IPA.
+ * @resource_loading:      True while IPA resources are being loaded.
+ * @resource_unloading:    True while IPA resources are being unloaded.
+ * @ipa_tx_packets_diff:   TX packet count delta for bandwidth monitoring.
+ * @ipa_rx_packets_diff:   RX packet count delta for bandwidth monitoring.
+ * @ipa_p_tx_packets:      Previous TX packet count snapshot.
+ * @ipa_p_rx_packets:      Previous RX packet count snapshot.
+ * @ipa_map_allowed:       Atomic flag permitting SMMU buffer mapping.
+ * @uc_loaded:             True when IPA uC firmware is loaded and ready.
+ * @over_gsi:              True when IPA is operating over GSI transport.
+ * @is_smmu_enabled:       True when SMMU S1 stage is enabled.
+ * @instance_id:           IPA instance identifier for this device.
+ * @handle_initialized:    True after ipa_wdi_init_per_inst() succeeds.
+ * @hdl:                   WDI handle returned by ipa_wdi_init_per_inst().
+ * @curr_bw_level:         Current IPA bandwidth vote level.
+ * @uc_op_work:            Work structs for deferred uC opcode processing.
+ * @vdev_to_iface:         Maps session_id to @iface_context[] index.
+ *                         Dynamically allocated with @max_session_id entries.
+ *                         Initialized to @invalid_session_id ("no iface mapped").
+ *                         WiFi7: 7 entries (session_id = vdev_id, 0..6).
+ *                         WiFi8: 256 entries (session_id = ahvif_id, 0..255).
+ * @vdev_offload_enabled:  Per-session IPA UC offload enable flag.
+ *                         Dynamically allocated with @max_session_id entries.
+ * @disable_intrabss_fwd:  Per-session intrabss forwarding disable flag.
+ *                         Dynamically allocated with @max_session_id entries.
+ * @max_session_id:        Size of @vdev_to_iface[], @vdev_offload_enabled[],
+ *                         and @disable_intrabss_fwd[]; set by ipa_iface_context_init.
+ *                         WiFi7: ATH12K_IPA_MAX_SESSION (7).
+ *                         WiFi8: ATH12K_MAX_AHVIF_ID + 1 (256).
+ * @invalid_session_id:    Sentinel stored in @iface_context[].session_id and
+ *                         @vdev_to_iface[] to indicate a free/unassigned slot.
+ *                         WiFi7: ATH12K_IPA_MAX_SESSION (7).
+ *                         WiFi8: ATH12K_INVALID_AHVIF_ID (0).
+ * @curr_prod_bw:          Current producer (RX) bandwidth vote.
+ * @curr_cons_bw:          Current consumer (TX) bandwidth vote.
+ * @is_db_ddr_mapped:      True when doorbell registers are DDR-mapped.
+ * @ipa_first_tx_db_access: True before the first TX doorbell access after connect.
+ * @arch_ops:              Pointer to generation-specific arch operations.
+ */
 struct ath12k_ipa {
 	struct ath12k_base *ab;
 	struct ath12k_ipa_dp_tx_rsc ipa_uc_tx_rsc;
@@ -698,16 +832,13 @@ struct ath12k_ipa {
 	struct ath12k_ipa_stats stats;
 	spinlock_t enable_disable_lock;
 	bool ipa_pipes_down;
-	/* Flag for mutual exclusion during IPA disable pipes */
 	bool pipes_down_in_progress;
-	/* Flag for mutual exclusion during IPA enable pipes */
 	bool pipes_enable_in_progress;
-	/* Indicates if cdp_disable_ipa_pipes has been called for IPA pipes */
 	atomic_t pipes_disabled;
 	atomic_t ipa_pipes_enabled;
-	/* Timer ticks to keep track of time after which pipes are disabled */
 	u64 pending_tx_start_ticks;
-	struct ath12k_ipa_iface_context iface_context[ATH12K_IPA_MAX_IFACE];
+	struct ath12k_ipa_iface_context *iface_context;
+	u8 max_iface;
 	struct ath12k_ipa_sys_pipe sys_pipe[ATH12K_IPA_MAX_SYSBAM_PIPE];
 	u8 num_iface;
 	struct ath12k_ipa_config *config;
@@ -718,7 +849,6 @@ struct ath12k_ipa {
 	struct mutex rt_debug_lock;
 	struct mutex g_init_deinit_lock;
 	bool wdi_enabled;
-	/* Indicates if cdp_ipa_disable_autonomy is called for IPA pipes */
 	atomic_t autonomy_disabled;
 	struct completion ipa_resource_comp;
 	u8 ipa_init_state;
@@ -744,9 +874,11 @@ struct ath12k_ipa {
 	ipa_wdi_hdl_t hdl;
 	u8 curr_bw_level;
 	struct uc_op_work_struct uc_op_work[ATH12K_IPA_UC_OPCODE_MAX];
-	u8 vdev_to_iface[ATH12K_IPA_MAX_SESSION];
-	bool vdev_offload_enabled[ATH12K_IPA_MAX_SESSION];
-	bool disable_intrabss_fwd[ATH12K_IPA_MAX_SESSION];
+	u8 *vdev_to_iface;
+	bool *vdev_offload_enabled;
+	bool *disable_intrabss_fwd;
+	u16 max_session_id;
+	u16 invalid_session_id;
 	u32 curr_prod_bw;
 	u32 curr_cons_bw;
 	bool is_db_ddr_mapped;
@@ -795,9 +927,10 @@ static inline bool dp_ipa_enable(void)
 struct wlan_ipa_evt_wq_args {
 	u8 mac_addr[ETH_ALEN];
 	enum ipa_wlan_event event;
-	u32 vdev_id;
+	u16 session_id;
 	u8 pdev_idx;
 	u8 device_id;
+	u8 link_id;
 	bool is_mlo;
 	struct dp_ipa_net_device_priv dev;
 	enum nl80211_iftype mode;
@@ -837,7 +970,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			enum ipa_wlan_event event,
 			u32 vdev_id, u8 pdev_idx, const u8 mac[ETH_ALEN],
 			struct dp_ipa_net_device_priv *dev, enum nl80211_iftype mode,
-			enum nl80211_band band, bool is_mlo);
+			enum nl80211_band band, bool is_mlo, u8 link_id);
 
 int ath12k_wlan_ipa_send_msg(struct ath12k_ipa *ipa_ctx,
 			     enum ipa_wlan_event event, const u8 mac[ETH_ALEN],
@@ -858,13 +991,6 @@ bool ath12k_wlan_ipa_is_sta_only_offload_enabled(void);
 
 bool ath12k_ipa_config_is_enabled(void);
 
-void ath12k_wlan_ipa_intrabss_enable_disable(struct ath12k_ipa *ipa_ctx,
-					     u32 vdev_id, bool enable);
-
-void ath12k_wlan_ipa_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
-				       u32 offload_type, u32 vdev_id,
-				       bool enable);
-
 int ath12k_ipa_send_intrabss_enable_disable(struct ath12k_base *ab,
 					    struct ipa_intrabss_control_params *params);
 
@@ -878,7 +1004,7 @@ bool ath12k_wlan_ipa_uc_is_enabled(struct ath12k_ipa_config *ipa_cfg);
 
 bool ath12k_wlan_ipa_uc_sta_is_enabled(struct ath12k_ipa_config *ipa_cfg);
 
-int ath12k_wlan_ipa_get_ifaceid(struct ath12k_ipa *ipa_ctx, u8 session_id);
+int ath12k_wlan_ipa_get_ifaceid(struct ath12k_ipa *ipa_ctx, u16 session_id);
 
 struct ath12k_ipa_iface_context *
 ath12k_wlan_ipa_get_iface(struct ath12k_ipa *ipa_ctx,
@@ -888,23 +1014,24 @@ struct ath12k_ipa_iface_context *
 ath12k_wlan_ipa_get_iface_by_mode_netdev(struct ath12k_ipa *ipa_ctx,
 					 enum nl80211_iftype mode,
 					 struct dp_ipa_net_device_priv *net_dev_priv,
-					 u8 session_id);
+					 u16 session_id);
 
 enum ath12k_ipa_opmode ath12k_ipa_mode(enum nl80211_iftype mode);
 
 void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
-			    const u8 *mac_addr, ipa_wdi_hdl_t hdl, uint8_t session_id,
-			    bool mld_enabled);
+			    const u8 *mac_addr, ipa_wdi_hdl_t hdl, u16 session_id,
+			    bool mld_enabled, u8 link_id);
 
 int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 			 struct dp_ipa_net_device_priv *net_dev_priv,
-			 enum ath12k_ipa_opmode device_mode, u8 session_id,
+			 enum ath12k_ipa_opmode device_mode, u16 session_id,
 			 const u8 *mac_addr,
-			 bool is_2g_iface, bool is_mlo_vdev, bool is_tx1_used);
+			 bool is_2g_iface, bool is_mlo_vdev,
+			 bool is_tx1_used, u8 link_id);
 
 int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ctx,
 				       struct dp_ipa_net_device_priv *net_dev_priv,
-				       u8 session_id);
+				       u16 session_id);
 
 void ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id,
 					u8 *mac_addr);
@@ -930,6 +1057,8 @@ int ath12k_dp_ipa_register_is_ipa_ready(struct ath12k_base *ab);
 int ath12k_dp_ipa_uc_ol_deinit(struct ath12k_base *ab);
 int ath12k_dp_ipa_sg_tbl_setup(struct device *dev, struct sg_table *sgt,
 			       void *cpu_addr, dma_addr_t dma_addr, size_t size);
+void ath12k_dp_ipa_mac80211_rx(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
+			       struct sk_buff *skb);
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,
@@ -942,11 +1071,22 @@ ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(struct ath12k_ipa *ipa_ctx,
+						 u8 link_id,
 						 struct ipa_wdi_reg_intf_in_params *in)
 {
 	if (ipa_ctx && ipa_ctx->arch_ops &&
 	    ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num)
-		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(in);
+		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(link_id, in);
+}
+
+static inline void
+ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(struct ath12k_ipa *ipa_ctx,
+					       const char *dev_name,
+					       u8 link_id)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops &&
+	    ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num)
+		ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num(dev_name, link_id);
 }
 
 static inline void
@@ -1060,17 +1200,6 @@ ath12k_dp_ipa_arch_op_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create)
 	return 0;
 }
 
-static inline int
-ath12k_dp_ipa_arch_op_ipa_init(struct ath12k_base *ab)
-{
-	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
-
-	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_ipa_init)
-		return ipa_ctx->arch_ops->dp_ipa_init(ab);
-
-	return -EINVAL;
-}
-
 static inline void
 ath12k_dp_ipa_arch_op_set_tx_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
 {
@@ -1120,99 +1249,50 @@ ath12k_dp_ipa_arch_op_get_wdi_version(struct ath12k_ipa *ipa_ctx)
 	return ATH12K_IPA_WDI_VER_INVALID;
 }
 
-#ifndef ETH_P_WAPI
-#define ETH_P_WAPI 0x88B4
-#endif
-
-/* Nbuf CB values used by IPA component, where driver gets the required info
- * BCMC_OFFSET: rx_msdu_desc_info->da_is_mcbc stored in skb->cb[1] & 0x2
- * CHIP_ID_OFFSET: rx_msdu_desc_info->dest_chip_id stored in skb->cb[7]
- * PAMC_ID_OFFSET: rx_msdu_desc_info->dest_chip_pmac_id in skb->cb[8]
- */
-#define DP_IPA_SKB_CB_VDEV_ID		0
-#define DP_IPA_SKB_CB_DA_BCMC		1
-#define DP_IPA_SKB_CB_PEER_ID_LO	5
-#define DP_IPA_SKB_CB_PEER_ID_HI	6
-#define DP_IPA_SKB_CB_DEST_CHIP_ID	7
-#define DP_IPA_SKB_CB_DEST_CHIP_PMAC	8
-#define DP_IPA_SKB_CB_BCMC_MASK			0x2
-#define DP_IPA_SKB_CB_VDEV_ID_MASK	0x1F
-#define DP_IPA_SKB_CB_PEER_ID_HI_MASK	0x3F
-
-/**
- * ath12k_dp_ipa_skb_get_vdev_id() - Get vdev ID from skb control buffer
- * @skb: socket buffer
- *
- * Extracts the vdev ID stored in the skb control buffer by IPA component.
- *
- * Return: vdev ID as u8
- */
-static inline u8 ath12k_dp_ipa_skb_get_vdev_id(struct sk_buff *skb)
+static inline int
+ath12k_dp_ipa_arch_op_iface_context_init(struct ath12k_ipa *ipa_ctx)
 {
-	return (u8)skb->cb[DP_IPA_SKB_CB_VDEV_ID];
+	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_iface_context_init)
+		return ipa_ctx->arch_ops->ipa_iface_context_init(ipa_ctx);
+
+	return -EINVAL;
 }
 
-/**
- * ath12k_dp_ipa_skb_get_peer_id() - Get peer ID from skb control buffer
- * @skb: socket buffer
- *
- * Extracts the peer ID stored in the skb control buffer by IPA component.
- * Peer ID is 14 bits and stored in cb as follows -
- *	Lower 8 bits at offset DP_IPA_SKB_CB_PEER_ID_LO
- *	Higher 6 bits at offset DP_IPA_SKB_CB_PEER_ID_HI
- *
- * Return: peer ID as u16
- */
-static inline u16 ath12k_dp_ipa_skb_get_peer_id(struct sk_buff *skb)
+static inline void
+ath12k_dp_ipa_arch_op_iface_context_deinit(struct ath12k_ipa *ipa_ctx)
 {
-	u16 peer_id = skb->cb[DP_IPA_SKB_CB_PEER_ID_LO];
+	/* Warn if arch_ops or the deinit callback is missing to catch memory leaks */
+	if (WARN_ON_ONCE(!ipa_ctx || !ipa_ctx->arch_ops ||
+			 !ipa_ctx->arch_ops->ipa_iface_context_deinit))
+		return;
 
-	peer_id |= (skb->cb[DP_IPA_SKB_CB_PEER_ID_HI]
-		    & DP_IPA_SKB_CB_PEER_ID_HI_MASK) << 8;
-
-	return peer_id;
+	ipa_ctx->arch_ops->ipa_iface_context_deinit(ipa_ctx);
 }
 
-/**
- * ath12k_dp_ipa_skb_get_is_da_bcmc() - Check if destination address is BC/MC
- * @skb: socket buffer
- *
- * Checks if the destination address is broadcast or multicast by examining
- * the DA_BCMC flag stored in the skb control buffer by IPA component.
- *
- * Return: Non-zero if DA is BC/MC, 0 otherwise
- */
-static inline u8 ath12k_dp_ipa_skb_get_is_da_bcmc(struct sk_buff *skb)
+static inline u16
+ath12k_dp_ipa_arch_op_get_session_id(struct ath12k_ipa *ipa_ctx,
+			     struct ath12k_link_vif *arvif)
 {
-	return (u8)(skb->cb[DP_IPA_SKB_CB_DA_BCMC]) & DP_IPA_SKB_CB_BCMC_MASK;
+	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_get_session_id)
+		return ipa_ctx->arch_ops->ipa_get_session_id(arvif);
+
+	return arvif->vdev_id;
 }
 
-/**
- * ath12k_dp_ipa_skb_get_dst_chip_id() - Get destination chip ID from skb
- * @skb: socket buffer
- *
- * Extracts the destination chip ID stored in the skb control buffer by
- * IPA component. This is used for MLO scenarios.
- *
- * Return: destination chip ID as u8
- */
-static inline u8 ath12k_dp_ipa_skb_get_dst_chip_id(struct sk_buff *skb)
+static inline void
+ath12k_dp_ipa_arch_op_initialize_default(struct ath12k_ipa *ipa_ctx, u16 i)
 {
-	return (u8)skb->cb[DP_IPA_SKB_CB_DEST_CHIP_ID];
+	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_initialize_default)
+		return ipa_ctx->arch_ops->ipa_initialize_default(ipa_ctx, i);
 }
 
-/**
- * ath12k_dp_ipa_skb_get_dst_chip_pmac_id() - Get destination chip PMAC ID
- * @skb: socket buffer
- *
- * Extracts the destination chip PMAC ID stored in the skb
- * control buffer by IPA component. This is used for split phy scenarios.
- *
- * Return: destination chip PMAC ID as u8
- */
-static inline u8 ath12k_dp_ipa_skb_get_dst_chip_pmac_id(struct sk_buff *skb)
+static inline void
+ath12k_dp_ipa_arch_op_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
+					u32 offload_type, u32 vdev_id,
+					bool enable)
 {
-	return (u8)skb->cb[DP_IPA_SKB_CB_DEST_CHIP_PMAC];
+	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_uc_offload_enable)
+		return ipa_ctx->arch_ops->ipa_uc_offload_enable(ipa_ctx, offload_type, vdev_id, enable);
 }
 
 #endif

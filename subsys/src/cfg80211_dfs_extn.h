@@ -25,6 +25,15 @@ cfg80211_bootup_cac_is_5g_dfs_chan_extn(struct wiphy *wiphy,
 #else /* CPTCFG_QCN_EXTN */
 
 /**
+ * cfg80211_is_driver_mac80211_hwsim - check if wiphy belongs to mac80211_hwsim
+ * @wiphy: the wiphy to check
+ *
+ * Returns true when the wiphy parent device is driven by the mac80211_hwsim
+ * virtual driver, false otherwise.
+ */
+bool cfg80211_is_driver_mac80211_hwsim(struct wiphy *wiphy);
+
+/**
  * cfg80211_support_bootup_cac - check if boot-up CAC is supported
  *
  * Returns true when the driver supports creating all 5G BSS interfaces

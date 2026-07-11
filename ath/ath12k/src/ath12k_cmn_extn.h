@@ -48,6 +48,10 @@ struct wmi_scan_blanking_params_info;
 #define ATH12K_NUM_CHANS 102
 #endif
 
+#ifndef ATH12K_HW_MAX_QUEUES
+#define ATH12K_HW_MAX_QUEUES MIN(NR_CPUS, 5)
+#endif
+
 struct ath12k_mgmt;
 struct ath12k_mgmt_irq_grp;
 struct mgmt_srng;
@@ -551,7 +555,17 @@ static inline void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab)
 	return;
 }
 
+static inline void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab)
+{
+	return;
+}
+
 static inline void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
+{
+	return;
+}
+
+static inline void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
 {
 	return;
 }
@@ -953,6 +967,13 @@ ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
 #else
 
 struct ath12k_dp_hw_group_extn {
+	/* Per-ring hot TX descriptor list for lock-free fast-TX allocation.
+	 * Populated in batches of ATH12K_DP_TX_HOT_DESC_BATCH_SIZE from the
+	 * regular tx_desc_free_list (under tx_desc_lock) and consumed without
+	 * a spinlock on the DP_SKB_FAST_TX path.
+	 */
+	struct list_head tx_hot_desc_list[ATH12K_HW_MAX_QUEUES];
+	bool tx_desc_extn_initialized;
 #ifdef CPTCFG_EXT_IPA_OFFLOAD
 	struct ath12k_dp_hw_group_ipa *ipa;
 #endif
@@ -1004,7 +1025,10 @@ void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 
 void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
 
+void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
+
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif);
+void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif);
 
 const void **ath12k_wmi_tlv_parse_alloc(struct ath12k_base *ab,
 					struct sk_buff *skb, gfp_t gfp);
@@ -1284,6 +1308,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
                                          struct ath12k_sta *ahsta,
                                          unsigned long valid_links,
                                          u8 *primary_link_id);
+u32 ath12k_get_monitor_version(struct ath12k_base *ab);
 
 void ath12k_mgmt_rx_event_extn(struct ath12k *ar, struct sk_buff *skb,
 		struct ath12k_wmi_mgmt_rx_arg *rx_ev);

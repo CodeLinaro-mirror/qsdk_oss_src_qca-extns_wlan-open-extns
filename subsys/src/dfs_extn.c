@@ -66,7 +66,15 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 
 		list_for_each_entry(iter_link, &chanctx->assigned_links,
 				    assigned_chanctx_list) {
-			if (iter_link->sdata->vif.type == NL80211_IFTYPE_AP) {
+			/* Skip the current link: it was just prepended to the
+			 * list head by ieee80211_link_use_channel() before this
+			 * call, so its cac_start_time/cac_time_ms are not yet
+			 * initialized. */
+			if (iter_link == link)
+				continue;
+
+			if (iter_link->sdata->vif.type == NL80211_IFTYPE_AP ||
+			    iter_link->sdata->vif.type == NL80211_IFTYPE_MESH_POINT) {
 				first_link = iter_link;
 				break;
 			}
@@ -113,4 +121,40 @@ void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
 		ieee80211_link_info_change_notify(iter_link->sdata, iter_link,
 						  BSS_CHANGED_BEACON_ENABLED);
 	}
+}
+
+/**
+ * ieee80211_bootup_cac_handle_skip_extn - handle skip_cac flag during boot-up CAC.
+ *
+ * When @skip_cac is true, the user space has requested that CAC be skipped on
+ * this DFS channel.  Instead of starting the per-chanctx CAC timer we mark
+ * cac_started on the wdev link and immediately send a synthetic
+ * NL80211_RADAR_CAC_FINISHED event.
+ *
+ * When @skip_cac is false, the normal boot-up CAC timer path is taken via
+ * ieee80211_bootup_cac_start_timer_extn().
+ */
+void ieee80211_bootup_cac_handle_skip_extn(struct ieee80211_sub_if_data *sdata,
+					   struct ieee80211_link_data *link,
+					   const struct cfg80211_chan_def *chandef,
+					   u32 residual_cac_ms, bool skip_cac)
+{
+	unsigned int link_id = link->link_id;
+
+	if (!skip_cac) {
+		ieee80211_bootup_cac_start_timer_extn(sdata, link, chandef,
+						      residual_cac_ms);
+		return;
+	}
+
+	pr_debug("mac80211: boot-up CAC: skip_cac set for %s link %u, sending dummy CAC_FINISHED\n",
+		 sdata->name, link_id);
+
+	sdata->wdev.links[link_id].cac_started = true;
+	sdata->wdev.links[link_id].cac_start_time = jiffies;
+	sdata->wdev.links[link_id].cac_time_ms = 0;
+
+	cfg80211_cac_event(sdata->dev, chandef,
+			   NL80211_RADAR_CAC_FINISHED,
+			   GFP_KERNEL, link_id);
 }

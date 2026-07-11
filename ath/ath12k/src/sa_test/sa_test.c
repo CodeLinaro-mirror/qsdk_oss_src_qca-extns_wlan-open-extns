@@ -78,6 +78,10 @@ static int sa_init_radio_params(struct smartantenna_params *sa_params,
 				"%s ERROR fatal, unsupported receive chains %d\n",
 				__func__, maxchains);
 	}
+	sa_params->en_rts_ant = 0;
+	sa_params->max_mpdu_train_cnt = 0;
+	sa_params->mcs_margin_en = 0;
+	sa_params->mcs_margin_val = 0;
 
 	return SA_PARALLEL_MODE;
 }
@@ -133,12 +137,12 @@ static int sa_test_init(struct ath12k_sa_config *cfg, int new_init)
 		radio->init_done = 1;
 		radio->sa_dbg_level = SA_DEBUG_LVL1;
 		radio->default_antenna = SA_DEFAULT_ANTENNA;
+		radio->bcn_antenna = SA_DEFAULT_ANTENNA;
+		cfg->txrx_feedback = SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK;
 		sa_set_gpio_config(&radio->gpio_cfg);
 		sa_reset_global_training_param();
 	}
 
-	radio->bcn_antenna = SA_DEFAULT_ANTENNA;
-	cfg->txrx_feedback = SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK;
 	memcpy(&radio->init_config, cfg, sizeof(struct ath12k_sa_config));
 
 	SA_DEBUG_PRINT(SA_DEBUG_LVL1, cfg->radio_id, " %s: RadioId: %d channel:"
@@ -314,7 +318,7 @@ static int sa_test_peer_disconnect(void **ccp)
 
 static int sa_test_update_txfeedback(void *ccp,
 				     struct ath12k_sa_tx_feedback *fb,
-				     u8 *status)
+				     u32 *status)
 {
 	struct sa_node_ccp *node = ccp;
 
@@ -323,13 +327,13 @@ static int sa_test_update_txfeedback(void *ccp,
 
 	SA_DEBUG_PRINT(SA_DEBUG_LVL4, node->node_info.radio_id,
 		       "SA Test: Mac: %pM nFrame:%d nBad:%d Rate:[0x%x] "
-		       "RateIdx:%d TxAntenna:0x%06x RSSI:[%d %d %d %d] "
+		       "RateIdx:%d TxAntenna:0x%06x RSSI:[%d %d %d %d %d] "
 		       "Ratemaxphy:[0x%03x|0x%03x|0x%03x|0x%03x|0x%03x] "
 		       "SR:[%d %d %d %d %d %d] LR:[%d %d %d %d %d %d] "
 		       "Trainpkt:%d Goodput:%d\n", node->node_info.mac_addr,
 		       fb->num_packets, fb->num_bad, fb->rate_mcs[0],
-		       fb->rate_index, fb->tx_antenna[0], fb->rssi[0],
-		       fb->rssi[1], fb->rssi[2], fb->rssi[3], fb->ratemaxphy[0],
+		       fb->rate_index, fb->tx_antenna[0], fb->rssi[0], fb->rssi[1],
+		       fb->rssi[2], fb->rssi[3], fb->rssi[4], fb->ratemaxphy[0],
 		       fb->ratemaxphy[1], fb->ratemaxphy[2], fb->ratemaxphy[3],
 		       fb->ratemaxphy[4], fb->nshort_retries[0],
 		       fb->nshort_retries[1], fb->nshort_retries[2],
@@ -344,7 +348,7 @@ static int sa_test_update_txfeedback(void *ccp,
 
 static int sa_test_update_rxfeedback(void *ccp,
 				     struct ath12k_sa_rx_feedback *fb,
-				     u8 *status)
+				     u32 *status)
 {
 	struct sa_node_ccp *node = ccp;
 	u8 chain, bw;
@@ -554,7 +558,16 @@ static void display_help(void)
 		pr_info(" SMART_ANT_PARAM_TRAIN_START_TESTMODE    %d    "
 			"Training start in test mode",
 			SMART_ANT_PARAM_TRAIN_START_TESTMODE);
+		pr_info(" SMART_ANT_PARAM_TRAIN_EXTN_FLAGS_TESTMODE    %d    "
+			"Enable extended traing flags (like Disable Latency Traffic 0x%x, Enable QoS NULL frames 0x%x",
+			SMART_ANT_PARAM_TRAIN_EXTN_FLAGS_TESTMODE,
+			SA_LATENCY_TRAFFIC_DISABLE, SA_QOS_NULL_ENABLE);
 	}
+	pr_info(" SMART_ANT_PARAM_MAX_MPDU_COUNT_FOR_TARINING    %d    "
+		"MPDU count per training",
+		SMART_ANT_PARAM_MAX_MPDU_COUNT_FOR_TARINING);
+	pr_info(" SMART_ANT_PARAM_MCS_MARGIN    %d    "
+		"Enable MCS margin value", SMART_ANT_PARAM_MCS_MARGIN);
 	pr_info("\n");
 }
 
@@ -783,7 +796,7 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 					"BW %d", node->node_info.max_ch_bw);
 				return -1;
 			}
-			for (i = node->node_info.max_ch_bw; i < SA_NUM_BW; i++)
+			for (i = 0; i < SA_NUM_BW; i++)
 				g_train_params.ratecode[i] = 0;
 			g_train_params.ratecode[rate_index] =
 					(params->param_value & SA_WORD_MASK);
@@ -820,6 +833,33 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 			retval |= SA_TRAINING_REQUIRED;
 		else
 			return -1;
+		break;
+	case SMART_ANT_PARAM_TRAIN_EXTN_FLAGS_TESTMODE:
+		if (sa_enable_test_mode)
+			g_train_params.extn_train_flags = params->param_value;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_MAX_MPDU_COUNT_FOR_TARINING:
+		if (!(params->param_value & 0x3FF)) {
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					"Incorrect MPDU count; 0x%x",
+					params->param_value);
+			return -1;
+		}
+		sa_params->max_mpdu_train_cnt = params->param_value;
+		retval |= SA_MPDU_CNT_MCS_MRG_REQUIRED;
+		break;
+	case SMART_ANT_PARAM_MCS_MARGIN:
+		if (!sa_params->mcs_margin_en && !(params->param_value & 0x7)) {
+			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
+					"Incorrect margin value; %d",
+					params->param_value);
+			return -1;
+		}
+		sa_params->mcs_margin_val = params->param_value & 0x7;
+		sa_params->mcs_margin_en = (sa_params->mcs_margin_val? 1 : 0);
+		retval |= SA_MPDU_CNT_MCS_MRG_REQUIRED;
 		break;
 	default:
 		display_help();
@@ -1042,6 +1082,21 @@ static int sa_test_get_param(struct ath12k_sa_config_params *params)
 		if (!sa_enable_test_mode)
 			return -1;
 		break;
+	case SMART_ANT_PARAM_TRAIN_EXTN_FLAGS_TESTMODE:
+		if (sa_enable_test_mode)
+			params->param_value = g_train_params.extn_train_flags;
+		else
+			return -1;
+		break;
+	case SMART_ANT_PARAM_MAX_MPDU_COUNT_FOR_TARINING:
+		params->param_value = sa_params->max_mpdu_train_cnt;
+		break;
+	case SMART_ANT_PARAM_MCS_MARGIN:
+		if (sa_params->mcs_margin_en)
+			params->param_value = sa_params->mcs_margin_val;
+		else
+			params->param_value = 0;
+		break;
 	default:
 		display_help();
 		return -1;
@@ -1070,13 +1125,15 @@ static int sa_test_get_node_config(void *ccp, u32 id, u32 *config)
 	return 0;
 }
 
-static int sa_test_get_ext_traininginfo(void *ccp, u16 *minpkts, u16 *per_th)
+static int sa_test_get_ext_traininginfo(void *ccp, u16 *minpkts,
+					u16 *per_th, u32 *extn_flags)
 {
-	if (!minpkts || !per_th)
+	if (!minpkts || !per_th || !extn_flags)
 		return -1;
 
 	*minpkts = g_train_params.minpkts;
 	*per_th = g_train_params.per_threshold;
+	*extn_flags = g_train_params.extn_train_flags;
 
 	return 0;
 }
@@ -1106,6 +1163,49 @@ sa_test_get_gpio_config(u8 radio_id, struct ath12k_sa_gpio_config *gpio_cfg)
 	return 0;
 }
 
+static int sa_test_get_enable_rts_ant(u8 radio_id, u32 *en_rts)
+{
+	struct radio_config *radio;
+
+	if (!en_rts || radio_id >= SA_MAX_RADIOS)
+		return -1;
+
+	radio = &g_sa.radio[radio_id];
+
+	*en_rts = radio->sa_params.en_rts_ant;
+
+	return 0;
+}
+
+static int sa_test_get_max_mpdu_count_for_training(u8 radio_id, u32 *value)
+{
+	struct radio_config *radio;
+
+	if (!value || radio_id >= SA_MAX_RADIOS)
+		return -1;
+
+	radio = &g_sa.radio[radio_id];
+	*value = radio->sa_params.max_mpdu_train_cnt;
+
+	return 0;
+}
+
+static int sa_test_get_mcs_margin(u8 radio_id, u32 *value)
+{
+	struct radio_config *radio;
+
+	if (!value || radio_id >= SA_MAX_RADIOS)
+		return -1;
+
+	radio = &g_sa.radio[radio_id];
+	if (radio->sa_params.mcs_margin_en)
+		*value = (radio->sa_params.mcs_margin_val << 1) | 1;
+	else
+		*value = 0;
+
+	return 0;
+}
+
 static int __init sa_test_module_init(void)
 {
 	int ret;
@@ -1129,6 +1229,10 @@ static int __init sa_test_module_init(void)
 	sa_ops.sa_get_node_config = sa_test_get_node_config;
 	sa_ops.sa_get_ext_traininginfo = sa_test_get_ext_traininginfo;
 	sa_ops.sa_get_gpio_config = sa_test_get_gpio_config;
+	sa_ops.sa_get_enable_rts_ant = sa_test_get_enable_rts_ant;
+	sa_ops.sa_get_max_mpdu_count_for_training =
+					sa_test_get_max_mpdu_count_for_training;
+	sa_ops.sa_get_mcs_margin = sa_test_get_mcs_margin;
 
 	ret = ath12k_register_smart_ant_ops(&sa_ops);
 	if (ret)

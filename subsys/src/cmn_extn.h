@@ -42,6 +42,16 @@ struct notifier_block;
 #define MESH_CAPS_MAX_NSS 8
 #define MESH_CAPS_SHORT_SLOT 0x1000
 #define MESH_CAPS_SHORT_PREAMBLE 0x2000
+/* bit 14: when set, driver skips auto key-install — consumer manages key installation */
+#define MESH_CAPS_SKIP_KEY_INSTALL 0x4000
+
+/* Key indices for managed mesh.  PTK (pairwise) always at index 0 per
+ * 802.11 standard.  GTK (group/broadcast) at index 1. */
+#define MANAGED_MESH_PTK_KEY_IDX	0
+#define MANAGED_MESH_GTK_KEY_IDX	1
+
+/* mac80211 set_key accepts link_id = -1 only for pairwise keys (PTK is per-STA). */
+#define MANAGED_MESH_SET_KEY_DEFAULT_LINK_ID	(-1)
 
 #define MESH_PEER_MAX_LINKS 3
 
@@ -50,6 +60,18 @@ struct notifier_block;
 #define MESH_PEER_INACTIVITY_PERIOD 20000	/* Peer inactivity timer in milliseconds */
 
 #define MESH_AID_WORDS ((2008 + 31) / 32)  /* 63 words for 2008 AIDs */
+#define MESH_RSN_IE_MAX_LEN	257		/* tag(1) + length(1) + body(up to 255) */
+
+/* RSN Capabilities field bits (802.11-2020 Table 9-151, little-endian 16-bit) */
+#define RSN_CAP_MFP_CAPABLE	BIT(7)
+#define RSN_CAP_MFP_REQUIRED	BIT(6)
+
+/* RSN IE field sizes (802.11-2020 Table 9-149) */
+#define RSN_VERSION_LEN		2  /* RSN Version field */
+#define RSN_SUITE_LEN		4  /* cipher/AKM suite: 3-byte OUI + 1-byte type */
+#define RSN_SUITE_COUNT_LEN	2  /* pairwise/AKM suite count field */
+#define RSN_CAP_LEN		2  /* RSN Capabilities field */
+
 /**
  * enum ath12k_extn_vap_submode: VAP submode types for QCA WLAN vendor
  *
@@ -103,6 +125,18 @@ enum mesh_peer_bw {
 	MESH_BW_MAX,
 };
 
+/**
+ * struct mesh_rsn_conf - RSN/WPA security policy for the managed mesh BSS.
+ * Saved during ieee80211_mesh_ap_config_save() and used at beacon intersection
+ * to gate peers based on their RSN IE. Fields are mode-agnostic (HT/VHT/HE/EHT).
+ */
+struct mesh_rsn_conf {
+	u32 wpa_versions;  /* NL80211_WPA_VERSION_* bitmask; 0 = open */
+	u8 *rsn_ie;        /* copy of local AP's RSN IE (tag+len+body); NULL if open */
+	u16 rsn_ie_len;    /* total IE length: tag(1) + len(1) + body(up to 255) */
+	u16 rsn_caps;      /* RSN Capabilities field, pre-parsed at AP setup time */
+};
+
 struct mesh_bss_conf {
 	struct ieee80211_ht_cap *ht_cap;
 	struct ieee80211_vht_cap *vht_cap;
@@ -111,6 +145,7 @@ struct mesh_bss_conf {
 	struct ieee80211_eht_cap_elem *eht_cap;
 	u8 eht_capa_len;
 	u16 eml_cap;
+	struct mesh_rsn_conf *rsn_conf;
 };
 
 /**
@@ -125,6 +160,22 @@ struct mesh_bss_conf {
  * @intersect_attempts: Total number of intersection attempts
  * @intersect_successes: Number of successful intersections
  * @intersect_failures: Number of failed intersections
+ * @parse_beacon_install_key: Runtime copy of the flag from ieee80211_mesh_config_params_extn;
+ *   when set, beacon intersection installs the VAP key on this peer
+ * @key_installed: True after per-peer key has been successfully installed
+ * @peer_wpa_versions: NL80211_WPA_VERSION_* bitmask derived from peer RSN IE
+ * @peer_ucast_cipher: WLAN_CIPHER_SUITE_* selected pairwise cipher from peer RSN IE
+ * @peer_mcast_cipher: WLAN_CIPHER_SUITE_* group cipher from peer RSN IE
+ * @peer_akm_suite: WLAN_AKM_SUITE_* from peer RSN IE
+ * @peer_mfp_capable: Peer RSN caps MFP enabled bit
+ * @peer_mfp_required: Peer RSN caps MFP required bit
+ * @peer_rsn_ie: Raw copy of peer RSN IE bytes
+ * @peer_rsn_ie_len: Length of peer_rsn_ie (0 if open)
+ * @peer_ht_restricted: TKIP pairwise cipher detected with HT-capable peer;
+ *   HT caps are suppressed at beacon intersection per 802.11-2020 §10.3.3
+ *   to fall back to legacy rates; the peer is not rejected.
+ * @peer_rejected: Set on first RSN mismatch to suppress repeated deauth frames
+ *   and timeout_wk re-queues on subsequent beacons from the same peer.
  */
 struct mesh_peer_info {
 	bool is_mesh_peer;
@@ -138,6 +189,26 @@ struct mesh_peer_info {
 	u32 intersect_attempts;
 	u32 intersect_successes;
 	u32 intersect_failures;
+	/* Security fields — parse_beacon_install_key is copied from
+	 * ieee80211_mesh_config_params_extn at add_local_peer time.
+	 * Default: driver auto-installs the VAP key and authorizes
+	 * the peer after successful beacon intersection.
+	 * When true (MESH_CAPS_SKIP_KEY_INSTALL set): consumer manages key installation
+	 * and peer authorization; driver skips both. */
+	bool parse_beacon_install_key;
+	bool key_installed;
+	/* Crypto params extracted from peer RSN IE at beacon intersection */
+	u32 peer_wpa_versions;
+	u32 peer_ucast_cipher;
+	u32 peer_mcast_cipher;
+	u32 peer_akm_suite;
+	bool peer_mfp_capable;
+	bool peer_mfp_required;
+	u8 peer_rsn_ie[MESH_RSN_IE_MAX_LEN]; /* raw RSN IE: tag(1) + len(1) + body(up to 255) */
+	u16 peer_rsn_ie_len;  /* total stored length (0 if open) */
+	/* PHY mode cipher restrictions */
+	bool peer_ht_restricted;  /* TKIP+HT: HT caps suppressed, legacy rates only */
+	bool peer_rejected;       /* RSN mismatch: suppress repeated deauth on subsequent beacons */
 };
 
 struct ieee80211_mesh_peer_info {
@@ -156,6 +227,45 @@ struct ieee80211_mesh_config_params_extn {
 	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
 	bool peer_cleanup_timer_enable;
 } __packed;
+
+/**
+ * struct ieee80211_mesh_getkey_params - Request parameters for GET_KEY command.
+ * Binary layout must match userspace ieee80211_wlanconfig_mesh_getkey.
+ *
+ * @cmd_type: Must be ATH12K_EXTN_MESH_CONF_GET_KEY
+ * @key_idx:  Key index to retrieve (0-3 for group keys, 0 for pairwise)
+ * @link_id:  Link ID for MLO (-1 for non-MLO, 0-14 for MLO)
+ * @peer_mac: Peer link MAC address (all-zero for group/GTK lookup)
+ * @pairwise: 1 = pairwise key (PTK), 0 = group key (GTK/IGTK)
+ */
+struct ieee80211_mesh_getkey_params {
+	u8  cmd_type;
+	u8  key_idx;
+	s8  link_id;
+	u8  peer_mac[ETH_ALEN];
+	u8  pairwise;
+} __packed;
+static_assert(sizeof(struct ieee80211_mesh_getkey_params) == 10,
+	      "ABI size mismatch: ieee80211_mesh_getkey_params");
+
+/**
+ * struct ieee80211_mesh_key_info - Key information returned to userspace.
+ *
+ * @cipher:  Cipher suite selector (WLAN_CIPHER_SUITE_*)
+ * @key_len: Length of key material in bytes
+ * @key:     Raw key material (up to 32 bytes)
+ * @seq_len: Length of sequence/PN in bytes (0 if not applicable)
+ * @seq:     TX sequence number / packet number
+ */
+struct ieee80211_mesh_key_info {
+	u32 cipher;
+	u8  key_len;
+	u8  key[32];
+	u8  seq_len;
+	u8  seq[16];
+} __packed;
+static_assert(sizeof(struct ieee80211_mesh_key_info) == 54,
+	      "ABI size mismatch: ieee80211_mesh_key_info");
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 struct bw240MHz_parameters_extn {
@@ -194,8 +304,9 @@ struct ieee80211_if_ap_extn {
 struct ieee80211_sta_extn {
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	struct mesh_peer_info peer_info;
-	struct wiphy_work update_cap_wk;
+	struct wiphy_work update_cap_wk; /* capability intersection + key installation */
 	struct wiphy_work timeout_wk;
+	struct wiphy_work deauth_rx_wk;  /* deferred cleanup on RX deauth/disassoc */
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
 
@@ -447,6 +558,9 @@ bool ieee80211_skip_pn_check(struct ieee80211_rx_data *rx);
 ieee80211_rx_result
 ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx);
 
+ieee80211_rx_result
+ieee80211_process_mesh_peer_deauth_disassoc(struct ieee80211_rx_data *rx);
+
 void
 ieee80211_mesh_init_peer_work(struct ieee80211_sub_if_data *sdata,
 			      struct sta_info *sta_info);
@@ -469,6 +583,9 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 void
 ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
 
+void
+ieee80211_mesh_peer_key_install_work(struct wiphy *wiphy, struct wiphy_work *work);
+
 int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
 				    int link_id,
 				    const u8 *peer_mac,
@@ -486,6 +603,7 @@ int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
  * @add_local_peer: Add a local mesh peer with specified configuration
  * @authorize_peer: Authorize a mesh peer for data exchange
  * @delete_local_peer: Delete a local mesh peer
+ * @get_key: Retrieve key material for a mesh peer
  */
 struct ieee80211_vendor_mesh_ops {
        int (*add_local_peer)(struct wiphy *wiphy,
@@ -497,6 +615,10 @@ struct ieee80211_vendor_mesh_ops {
        int (*delete_local_peer)(struct wiphy *wiphy,
                                 struct ieee80211_vif *vif,
                                 const u8 *peer_addr);
+       int (*get_key)(struct wiphy *wiphy,
+                      struct ieee80211_vif *vif,
+                      const struct ieee80211_mesh_getkey_params *params,
+                      struct ieee80211_mesh_key_info *key_info);
 };
 
 /**
@@ -508,6 +630,12 @@ struct ieee80211_vendor_mesh_ops {
  * Return: Pointer to ieee80211_vendor_mesh_ops structure
  */
 const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void);
+
+int
+ieee80211_vendor_mesh_get_key(struct wiphy *wiphy,
+			      struct ieee80211_vif *vif,
+			      const struct ieee80211_mesh_getkey_params *params,
+			      struct ieee80211_mesh_key_info *key_info);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 #endif /* CPTCFG_QCN_EXTN */

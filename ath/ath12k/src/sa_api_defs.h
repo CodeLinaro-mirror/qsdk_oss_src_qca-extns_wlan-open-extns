@@ -43,6 +43,8 @@
 #define SA_TRAINING_REQUIRED		0x20
 /* Flag for Tx feedback configuration */
 #define SA_TX_FEEDBACK_CONFIG_REQUIRED	0x40
+/* Flag to set Maximum MPDU count and MCS margin for training */
+#define SA_MPDU_CNT_MCS_MRG_REQUIRED	0x80
 
 /* Flag used to get Tx feedback configuration for training */
 #define SA_TX_FEEDBACK_CONFIG		0x01
@@ -78,6 +80,10 @@
 #define SA_MAX_GPIO_PINS		4
 /* Maximum GPIO Functions */
 #define SA_MAX_GPIO_FUNCS		4
+
+/* Smart Antenna Extented training flags */
+#define SA_LATENCY_TRAFFIC_DISABLE	0x1
+#define SA_QOS_NULL_ENABLE		0x2
 
 /**
  * struct ath12k_sa_config - Smart Antenna configuration.
@@ -238,15 +244,20 @@ struct ath12k_sa_config_params {
  * @sa_get_param: Get a configuration parameter (radio or node specific).
  * @sa_get_node_config: Get per-node smart antenna configuration by ID.
  * @sa_get_ext_traininginfo: Get extended training parameters (minimum packets, PER threshold).
+ *    The 4th parameter can carry flags to disable latency traffic and enable QoS NULL frames
+ *    in training.
  * @sa_get_gpio_config: Get GPIO configuration for smart antenna enablement
+ * @sa_get_enable_rts_ant: Get separate RTS antenna enable flag
+ * @sa_get_max_mpdu_count_for_training: Get Max MPDU count configured for training
+ * @sa_get_mcs_margin: Get mcs margin enable/disbale along with margin value
  */
 struct ath12k_smart_ant_ops {
 	int (*sa_algo_init)(struct ath12k_sa_config *sa_config, int new_init);
 	int (*sa_algo_deinit)(u8 radio_id);
 	int (*sa_peer_connect)(void **ccp, struct ath12k_sa_node_info *node_info);
 	int (*sa_peer_disconnect)(void **ccp);
-	int (*sa_update_txfeedback)(void *ccp, struct ath12k_sa_tx_feedback *fb, u8 *status);
-	int (*sa_update_rxfeedback)(void *ccp, struct ath12k_sa_rx_feedback *fb, u8 *status);
+	int (*sa_update_txfeedback)(void *ccp, struct ath12k_sa_tx_feedback *fb, u32 *status);
+	int (*sa_update_rxfeedback)(void *ccp, struct ath12k_sa_rx_feedback *fb, u32 *status);
 	int (*sa_get_txantenna)(void *ccp, u32 *antenna_array);
 	int (*sa_get_txdefaultantenna)(u8 radio_id, u32 *antenna);
 	int (*sa_get_rxantenna)(u8 radio_id, u32 *rx_antenna);
@@ -255,8 +266,11 @@ struct ath12k_smart_ant_ops {
 	int (*sa_set_param)(struct ath12k_sa_config_params *params);
 	int (*sa_get_param)(struct ath12k_sa_config_params *params);
 	int (*sa_get_node_config)(void *ccp, u32 id, u32 *config);
-	int (*sa_get_ext_traininginfo)(void *ccp, u16 *minpkts, u16 *per_th);
+	int (*sa_get_ext_traininginfo)(void *ccp, u16 *minpkts, u16 *per_th, u32 *extn_flags);
 	int (*sa_get_gpio_config)(u8 radio_id, struct ath12k_sa_gpio_config *gpio_cfg);
+	int (*sa_get_enable_rts_ant)(u8 radio_id, u32 *en_rts);
+	int (*sa_get_max_mpdu_count_for_training)(u8 radio_id, u32 *value);
+	int (*sa_get_mcs_margin)(u8 radio_id, u32 *value);
 };
 
 #endif /* ATH12K_SA_API_DEFS_H */

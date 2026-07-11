@@ -13,10 +13,8 @@
 #endif
 #include <linux/ipa_wdi3.h>
 
-static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
-
 /* global control for IPA status */
-atomic_t g_instances_added;
+atomic_t g_instances_added = ATOMIC_INIT(0);
 
 static bool g_ipa_is_ready;
 static struct ath12k_ipa_config *g_ipa_config;
@@ -28,14 +26,6 @@ struct wmi_ipa_offload_enable_disable_cmd {
 	__le32 vdev_id;
 	__le32 enable;
 } __packed;
-
-/* DE Bruijn Sequence to fetch the instance id */
-static const int deBruijnIdx[32] = {
-	0, 1, 28, 2, 29, 14, 24, 3,
-	30, 22, 20, 15, 25, 17, 4, 8,
-	31, 27, 13, 23, 21, 19, 16, 7,
-	26, 12, 18, 6, 11, 5, 10, 9
-};
 
 /* IPA config update */
 void ath12k_dp_ipa_component_config_init(void)
@@ -293,10 +283,11 @@ EXPORT_SYMBOL(dp_ipa_uc_attach);
 
 /* TX-RX buffer SMMU Mapping towards IPA */
 static inline unsigned long
-ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_addr)
+ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_addr,
+				     const void *vaddr)
 {
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ab);
-	phys_addr_t addr;
+	phys_addr_t addr = 0;
 
 	if (!(pci_priv->ath12k_pci_extn.iommu_domain))
 		ath12k_err(ab, "IPA: iommu_domain is null");
@@ -305,8 +296,12 @@ ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_a
 		addr = iommu_iova_to_phys(pci_priv->ath12k_pci_extn.iommu_domain,
 					  dma_addr);
 		if (!addr) {
-			ath12k_err(ab, "IPA: iova returned is null");
-			return dma_addr;
+			if (vaddr) {
+				addr = virt_to_phys(vaddr);
+			} else {
+				ath12k_err(ab, "IPA: iova returned is null");
+				return dma_addr;
+			}
 		}
 	}
 	if (addr)
@@ -318,9 +313,10 @@ ath12k_dp_ipa_mem_paddr_from_dmaaddr(struct ath12k_base *ab, unsigned long dma_a
 static inline void ath12k_dp_ipa_update_mem_map_table(struct ath12k_base *ab,
 						     struct ipa_wdi_buffer_info *mem_info,
 						     unsigned long dma_addr,
+						     const void *vaddr,
 						     u32 mem_size)
 {
-	mem_info->pa = ath12k_dp_ipa_mem_paddr_from_dmaaddr(ab, dma_addr);
+	mem_info->pa = ath12k_dp_ipa_mem_paddr_from_dmaaddr(ab, dma_addr, vaddr);
 	mem_info->iova = dma_addr;
 	mem_info->size = mem_size;
 	return;
@@ -346,35 +342,53 @@ int ath12k_dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 	 * Assuming single frag for now
 	 */
 	frag_addr = ATH12K_SKB_CB(skb)->paddr;
-	ath12k_dp_ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, size);
+	ath12k_dp_ipa_update_mem_map_table(ab, &mem_map_table, frag_addr, skb->data,
+					   size);
 
 	if (create) {
 		/* Skip if already mapped */
 		if (ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP)
 			return 0;
 
-		/* Assert if PA is zero */
-		BUG_ON(mem_map_table.pa == 0);
+		if (WARN_ON(mem_map_table.pa == 0)) {
+			ath12k_err(ab, "IPA: cannot map RX buffer with PA=0");
+			return -EINVAL;
+		}
 
 		ret = ipa_wdi_create_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
-		if (!ret)
-			ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
+		if (ret) {
+			ath12k_err(ab, "IPA: SMMU map failed: ret=%d\n", ret);
+			return ret;
+		}
+		ATH12K_SKB_CB(skb)->flags |= ATH12K_SKB_IPA_MAP_UNMAP;
+		if (mem_map_table.result != 0) {
+			ath12k_err(ab, "IPA: SMMU map result error: %d (iova=0x%lx pa=0x%llx) — releasing leaked SMMU IOVA\n",
+				   mem_map_table.result,
+				   mem_map_table.iova,
+				   (unsigned long long)mem_map_table.pa);
+			/* Release the SMMU mapping that IPA successfully inserted */
+			ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
+			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
+			return -EIO;
+		}
 	} else {
 		/* Skip if not mapped */
 		if (!(ATH12K_SKB_CB(skb)->flags & ATH12K_SKB_IPA_MAP_UNMAP))
 			return 0;
 
 		ret = ipa_wdi_release_smmu_mapping_per_inst(hdl, 1, &mem_map_table);
-		if (!ret)
-			ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
+		ATH12K_SKB_CB(skb)->flags &= ~ATH12K_SKB_IPA_MAP_UNMAP;
+		if (ret) {
+			ath12k_err(ab, "IPA: SMMU unmap failed: ret=%d\n", ret);
+			return ret;
+		}
+		if ((s32)mem_map_table.result <= 0) {
+			ath12k_err(ab, "IPA: SMMU unmap result error: %d (size=%u)\n",
+				   (s32)mem_map_table.result, mem_map_table.size);
+			return -EIO;
+		}
 	}
-	BUG_ON(ret);
-
-	if (create)
-		BUG_ON(mem_map_table.result != 0);
-	else
-		BUG_ON(mem_map_table.result != mem_map_table.size);
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL(ath12k_dp_ipa_handle_buf_smmu_map_unmap);
 
@@ -858,12 +872,13 @@ void ath12k_dp_ipa_obj_cleanup(struct ath12k_ipa *ipa_ctx)
 		ath12k_err(ipa_ctx->ab, "IPA_WDI_CLEANUP is failed !!");
 
 	ipa_ctx->handle_initialized = false;
+
+	/* Free all dynamically allocated arrays */
+	ath12k_dp_ipa_arch_op_iface_context_deinit(ipa_ctx);
 }
 
 int ath12k_dp_ipa_obj_setup(struct ath12k_ipa *ipa_ctx)
 {
-	int i;
-	struct ath12k_ipa_iface_context *iface_context = NULL;
 	int ret = 0;
 
 	ath12k_info(ipa_ctx->ab, "enter");
@@ -873,17 +888,11 @@ int ath12k_dp_ipa_obj_setup(struct ath12k_ipa *ipa_ctx)
 	ipa_ctx->config = g_ipa_config;
 	ipa_ctx->wdi_version = ath12k_dp_ipa_arch_op_get_wdi_version(ipa_ctx);
 
-	/* Create the interface context */
-	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
-		iface_context = &ipa_ctx->iface_context[i];
-		iface_context->ipa_ctx = ipa_ctx;
-		iface_context->iface_id = i;
-		iface_context->dev = NULL;
-		iface_context->device_mode = ATH12K_IPA_MAX_NO_OF_MODE;
-		iface_context->session_id = ATH12K_IPA_MAX_SESSION;
-		atomic_set(&iface_context->conn_count, 0);
-		atomic_set(&iface_context->disconn_count, 0);
-		spin_lock_init(&iface_context->interface_lock);
+	ret = ath12k_dp_ipa_arch_op_iface_context_init(ipa_ctx);
+	if (ret) {
+		ath12k_err(ipa_ctx->ab,
+				"ipa_iface_context_init failed: %d", ret);
+		return ret;
 	}
 
 	spin_lock_init(&ipa_ctx->enable_disable_lock);
@@ -939,6 +948,7 @@ int ath12k_dp_ipa_obj_setup(struct ath12k_ipa *ipa_ctx)
 	return 0;
 
 ipa_wdi_destroy:
+	ath12k_dp_ipa_arch_op_iface_context_deinit(ipa_ctx);
 	ath12k_err(ipa_ctx->ab, "exit: fail");
 	return -EFAULT;
 }
@@ -1069,8 +1079,7 @@ ath12k_dp_ipa_wdi_rx_smmu_params(struct ath12k_ipa *ipa_ctx,
 	struct ath12k_ipa_dp_rx_rsc *rx_rsc = &ipa_ctx->ipa_uc_rx_rsc;
 	bool over_gsi = ipa_ctx->over_gsi;
 	ipa_wdi_hdl_t hdl = ipa_ctx->hdl;
-	/*TODO: need to handle this get proper value for RX tlv packet */
-	u32 rx_pkt_tlv_size = 128;
+	u32 rx_pkt_tlv_size = ipa_ctx->ab->hal.hal_desc_sz;
 
 	if (over_gsi) {
 		if (hdl == ATH12K_IPA_HDL_FIRST)
@@ -1104,6 +1113,8 @@ ath12k_dp_ipa_wdi_rx_smmu_params(struct ath12k_ipa *ipa_ctx,
 
 	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->event_ring_doorbell_pa =
 		rx_rsc->ipa_rx_refill_buf_hp_paddr;
+
+	ath12k_dp_ipa_set_smmu_evt_rn_db_addr(ipa_ctx->ab, rx_smmu);
 
 	((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->pkt_offset =
 		rx_pkt_tlv_size + L3_HEADER_PADDING;
@@ -1196,7 +1207,7 @@ int ath12k_dp_ipa_setup(struct ath12k_ipa *ipa_ctx)
 	if (is_smmu_enabled)
 		ath12k_dp_ipa_wdi_rx_smmu_params(ipa_ctx, rx_smmu);
 
-	pipe_in->notify = ath12k_dp_ipa_w2i;
+	pipe_in->notify = ipa_ctx->arch_ops->dp_ipa_w2i;
 	pipe_in->priv = ipa_ctx;
 	pipe_in->hdl = ipa_ctx->hdl;
 
@@ -1249,7 +1260,7 @@ int ath12k_dp_ipa_cleanup(struct ath12k_ipa *ipa_ctx)
 
 int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 {
-	u8 i;
+	u16 i;
 	int ret = 0;
 	struct device *dev = ipa_ctx->ab->dev;
 	struct ath12k_base *ab = ipa_ctx->ab;
@@ -1262,10 +1273,12 @@ int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 		goto out;
 	}
 
-	for (i = 0; i < ATH12K_IPA_MAX_SESSION; i++) {
-		ipa_ctx->vdev_to_iface[i] = ATH12K_IPA_MAX_SESSION;
-		ipa_ctx->vdev_offload_enabled[i] = false;
-		ipa_ctx->disable_intrabss_fwd[i] = false;
+	for (i = 0; i < ipa_ctx->max_session_id; i++) {
+		/* max_iface is the "no iface" sentinel; avoids collision with
+		 * valid iface_context index 0 when invalid_session_id = 0 (WiFi8)
+		 */
+		ipa_ctx->vdev_to_iface[i] = ipa_ctx->max_iface;
+		ath12k_dp_ipa_arch_op_initialize_default(ipa_ctx, i);
 	}
 
 	/* Not adding the support for ALL upcode supported by IPA,
@@ -1453,8 +1466,7 @@ void ath12k_dp_ipa_ready_cb(void *data)
 	}
 
 	g_ipa_is_ready = true;
-	ipa_priv->instance_id = deBruijnIdx[(ipa_priv->ab->qmi.target.board_id *
-			DEBRUIJIN_MAGIC_IDX) >> DEBRUIJIN_MAGIC_SHIFT];
+	ipa_priv->instance_id = atomic_read(&g_instances_added);
 
 	ret = ath12k_dp_ipa_obj_setup(ipa_priv);
 	if (ret) {
@@ -1596,8 +1608,11 @@ int ath12k_pci_init_smmu_extn(struct ath12k_pci *pci_priv)
 	    !strcmp("atomic", iommu_dma_type))) {
 		ath12k_dbg(pci_priv->ab, ATH12K_DBG_PCI, "Enabling SMMU S1 stage\n");
 		pci_priv->ath12k_pci_extn.smmu_s1_enable = true;
-		iommu_set_fault_handler(pci_priv->ath12k_pci_extn.iommu_domain,
-					ath12k_dp_ipa_pci_smmu_fault_handler, pci_priv);
+		if (pci_priv->ath12k_pci_extn.iommu_domain->cookie_type ==
+		    IOMMU_COOKIE_NONE)
+			iommu_set_fault_handler(pci_priv->ath12k_pci_extn.iommu_domain,
+						ath12k_dp_ipa_pci_smmu_fault_handler,
+						pci_priv);
 	}
 	ath12k_dbg(pci_priv->ab, ATH12K_DBG_PCI,
 			"IPA: iommu_domain->type:%d dma_type:%s S1 enable:%d",
@@ -1771,7 +1786,7 @@ int ath12k_dp_ipa_smmu_unmap(struct ath12k_base *ab, u32 iova_addr, size_t size)
 }
 /* Done SMMU Init for SDX */
 
-static u8 wlan_ipa_set_session_id(u8 session_id, bool is_2g_iface)
+static u16 wlan_ipa_set_session_id(u16 session_id, bool is_2g_iface)
 {
 	return session_id;
 }
@@ -1782,7 +1797,7 @@ static inline bool wlan_ipa_is_ipv6_enabled(struct ath12k_ipa_config *ipa_cfg)
 }
 
 int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ctx,
-				       struct dp_ipa_net_device_priv *net_dev_priv, u8 session_id)
+				       struct dp_ipa_net_device_priv *net_dev_priv, u16 session_id)
 {
 	if ((memcmp(iface_ctx->net_dev.dev_addr, net_dev_priv->dev_addr, ETH_ALEN) == 0) &&
 		iface_ctx->session_id == session_id)
@@ -1832,7 +1847,7 @@ static void dp_ipa_setup_meta_data_mask(struct ipa_wdi_reg_intf_in_params *in)
 }
 
 static void dp_ipa_setup_iface_session_id(struct ipa_wdi_reg_intf_in_params *in,
-					  u8 session_id, bool is_tx1_used)
+					  u16 session_id, bool is_tx1_used)
 {
 	in->meta_data = htonl(session_id);
 	in->is_tx1_used = is_tx1_used;
@@ -1851,7 +1866,8 @@ bool ipa_is_wds_enabled(void)
 	return g_ipa_config ? g_ipa_config->ipa_wds : 0;
 }
 
-int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, uint8_t session_id, bool mld_enabled)
+int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id,
+			 bool mld_enabled, u8 link_id, struct ath12k_ipa *ipa_ctx)
 {
 	int ret;
 	ret = ipa_wdi_dereg_intf_per_inst_mlo(ifname, hdl, session_id, mld_enabled);
@@ -1859,6 +1875,8 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, uint8_t session_id, bo
 		ath12k_err(NULL, "ipa_wdi_dereg_intf: IPA pipe deregistration failed: ret=%d \n", ret);
 		return -EPERM;
 	}
+
+	ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx, ifname, link_id);
 
 	return 0;
 }
@@ -1868,10 +1886,11 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 		       u8 *mac_addr,
 		       enum ipa_client_type prod_client,
 		       enum ipa_client_type cons_client,
-		       u8 session_id, bool is_ipv6_enabled,
+		       u16 session_id, bool is_ipv6_enabled,
 		       ipa_wdi_hdl_t hdl,
 		       bool is_tx1_used,
-		       int is_mlo)
+		       int is_mlo,
+		       u8 link_id)
 {
 	struct ipa_wdi_reg_intf_in_params in = { 0 };
 	struct ipa_wdi_hdr_info hdr_info = { 0 };
@@ -1914,7 +1933,7 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 	dp_ipa_setup_iface_session_id(&in, session_id, is_tx1_used);
 
-	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(ipa_ctx, &in);
+	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(ipa_ctx, link_id, &in);
 	ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(ipa_ctx, &in, intf_idx);
 
 	/* IPV6 header */
@@ -1938,20 +1957,21 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 
 void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
-				   const u8 *mac_addr, ipa_wdi_hdl_t hdl, uint8_t session_id, 
-				   bool mld_enabled)
+			    const u8 *mac_addr, ipa_wdi_hdl_t hdl,
+			    u16 session_id, bool mld_enabled,
+			    u8 link_id)
 {
 	struct ath12k_ipa *ipa_ctx = iface_context->ipa_ctx;
 	char *ifname;
 
-	if (iface_context->session_id == ATH12K_IPA_MAX_SESSION)
+	if (iface_context->session_id == ipa_ctx->invalid_session_id)
 		return;
 
 	ifname = wlan_ipa_get_iface_ifname(iface_context);
 
-	if (dp_ipa_cleanup_iface(ifname, hdl, session_id, mld_enabled)) {
+	if (dp_ipa_cleanup_iface(ifname, hdl, session_id,
+				 mld_enabled, link_id, ipa_ctx))
 		ath12k_err(ipa_ctx->ab, "ipa_cleanup_iface failed \n");
-	}
 
 	if (iface_context->device_mode == ATH12K_IPA_SAP) {
 		if(ipa_ctx->num_sap_connected > 0) {
@@ -1973,7 +1993,7 @@ void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 	iface_context->is_mlo_vdev = false;
 	iface_context->is_authenticated = false;
 	iface_context->device_mode = ATH12K_IPA_MAX_NO_OF_MODE;
-	iface_context->session_id = ATH12K_IPA_MAX_SESSION;
+	iface_context->session_id = ipa_ctx->invalid_session_id;
 
 	memset(iface_context->mac_addr, 0, ETH_ALEN);
 
@@ -1991,17 +2011,18 @@ void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 			 struct dp_ipa_net_device_priv *net_dev_priv,
 			 enum ath12k_ipa_opmode device_mode,
-			 u8 session_id,
+			 u16 session_id,
 			 const u8 *mac_addr,
-			 bool is_2g_iface, bool is_mlo_vdev, bool is_tx1_used)
+			 bool is_2g_iface, bool is_mlo_vdev,
+			 bool is_tx1_used, u8 link_id)
 {
 	struct ath12k_ipa_iface_context *iface_context = NULL;
 	int status = 0;
-	u8 sessid;
+	u16 sessid;
 	bool ipv6_en;
 	int i;
 
-	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
 		iface_context = &(ipa_ctx->iface_context[i]);
 		if (wlan_ipa_check_iface_netdev_sessid(iface_context, net_dev_priv,
 						       session_id)) {
@@ -2011,22 +2032,26 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 				}
 			}
 
-			wlan_ipa_cleanup_iface(iface_context, NULL, ipa_ctx->hdl, session_id, is_mlo_vdev);
+			wlan_ipa_cleanup_iface(iface_context, NULL,
+					       ipa_ctx->hdl, session_id,
+					       is_mlo_vdev, link_id);
 		} else if (iface_context->session_id == session_id) {
-			wlan_ipa_cleanup_iface(iface_context, NULL, ipa_ctx->hdl, session_id, is_mlo_vdev);
+			wlan_ipa_cleanup_iface(iface_context, NULL,
+					       ipa_ctx->hdl, session_id,
+					       is_mlo_vdev, link_id);
 		}
 	}
 
-	if (ATH12K_IPA_MAX_IFACE == ipa_ctx->num_iface) {
+	if (ipa_ctx->max_iface == ipa_ctx->num_iface) {
 		status = -ENOMEM; // no mem
-		ath12k_err(ipa_ctx->ab, "Max interface reached %d \n", ATH12K_IPA_MAX_IFACE);
+		ath12k_err(ipa_ctx->ab, "Max interface reached %u\n", ipa_ctx->max_iface);
 		iface_context = NULL;
 		WARN_ON(1);
 		goto end;
 	}
 
-	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
-		if (ipa_ctx->iface_context[i].session_id == ATH12K_IPA_MAX_SESSION) {
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
+		if (ipa_ctx->iface_context[i].session_id == ipa_ctx->invalid_session_id) {
 			iface_context = &(ipa_ctx->iface_context[i]);
 			break;
 		}
@@ -2069,7 +2094,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 						    ipv6_en,
 						    ipa_ctx->hdl,
 						    is_tx1_used,
-						    is_mlo_vdev);
+						    is_mlo_vdev,
+						    link_id);
 		} else {
 			status = dp_ipa_setup_iface(iface_context,
 						    (u8 *)net_dev_priv->dev_addr,
@@ -2079,7 +2105,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 						    ipv6_en,
 						    ipa_ctx->hdl,
 						    is_tx1_used,
-						    is_mlo_vdev);
+						    is_mlo_vdev,
+						    link_id);
 		}
 
 		if (status)
@@ -2095,7 +2122,8 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 
 end:
 	if (iface_context)
-		wlan_ipa_cleanup_iface(iface_context, mac_addr, ipa_ctx->hdl, session_id, is_mlo_vdev);
+		wlan_ipa_cleanup_iface(iface_context, mac_addr, ipa_ctx->hdl, session_id,
+				       is_mlo_vdev, link_id);
 
 	return status;
 }
@@ -2177,12 +2205,12 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			enum ipa_wlan_event event,
 			u32 vdev_id, u8 pdev_idx, const u8 mac[ETH_ALEN],
 			struct dp_ipa_net_device_priv *dev, enum nl80211_iftype mode,
-			enum nl80211_band band, bool is_mlo)
+			enum nl80211_band band, bool is_mlo, u8 link_id)
 {
 	struct ath12k_ipa_iface_context *iface_ctx = NULL;
 	struct ath12k_base *ab;
-	u8 sta_session_id = ATH12K_IPA_MAX_SESSION;
-	u8 session_id = vdev_id;
+	u16 sta_session_id = ipa_ctx->invalid_session_id;
+	u16 session_id = vdev_id;
 	bool is_2g_iface = band == NL80211_BAND_2GHZ ? true : false;
 	bool is_tx1_used = false;
 	int i;
@@ -2208,7 +2236,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		return -EINVAL;
 	}
 
-	if (session_id >= ATH12K_IPA_MAX_SESSION) {
+	if (session_id >= ipa_ctx->max_session_id) {
 		ath12k_err(ab, "Invalid session_id %d\n", session_id);
 		return -EINVAL;
 	}
@@ -2252,7 +2280,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		mutex_lock(&ipa_ctx->event_lock);
 		if (ipa_ctx->sta_connected) {
 			bool mlo = false;
-			u8 id = ATH12K_IPA_MAX_SESSION;
+			u16 id = ipa_ctx->invalid_session_id;
 
 			iface_ctx =
 			ath12k_wlan_ipa_get_iface_by_mode_netdev(ipa_ctx,
@@ -2263,7 +2291,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 				mlo = iface_ctx->is_mlo_vdev;
 				ipa_ctx->sta_connected--;
 				wlan_ipa_cleanup_iface(iface_ctx, NULL, ipa_ctx->hdl,
-						       id, mlo);
+						       id, mlo, link_id);
 			}
 			if (ath12k_wlan_ipa_send_msg(ipa_ctx, WLAN_STA_DISCONNECT,
 						     mac, dev, mlo, id) != 0) {
@@ -2272,8 +2300,10 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 				goto end;
 			}
 		}
-		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode, session_id, mac,
-					 is_2g_iface, is_mlo, is_tx1_used) != 0) {
+		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode,
+					 session_id, mac,
+					 is_2g_iface, is_mlo,
+					 is_tx1_used, link_id) != 0) {
 			ath12k_err(ab, "Setup iface failed\n");
 			mutex_unlock(&ipa_ctx->event_lock);
 			goto end;
@@ -2288,10 +2318,10 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		     ath12k_wlan_ipa_is_sta_only_offload_enabled()) &&
 		    !ipa_ctx->sta_connected) {
 			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-							  WMI_STA_RX_DATA_OFFLOAD,
-							  vdev_id,
-							  true);
+			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
+								WMI_STA_RX_DATA_OFFLOAD,
+								vdev_id,
+								true);
 			mutex_lock(&ipa_ctx->event_lock);
 		}
 		ipa_ctx->sta_connected++;
@@ -2303,23 +2333,25 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 
 	case WLAN_AP_CONNECT:
 		mutex_lock(&ipa_ctx->event_lock);
-		if (ipa_ctx->vdev_to_iface[session_id] != ATH12K_IPA_MAX_SESSION) {
+		if (ipa_ctx->vdev_to_iface[session_id] < ipa_ctx->max_iface) {
 			ath12k_info(ab, "Vdev already connected\n");
 			mutex_unlock(&ipa_ctx->event_lock);
 			return 0;
 		}
-		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode, session_id, mac,
-					 is_2g_iface, is_mlo, is_tx1_used) != 0) {
+		if (wlan_ipa_setup_iface(ipa_ctx, dev, device_mode,
+					 session_id, mac,
+					 is_2g_iface, is_mlo,
+					 is_tx1_used, link_id) != 0) {
 			ath12k_err(ab, "Setup iface failed\n");
 			mutex_unlock(&ipa_ctx->event_lock);
 			goto end;
 		}
 		if (ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
 			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-							  WMI_AP_RX_DATA_OFFLOAD,
-							  vdev_id,
-							  true);
+			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
+								WMI_AP_RX_DATA_OFFLOAD,
+								vdev_id,
+								true);
 			mutex_lock(&ipa_ctx->event_lock);
 		}
 		ipa_ctx->vdev_to_iface[session_id] =
@@ -2343,7 +2375,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			if (iface) {
 				ath12k_info(ab, "Found existing STA iface\n");
 				wlan_ipa_cleanup_iface(iface, mac, ipa_ctx->hdl,
-						       session_id, is_mlo);
+						       session_id, is_mlo, link_id);
 			}
 			return -EINVAL;
 		}
@@ -2353,13 +2385,13 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		     (ath12k_wlan_ipa_is_sta_only_offload_enabled() &&
 		      !ipa_ctx->sta_connected))) {
 			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-							  WMI_STA_RX_DATA_OFFLOAD,
-							  vdev_id,
-							  false);
+			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
+								WMI_STA_RX_DATA_OFFLOAD,
+								vdev_id,
+								false);
 			mutex_lock(&ipa_ctx->event_lock);
 		}
-		ipa_ctx->vdev_to_iface[session_id] = ATH12K_IPA_MAX_SESSION;
+		ipa_ctx->vdev_to_iface[session_id] = ipa_ctx->max_iface;
 		iface_ctx =
 			ath12k_wlan_ipa_get_iface_by_mode_netdev(ipa_ctx,
 								 NL80211_IFTYPE_STATION,
@@ -2367,7 +2399,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		if (iface_ctx) {
 			ath12k_info(ab, "Found existing STA iface\n");
 			wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
-					       session_id, is_mlo);
+					       session_id, is_mlo, link_id);
 		}
 		mutex_unlock(&ipa_ctx->event_lock);
 		ath12k_info(ab, "STA connected = %d, vdev_to_iface[%u] = %u\n",
@@ -2379,20 +2411,20 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		mutex_lock(&ipa_ctx->event_lock);
 		if (ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
 			mutex_unlock(&ipa_ctx->event_lock);
-			ath12k_wlan_ipa_uc_offload_enable(ipa_ctx,
-							  WMI_AP_RX_DATA_OFFLOAD,
-							  vdev_id,
-							  false);
+			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
+								WMI_AP_RX_DATA_OFFLOAD,
+								vdev_id,
+								false);
 			mutex_lock(&ipa_ctx->event_lock);
-			ipa_ctx->vdev_to_iface[session_id] = ATH12K_IPA_MAX_SESSION;
+			ipa_ctx->vdev_to_iface[session_id] = ipa_ctx->max_iface;
 		}
-		for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+		for (i = 0; i < ipa_ctx->max_iface; i++) {
 			iface_ctx = &ipa_ctx->iface_context[i];
 			if (wlan_ipa_check_iface_netdev_sessid(iface_ctx,
 							       dev, session_id)) {
 				ath12k_info(ab, "Found matching AP iface\n");
 				wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
-						       session_id, is_mlo);
+						       session_id, is_mlo, link_id);
 				break;
 			}
 		}
@@ -2595,7 +2627,8 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 							    entry->mac_addr, &entry->dev,
 							    NL80211_IFTYPE_AP,
 							    NL80211_BAND_UNSPECIFIED,
-							    entry->is_mlo);
+							    entry->is_mlo,
+							    ATH12K_INVALID_LINK_ID);
 					rhashtable_remove_fast(ctx->mac_table,
 							       &entry->node,
 							       ctx->mac_table_params);
@@ -2608,7 +2641,7 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 					goto err_free;
 
 				ether_addr_copy(entry->mac_addr, curr_evt->mac_addr);
-				entry->vdev_id    = curr_evt->vdev_id;
+				entry->vdev_id = curr_evt->session_id;
 				entry->device_id = curr_evt->device_id;
 				entry->dev = curr_evt->dev;
 				entry->pdev_idx = curr_evt->pdev_idx;
@@ -2646,10 +2679,16 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 				break;
 			}
 
-			ath12k_ipa_wlan_evt(ipa_ctx, curr_evt->event, curr_evt->vdev_id,
-					    curr_evt->pdev_idx, curr_evt->mac_addr,
-					    &curr_evt->dev, curr_evt->mode,
-					    curr_evt->band, curr_evt->is_mlo);
+			ath12k_ipa_wlan_evt(ipa_ctx,
+					    curr_evt->event,
+					    curr_evt->session_id,
+					    curr_evt->pdev_idx,
+					    curr_evt->mac_addr,
+					    &curr_evt->dev,
+					    curr_evt->mode,
+					    curr_evt->band,
+					    curr_evt->is_mlo,
+					    curr_evt->link_id);
 			kfree(curr_evt);
 			continue;
 
@@ -2706,7 +2745,7 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	if (!ev)
 		return;
 	ev->event = event;
-	ev->vdev_id = arvif->vdev_id;
+	ev->session_id = ath12k_dp_ipa_arch_op_get_session_id(IPA_CTX(ab), arvif);
 	ev->pdev_idx = arvif->ar->pdev_idx;
 	ev->device_id = ab->device_id;
 	strscpy(ev->dev.name, dev->name, IFNAMSIZ);
@@ -2716,6 +2755,7 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	ev->band = chanctx->def.chan->band;
 	ether_addr_copy(ev->mac_addr, mac);
 	ev->is_mlo = is_mlo;
+	ev->link_id = arvif->link_id;
 
 	spin_lock_bh(&ipa_global_ctx->list_lock);
 	list_add_tail(&ev->list_elem, &ipa_global_ctx->list);
@@ -2759,70 +2799,6 @@ int ath12k_wmi_ipa_offload_enable_disable_param_cmd(struct ath12k *ar, u32 vdev_
 
 	return ret;
 }
-
-void ath12k_wlan_ipa_intrabss_enable_disable(struct ath12k_ipa *ipa_ctx,
-					     u32 vdev_id, bool enable)
-{
-		struct ipa_intrabss_control_params intrabss_req = {0};
-		struct ath12k_base *ab = ipa_ctx->ab;
-
-		u32 intra_bss_fwd = 0;
-
-		if (!enable || ipa_ctx->disable_intrabss_fwd[vdev_id]) {
-			ath12k_info(ab, "%s: ipa_offload->enable=%d, rx_fwd_disabled=%d\n",
-				    __func__, enable,
-				    ipa_ctx->disable_intrabss_fwd[vdev_id]);
-			intra_bss_fwd = 1;
-		}
-
-		intrabss_req.vdev_id = vdev_id;
-		intrabss_req.enable = intra_bss_fwd;
-
-		if (ath12k_ipa_send_intrabss_enable_disable(ab,
-							    &intrabss_req)) {
-			ath12k_err(ab, "intrabss offload vdev_id=%d, enable=%d failure\n",
-				   vdev_id, intra_bss_fwd);
-		}
-}
-EXPORT_SYMBOL(ath12k_wlan_ipa_intrabss_enable_disable);
-
-void ath12k_wlan_ipa_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
-				       u32 offload_type, u32 vdev_id,
-				       bool enable)
-{
-	struct ipa_uc_offload_control_params req = {0};
-	struct ath12k_base *ab = ipa_ctx->ab;
-
-	if (vdev_id >= ATH12K_IPA_MAX_SESSION) {
-		ath12k_err(ab, "invalid vdev id: %d\n", vdev_id);
-		return;
-	}
-
-	if (enable == ipa_ctx->vdev_offload_enabled[vdev_id]) {
-		ath12k_info(ab,
-			    "IPA ofld status already set: ofld_type=%d, vdev_id=%d, en=%d\n",
-			    offload_type, vdev_id, enable);
-		return;
-	}
-
-	ath12k_info(ab, "offload_type=%d, vdev_id=%d, enable=%d\n",
-		    offload_type, vdev_id, enable);
-
-	req.offload_type = offload_type;
-	req.vdev_id = vdev_id;
-	req.enable = enable;
-
-	if (ath12k_ipa_send_uc_offload_enable_disable(ab, &req)) {
-		ath12k_err(ab,
-			   "Fail to enable IPA ofld: ofld type=%d, vdev_id=%d, en=%d\n",
-			   offload_type, vdev_id, enable);
-	} else {
-		ipa_ctx->vdev_offload_enabled[vdev_id] = enable;
-	}
-
-	ath12k_wlan_ipa_intrabss_enable_disable(ipa_ctx, vdev_id, enable);
-}
-EXPORT_SYMBOL(ath12k_wlan_ipa_uc_offload_enable);
 
 int ath12k_ipa_send_intrabss_enable_disable(struct ath12k_base *ab,
 					    struct ipa_intrabss_control_params *params)
@@ -2906,12 +2882,12 @@ bool ath12k_wlan_ipa_uc_sta_is_enabled(struct ath12k_ipa_config *ipa_cfg)
 }
 EXPORT_SYMBOL(ath12k_wlan_ipa_uc_sta_is_enabled);
 
-int ath12k_wlan_ipa_get_ifaceid(struct ath12k_ipa *ipa_ctx, u8 session_id)
+int ath12k_wlan_ipa_get_ifaceid(struct ath12k_ipa *ipa_ctx, u16 session_id)
 {
 	struct ath12k_ipa_iface_context *iface_ctx;
 	int i;
 
-	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
 		iface_ctx = &ipa_ctx->iface_context[i];
 		if (iface_ctx->session_id == session_id)
 			break;
@@ -2928,7 +2904,7 @@ ath12k_wlan_ipa_get_iface(struct ath12k_ipa *ipa_ctx,
 	struct ath12k_ipa_iface_context *iface_ctx = NULL;
 	int i;
 
-	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
 		iface_ctx = &ipa_ctx->iface_context[i];
 
 		if (iface_ctx->device_mode == ath12k_ipa_mode(mode))
@@ -2943,12 +2919,12 @@ struct ath12k_ipa_iface_context *
 ath12k_wlan_ipa_get_iface_by_mode_netdev(struct ath12k_ipa *ipa_ctx,
 					 enum nl80211_iftype mode,
 					 struct dp_ipa_net_device_priv *net_dev_priv,
-					 u8 session_id)
+					 u16 session_id)
 {
 	struct ath12k_ipa_iface_context *iface_ctx = NULL;
 	int i;
 
-	for (i = 0; i < ATH12K_IPA_MAX_IFACE; i++) {
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
 		iface_ctx = &ipa_ctx->iface_context[i];
 
 		if (iface_ctx->device_mode == ath12k_ipa_mode(mode) &&
@@ -2989,13 +2965,13 @@ ath12k_dp_ipa_get_if_ctx(struct ath12k_ipa *ipa_ctx, u8 vdev_id)
 
 	if_idx = ipa_ctx->vdev_to_iface[vdev_id];
 
-	if (if_idx >= ATH12K_IPA_MAX_IFACE) {
+	if (if_idx >= ipa_ctx->max_iface) {
 		ath12k_err(ipa_ctx->ab, "vdev_id=%d not in ipa_ctx", vdev_id);
 		return NULL;
 	}
 
 	if_ctx = &ipa_ctx->iface_context[if_idx];
-	if (if_ctx->session_id >= ATH12K_IPA_MAX_SESSION) {
+	if (if_ctx->session_id == ipa_ctx->invalid_session_id) {
 		ath12k_err(ipa_ctx->ab, "vdev_id=%d at if_idx=%u is invalid",
 			   if_ctx->session_id, if_idx);
 		return NULL;
@@ -3030,6 +3006,7 @@ ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_
 	struct ath12k_ipa *ipa_ctx;
 	struct ath12k_ipa_iface_context *if_ctx;
 	bool mlo;
+	u16 session_id;
 
 	rcu_read_lock();
 
@@ -3045,7 +3022,12 @@ ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_
 		goto exit;
 	}
 
-	if_ctx = ath12k_dp_ipa_get_if_ctx(ipa_ctx, vdev_id);
+	/* Use ath12k_dp_ipa_arch_op_get_session_id() so WiFi8 uses ahvif_id
+	 * (group-wide unique) instead of vdev_id (per-SoC, causes collisions).
+	 */
+	session_id = ath12k_dp_ipa_arch_op_get_session_id(ipa_ctx, arvif);
+
+	if_ctx = ath12k_dp_ipa_get_if_ctx(ipa_ctx, session_id);
 	if (!if_ctx) {
 		ath12k_err(ab, "if_ctx is null");
 		goto exit;
@@ -3073,6 +3055,7 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 	struct ath12k_ipa *ipa_ctx;
 	struct ath12k_ipa_iface_context *if_ctx;
 	bool mlo;
+	u16 session_id;
 	int link_id;
 
 	rcu_read_lock();
@@ -3089,7 +3072,12 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 		goto exit;
 	}
 
-	if_ctx = ath12k_dp_ipa_get_if_ctx(ipa_ctx, vdev_id);
+	/* Use ath12k_dp_ipa_arch_op_get_session_id() so WiFi8 uses ahvif_id
+	 * (group-wide unique) instead of vdev_id (per-SoC, causes collisions).
+	 */
+	session_id = ath12k_dp_ipa_arch_op_get_session_id(ipa_ctx, arvif);
+
+	if_ctx = ath12k_dp_ipa_get_if_ctx(ipa_ctx, session_id);
 	if (!if_ctx) {
 		ath12k_err(ab, "if_ctx is null");
 		goto exit;
@@ -3127,17 +3115,12 @@ exit:
 }
 
 /**
- * ath12_dp_ipa_sg_tbl_setup() - Setup scatter-gather table for DMA buffer
+ * ath12k_dp_ipa_sg_tbl_setup() - Setup scatter-gather table for IPA ring mapping
  * @dev: Pointer to device structure
  * @sgt: Pointer to scatter-gather table to be populated
  * @cpu_addr: CPU virtual address of the DMA buffer
- * @dma_addr: DMA address of the buffer
+ * @dma_addr: DMA address of Ring base
  * @size: Size of the DMA buffer in bytes
- *
- * The function performs two main operations:
- * 1. Obtains the scatter-gather table from the DMA layer using dma_get_sgtable()
- * 2. Iterates through all scatter-gather entries and sets their dma_address
- *    field to the physical address obtained via sg_phys()
  *
  * Return: 0 on success, -1 on failure
  */
@@ -3176,7 +3159,7 @@ EXPORT_SYMBOL(ath12k_dp_ipa_sg_tbl_setup);
  * Context: Can be called from process context
  * Return: None
  */
-static inline void
+inline void
 ath12k_dp_ipa_mac80211_rx(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 			  struct sk_buff *skb)
 {
@@ -3184,170 +3167,7 @@ ath12k_dp_ipa_mac80211_rx(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 	ieee80211_rx_napi(hw, sta, skb, NULL);
 	local_bh_enable();
 }
-
-/**
- * ath12k_dp_ipa_w2i() - IPA exception flow handler (WLAN to IPA)
- * @priv: private context (ath12k_wlan_ipa_priv)
- * @evt: IPA event type
- * @data: event data (typically sk_buff pointer)
- *
- * Handles packets received from IPA in the exception path. This includes
- * EAPOL and WAPI packets that need special handling, as well as packets
- * for unauthorized peers. Valid data packets are submitted to mac80211
- * for processing.
- *
- * Context: Can be called from process context
- * Return: None
- */
-static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt,
-			      unsigned long data)
-{
-	struct ath12k_ipa *ipa_ctx;
-	struct sk_buff *skb;
-	u8 if_idx;
-	struct ath12k_ipa_iface_context *if_ctx;
-	struct ethhdr *eth;
-	struct net_device *dev;
-	struct ath12k_base *ab;
-	struct ath12k_dp *dp;
-	struct ath12k_pdev_dp *dp_pdev;
-	struct ath12k *ar;
-	struct ieee80211_hw *hw;
-	struct ath12k_dp_peer *dp_peer;
-	u16 peer_id;
-	u8 vdev_id;
-	struct ieee80211_rx_status *status;
-#ifdef CPTCFG_EXT_IPA_STATS
-	struct ath12k_link_vif *arvif;
-	struct ath12k_dp_ipa_stats_vif_hw_stats *link_vif_stats;
-	bool is_mcast, is_bcast;
-#endif
-
-	skb = (struct sk_buff *)data;
-	if (!skb) {
-		ath12k_err(NULL, "skb is NULL");
-		return;
-	}
-
-	if (evt != IPA_RECEIVE) {
-		ath12k_err(NULL, "ipa gave wrong event: 0x%X", evt);
-		goto drop;
-	}
-
-	ipa_ctx = (struct ath12k_ipa *)priv;
-	if (!ipa_ctx) {
-		ath12k_err(NULL, "ipa_ctx is NULL, dropping pkt");
-		if (evt == IPA_RECEIVE)
-			dev_kfree_skb_any(skb);
-		return;
-	}
-
-	ipa_ctx->stats.rx_excep++;
-
-	ab = ipa_ctx->ab;
-	dp = ath12k_ab_to_dp(ab);
-
-	eth = skb_eth_hdr(skb);
-	peer_id = ath12k_dp_ipa_skb_get_peer_id(skb);
-	vdev_id = ath12k_dp_ipa_skb_get_vdev_id(skb);
-
-	/* TODO: add check for WLAN_IPA_UC_ENABLE_MASK */
-	if_idx = ipa_ctx->vdev_to_iface[vdev_id];
-
-	if (if_idx >= ATH12K_IPA_MAX_IFACE) {
-		ath12k_err(ab, "pkt received before intf setup vdev_id=%d",
-			   vdev_id);
-		ipa_ctx->stats.rx_no_iface++;
-		/* TODO: If EAPOL is rx before iface setup, send them to nw stack */
-		goto drop;
-	}
-
-	if_ctx = &ipa_ctx->iface_context[if_idx];
-	if (if_ctx->session_id >= ATH12K_IPA_MAX_SESSION) {
-		ath12k_err(ab, "vdev_id of if_idx %u is invalid:%d",
-			   if_idx, if_ctx->session_id);
-		goto drop;
-	}
-
-	if (eth->h_proto == cpu_to_be16(ETH_P_PAE) ||
-		eth->h_proto == cpu_to_be16(ETH_P_WAPI)) {
-		ipa_ctx->stats.rx_eapol++;
-		dev = dev_get_by_name(&init_net, if_ctx->net_dev.name);
-		if (!dev) {
-			ath12k_err(ab, "netdev is null for '%s'",
-				   if_ctx->net_dev.name);
-			goto drop;
-		}
-		skb->protocol = eth_type_trans(skb, dev);
-		cfg80211_rx_control_port(dev, skb, false, -1);
-		dev_put(dev);
-		return;
-	}
-
-	rcu_read_lock();
-
-	ar = ath12k_mac_get_ar_by_vdev_id(ab, vdev_id);
-	if (!ar) {
-		ath12k_err(ab, "ar is NULL");
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	dp_pdev = ath12k_dp_to_dp_pdev(dp, ar->pdev_idx);
-
-	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp, dp_pdev, peer_id);
-	if (!dp_peer) {
-		ath12k_err(ab, "dp_peer is null (peer_id=%d mac=%pM)", peer_id,
-			   eth->h_source);
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	if (!dp_peer->is_authorized) {
-		ath12k_err(ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
-			   peer_id, eth->h_source, eth->h_dest,
-			   cpu_to_be16(eth->h_proto), dp_peer->addr);
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	hw = ath12k_ar_to_hw(ar);
-	skb->protocol = eth->h_proto;
-
-	/* reset skb cb and fill with ieee80211_rx_status */
-	memset(skb->cb, 0, sizeof(skb->cb));
-	status = IEEE80211_SKB_RXCB(skb);
-
-	status->flag |= RX_FLAG_8023;
-	status->band = ar->rx_channel->band;
-
-	status->link_id = dp_peer->hw_links[dp_pdev->hw_link_id];
-	status->link_valid = true;
-
-#ifdef CPTCFG_EXT_IPA_STATS
-	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
-	if (arvif) {
-		link_vif_stats = arvif->extn.stats;
-		is_bcast = is_broadcast_ether_addr(eth->h_dest);
-		is_mcast = is_bcast ? false : is_multicast_ether_addr(eth->h_dest);
-
-		if (ar->fw_stats.en_vdev_stats_ol && (is_mcast || is_bcast))
-			ath12k_dp_ipa_tx_rx_mcbc_stats(&link_vif_stats->rx.stats,
-						       is_mcast, is_bcast,
-						       skb->len);
-	}
-#endif
-
-	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
-	ipa_ctx->stats.sent_to_mac++;
-
-	rcu_read_unlock();
-	return;
-drop:
-	ipa_ctx->stats.rx_drop_excep++;
-	dev_kfree_skb_any(skb);
-	return;
-}
+EXPORT_SYMBOL(ath12k_dp_ipa_mac80211_rx);
 
 void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
 			       struct ath12k_dp_link_peer *peer,
@@ -3355,6 +3175,8 @@ void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
 			       u32 vdev_id, bool connect)
 {
 	struct ath12k_base *ab;
+	struct ath12k_ipa *ipa_ctx;
+	bool has_client_ops;
 	const u8 *peer_addr;
 	enum ipa_wlan_event evt;
 	bool is_mlo;
@@ -3370,6 +3192,19 @@ void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
 
 	if (!peer->primary_link)
 		return;
+
+	ipa_ctx = IPA_CTX(ab);
+
+	if (!ipa_ctx)
+		return;
+
+	/* Avoid peer Connect/Disconnect event to IPA for QCN96XX */
+	if (ipa_ctx->arch_ops) {
+		has_client_ops = (connect && ipa_ctx->arch_ops->ipa_client_connect_ex) ||
+				 (!connect && ipa_ctx->arch_ops->ipa_client_disconnect);
+		if (!has_client_ops)
+			return;
+	}
 
 	evt = connect ? WLAN_CLIENT_CONNECT_EX : WLAN_CLIENT_DISCONNECT;
 
@@ -3458,23 +3293,3 @@ void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp)
 	ath12k_dp_hw_group_ipa_free(dp_hw_grp->extn.ipa);
 	dp_hw_grp->extn.ipa = NULL;
 }
-
-int ath12k_dp_ipa_init(struct ath12k_base *ab)
-{
-	int ret = 0;
-
-	ret = ath12k_dp_ipa_arch_op_ipa_init(ab);
-	if (ret) {
-		ath12k_err(ab, "IPA: ipa alloc failed");
-		return ret;
-	}
-
-	ret = ath12k_dp_ipa_register_is_ipa_ready(ab);
-	if (ret) {
-		ath12k_err(ab, "IPA: ipa init failed");
-		ath12k_dp_ipa_plugin_deregister_ops_extn(ab);
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL(ath12k_dp_ipa_init);

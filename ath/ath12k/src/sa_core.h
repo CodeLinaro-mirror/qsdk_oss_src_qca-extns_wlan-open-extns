@@ -25,6 +25,18 @@
 #define SA_MASK_PER_TH			0xFF
 /* Mask to validate minimum training packets */
 #define SA_MASK_MIN_PKTS		0xFFFF
+/* SA Training parameters bit positions.
+ * PER parameter Valid at bit 0
+ * PER Threshhold at bit 1
+ * Minimum Packets to be trained at bit 9
+ * Training disable for Latency Traffic at bit 25
+ * Training enabled for QOS Null frames at bit 26
+ */
+#define SA_PER_TH_BIT_POS		1
+#define SA_MIN_PKTS_BIT_POS		9
+#define SA_LTNC_TR_BIT_POS		25
+#define SA_EN_QOS_NULL_BIT_POS		26
+
 /* Mask to check invalid parameter */
 #define SA_INVALID_PARAM_VALUE		0xFFFF
 /* 11-bit Rate Code Mask */
@@ -42,6 +54,13 @@
 #define SA_MASK_LOWER_NIBBLE		0x0f
 #define SA_NIBBLE_BITS			4
 #define SA_MAX_COMB_FB			2
+/* MAX MPDU count bit position 0 to 9th bit */
+#define SA_MASK_MAX_MPDU_CNT		0x3FF
+/* MCS margin bit position. 10th bit enable/disable and
+ * 11th to 13th bit margin value.
+ */
+#define SA_MASK_MCS_MARGIN		0xF
+#define SA_MCS_MARGIN_POS		10
 
 /* Forward declaration */
 struct ath12k_link_vif;
@@ -79,6 +98,7 @@ struct sa_base_extn {
 	u8 sa_sw_test;
 	u8 sa_support;
 	s8 sa_mode_overwrite;
+	s8 sa_en_rts_overwrite;
 };
 
 /* Smart antenna training info */
@@ -91,6 +111,7 @@ struct smart_ant_train_info {
 	/* antenna bitmask per series */
 	u32 antenna_array[SA_MAX_SA_CHAINS];
 	u32 numpkts;
+	u32 extn_train_flags;
 };
 
 struct sa_sta_ratecode_list {
@@ -189,5 +210,19 @@ void sa_core_wmi_peer_rc_list_ev_handler(struct ath12k_base *ab,
  * so that per-peer context can be released.
  */
 void sa_core_peer_disconnect_notify(struct ath12k_link_sta *arsta);
+
+/**
+ * sa_core_notify_all_peers_connected - Re-notify SA of all connected peers on a radio
+ * @ar: ath12k radio context whose peer table is walked
+ *
+ * Iterates over every link STA currently associated on @ar and invokes the
+ * Smart Antenna peer-connect callback for each one.  Called after a channel
+ * change reconfiguration (SA_NEW_RECONFIG) so that the algorithm module can
+ * rebuild per-peer state that may depend on the new channel parameters.
+ *
+ * The caller must hold the wiphy lock (or equivalent serialisation) to ensure
+ * the peer table is stable during the walk.
+ */
+void sa_core_notify_all_peers_connected(struct ath12k *ar);
 
 #endif /* ATH12K_SA_CORE_H */

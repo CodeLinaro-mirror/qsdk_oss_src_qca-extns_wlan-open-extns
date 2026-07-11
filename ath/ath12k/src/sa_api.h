@@ -147,4 +147,29 @@ static inline int ath12k_smart_ant_api_stop(struct ath12k *ar, u8 init_flags)
 	return sa_core_deinit(ar, init_flags);
 }
 
+/**
+ * ath12k_smart_ant_api_channel_change - Reconfigure Smart Antenna after AP channel change
+ * @ar: ath12k radio context on which the channel changed
+ * @reconnect: Set to re-connect the STAs
+ *
+ * Handles an AP channel change by tearing down and re-initialising the Smart
+ * Antenna core in reconfiguration mode (SA_NEW_RECONFIG), then re-notifying
+ * the algorithm module of every peer that is currently associated on the radio.
+ * This allows the algorithm to update per-peer state (antenna selection,
+ * training parameters) that depends on the new channel or bandwidth.
+ *
+ * Internally selects the first suitable AP or STA arvif on @ar for the
+ * SA core reinitialisation.
+ *
+ * Must be called from process context with the wiphy lock held.
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool reconnect);
+
+static inline void ath12k_smart_ant_api_recovery_handler(struct ath12k *ar)
+{
+	ath12k_smart_ant_api_channel_change(ar, false);
+}
+
 #endif /* ATH12K_SA_API_H */

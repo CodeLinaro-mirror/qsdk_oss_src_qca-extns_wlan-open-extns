@@ -4,17 +4,35 @@
  */
 
 #include <linux/nl80211.h>
+#include <linux/device.h>
 #include <net/cfg80211.h>
 #include "cfg80211_dfs_extn.h"
+
+/**
+ * cfg80211_is_driver_mac80211_hwsim - check if wiphy belongs to mac80211_hwsim
+ * @wiphy: the wiphy to check
+ *
+ * Returns true when the wiphy parent device is driven by the mac80211_hwsim
+ * virtual driver, false otherwise.
+ */
+bool cfg80211_is_driver_mac80211_hwsim(struct wiphy *wiphy)
+{
+	return wiphy->dev.parent &&
+	       !strcmp(dev_driver_string(wiphy->dev.parent), "mac80211_hwsim");
+}
+EXPORT_SYMBOL(cfg80211_is_driver_mac80211_hwsim);
 
 /**
  * cfg80211_support_bootup_cac - check if boot-up CAC is supported
  *
  * Boot-up CAC is supported by default for the ath12k UD driver.
- * ToDo: gate on a dedicated NL80211_EXT_FEATURE flag if needed.
+ * Returns false for mac80211_hwsim (virtual driver), true for real hardware.
  */
 bool cfg80211_support_bootup_cac(struct wiphy *wiphy)
 {
+	if (cfg80211_is_driver_mac80211_hwsim(wiphy))
+		return false;
+
 	return true;
 }
 EXPORT_SYMBOL(cfg80211_support_bootup_cac);

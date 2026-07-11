@@ -270,11 +270,6 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 			 "mlo primary selection: forced check sta %pM valid_links 0x%lx links %d\n",
 			 sta->addr, valid_links, num_links);
 
-	if (num_links != 3) {
-		ath12k_dbg_level(NULL, ATH12K_DBG_MAC, ATH12K_DBG_L2, "not a 3 link association\n");
-		return -1;
-	}
-
 	/* loop through all ab in ah*/
 	for (i = 0; i < ah->num_radio; i++) {
 		ar = &ah->radio[i];
@@ -985,6 +980,14 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 #endif
 }
 
+void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
+{
+	struct ath12k *ar = arvif->ar;
+
+	if (ar->ar_extn.cbs.arvif && ar->ar_extn.cbs.arvif == arvif)
+		ath12k_cbs_deinit(ar);
+}
+
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb)
 {
@@ -1141,6 +1144,8 @@ int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arv
 void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 {
 	ath12k_reconfig_esp_params_extn(ar);
+
+	ath12k_smart_ant_api_recovery_handler(ar);
 }
 
 static bool ath12k_core_nol_extn_auto_enabled(struct ath12k_base *ab)
@@ -1646,4 +1651,46 @@ bool ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
 	}
 
 	return false;
+}
+
+/**
+ * ath12k_get_monitor_version - Return the monitor ring version for a device
+ * @ab: ath12k base device instance
+ *
+ * Maps the hardware revision to the monitor ring version used by the
+ * firmware, mirroring the Prop driver's ol_ath_get_monitor_version():
+ *
+ *   Version 1: QCA Proprietary Lithium Monitor
+ *   Version 2: QCA Proprietary Beryllium Monitor
+ *   Version 3: UD Lithium - Quad Ring Monitor
+ *   Version 4: UD Beryllium - Dual Ring Monitor
+ *   Version 5: UD Boron - Dual Ring Monitor
+ *
+ * Return: Monitor version number, or 0 if the hw_rev is unknown.
+ */
+u32 ath12k_get_monitor_version(struct ath12k_base *ab)
+{
+	if (!ab)
+		return 0;
+
+	switch (ab->hw_rev) {
+	case ATH12K_HW_WCN7850_HW20:
+	case ATH12K_HW_QCN9074_HW10:
+	case ATH12K_HW_QCN9160_HW10:
+		return 3;
+	case ATH12K_HW_QCN9274_HW10:
+	case ATH12K_HW_QCN9274_HW20:
+	case ATH12K_HW_IPQ5332_HW10:
+	case ATH12K_HW_IPQ5424_HW10:
+	case ATH12K_HW_QCN6432_HW10:
+		return 4;
+	case ATH12K_HW_QCN9625_HW10:
+	case ATH12K_HW_QCN9625_HW20:
+	case ATH12K_HW_QCN9589_HW10:
+		return 5;
+	default:
+		ath12k_warn(ab, "unknown hw_rev %d for monitor version\n",
+			    ab->hw_rev);
+		return 0;
+	}
 }

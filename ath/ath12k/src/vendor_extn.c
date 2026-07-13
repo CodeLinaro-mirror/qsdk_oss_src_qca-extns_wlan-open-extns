@@ -9995,9 +9995,15 @@ static int ath12k_vendor_maxrate_vht_formula(enum nl80211_band band,
 					     const struct cfg80211_bitrate_mask *mask,
 					     u64 *value)
 {
-	u16 vht_mask = mask->control[band].vht_mcs[0];
-	int mcs = (vht_mask == 0xFFFF) ? 9 : __fls(vht_mask);
+	u16 vht_mask;
+	int mcs;
 	u32 nbps;
+
+	if (!mask || !value || band >= NUM_NL80211_BANDS)
+		return -EINVAL;
+
+	vht_mask = mask->control[band].vht_mcs[0];
+	mcs = (vht_mask == 0xFFFF) ? 9 : __fls(vht_mask);
 
 	mcs = min(mcs, 11);
 
@@ -10041,6 +10047,11 @@ static int ath12k_vendor_maxrate_ht_formula(enum nl80211_band band,
 	u8 ht_mask = 0;
 	int ht_nss, mcs;
 	u32 nbps;
+
+	if (!mask || !value || band >= NUM_NL80211_BANDS)
+		return -EINVAL;
+
+	max_nss = min_t(u8, max_nss, ARRAY_SIZE(mask->control[band].ht_mcs));
 
 	/* ht_mcs[n] covers MCS for NSS=(n+1); find highest tier with any MCS */
 	for (ht_nss = max_nss; ht_nss >= 1; ht_nss--) {
@@ -10104,6 +10115,8 @@ static int ath12k_vendor_get_maxrate_vap_formula(struct ath12k_link_vif *arvif,
 
 	if (ath12k_mac_vif_link_chan(vif, arvif->link_id, &def))
 		return -ENOTCONN;
+	if (!def.chan || def.chan->band >= NUM_NL80211_BANDS)
+		return -EINVAL;
 
 	band   = def.chan->band;
 	cwm_bw = ath12k_nl80211_width_to_cwm(def.width);
@@ -10154,6 +10167,8 @@ static int ath12k_vendor_get_maxrate_vap(struct ath12k_link_vif *arvif,
 
 	if (!vif || ath12k_mac_vif_link_chan(vif, arvif->link_id, &def))
 		return -ENOTCONN;
+	if (!def.chan || def.chan->band >= NUM_NL80211_BANDS)
+		return -EINVAL;
 
 	band = def.chan->band;
 
@@ -10986,6 +11001,11 @@ static void ath12k_vendor_6g_center_freq_idx(u16 chan, u16 bw, u16 *center)
 	u16 start_chan;
 	u16 center_chan;
 
+	if (!center)
+		return;
+
+	*center = 0;
+
 	if (chan == 2 || chan < ATH12K_VENDOR_6G_MIN_CHAN ||
 	    chan > ATH12K_VENDOR_6G_MAX_CHAN ||
 	    ((chan - ATH12K_VENDOR_6G_MIN_CHAN) % ATH12K_VENDOR_CHAN_STEP))
@@ -11795,6 +11815,9 @@ static int ath12k_vendor_display_super_chan_list(struct ath12k *ar, u32 *value)
 	struct ieee80211_supported_band *band_6g;
 	unsigned int i;
 
+	if (!value)
+		return -EINVAL;
+
 	band_6g = ath12k_get_6g_band(ar);
 	if (!band_6g || !band_6g->channels || !band_6g->n_channels) {
 		ath12k_err(ar->ab,
@@ -12234,43 +12257,42 @@ int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
 				       u64 *value)
 
 {
-        struct ieee80211_vif *vif = NULL;
-        struct ath12k_vif *ahvif;
-        struct ath12k_link_vif *arvif = NULL;
-        struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
-        struct ath12k_hw *ah = hw->priv;
-        int param = params->value;
-        int ret = -1;
+	struct ieee80211_vif *vif = NULL;
+	struct ath12k_vif *ahvif;
+	struct ath12k_link_vif *arvif = NULL;
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = hw->priv;
+	int param = params->value;
+	int ret = -1;
 
+	lockdep_assert_wiphy(wiphy);
 
-        vif = wdev_to_ieee80211_vif(wdev);
-        if (!vif)
-                return -EINVAL;
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif)
+		return -EINVAL;
 
-        ahvif = ath12k_vif_to_ahvif(vif);
-       if (!ahvif)
-                return -EINVAL;
+	ahvif = ath12k_vif_to_ahvif(vif);
+	if (!ahvif)
+		return -EINVAL;
 
-        ah = ahvif->ah;
+	ah = ahvif->ah;
 
-        rcu_read_lock();
-        if (ah && params->link_id == INVALID_LINK_ID) {
-                arvif = &ahvif->deflink;
-        } else {
-                if (params->link_id < ATH12K_NUM_MAX_LINKS)
-                        arvif = rcu_dereference(ahvif->link[params->link_id]);
-        }
-        if (!arvif) {
-                rcu_read_unlock();
-                return -EINVAL;
-        }
-	rcu_read_unlock();
-        ath12k_dbg(NULL, ATH12K_DBG_CFG,
-                   "vif: %p param: %d if: %d link: %d\n",
-                   vif, param, params->ifindex, params->link_id);
-        ret = ath12k_vendor_get_arvif_params(arvif, param, value);
+	if (ah && params->link_id == INVALID_LINK_ID) {
+		arvif = &ahvif->deflink;
+	} else {
+		if (params->link_id < ATH12K_NUM_MAX_LINKS)
+			arvif = wiphy_dereference(wiphy,
+						   ahvif->link[params->link_id]);
+	}
+	if (!arvif)
+		return -EINVAL;
 
-        return ret;
+	ath12k_dbg(NULL, ATH12K_DBG_CFG,
+		   "vif: %p param: %d if: %d link: %d\n",
+		   vif, param, params->ifindex, params->link_id);
+	ret = ath12k_vendor_get_arvif_params(arvif, param, value);
+
+	return ret;
 }
 
 /* Find the 'ar' radio instance using the radio index of the wiphy
@@ -13189,10 +13211,9 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 	/* Get hw/ah to know which byte index to use for VIF ID */
 	hw = wiphy_to_ieee80211_hw(wiphy);
 	ah = hw ? hw->priv : NULL;
-	ar = ah ? &ah->radio[radio_idx] : NULL;
-
-	if (!ar)
+	if (!ah || radio_idx >= ah->num_radio)
 		return -EINVAL;
+	ar = &ah->radio[radio_idx];
 
 	base_addr = wiphy->addresses[radio_idx].addr;
 	if (iftype == NL80211_IFTYPE_AP && mbssid_enabled) {
@@ -13304,7 +13325,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 {
 	struct nlattr *vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1];
 	struct wmi_pdev_set_ctl_table_cmd_fixed_param *cmd;
-	u32 ctl_cmd_len, ctl_tlv_len, band, len;
+	u32 ctl_data_len, ctl_cmd_len, ctl_tlv_len, band, len;
 	struct ath12k_wmi_pdev *wmi;
 	const uint8_t *ctl_data;
 	uint32_t *ctl_array;
@@ -13336,8 +13357,14 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 		return -ENODATA;
 	}
 
-	ctl_cmd_len = nla_get_u16(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH]);
-	ctl_cmd_len += sizeof(uint32_t);
+	ctl_data_len = nla_get_u32(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_LENGTH]);
+	if (!ctl_data_len || ctl_data_len > QCA_WLAN_MAX_CTL_SIZE ||
+	    ctl_data_len > nla_len(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA])) {
+		ath12k_err(NULL, "Invalid CTL table length %u", ctl_data_len);
+		return -EINVAL;
+	}
+
+	ctl_cmd_len = ctl_data_len + sizeof(uint32_t);
 	ctl_tlv_len = TLV_HDR_SIZE + roundup(ctl_cmd_len, sizeof(u32));
 	len = sizeof(*cmd) + ctl_tlv_len;
 	wmi = ar->wmi;
@@ -13359,7 +13386,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	band = nla_get_u32(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_BAND]);
 	ctl_data = nla_data(vendor[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_DATA]);
 	ctl_array[0] = cpu_to_le32(band);
-	memcpy(&ctl_array[1], ctl_data, ctl_cmd_len);
+	memcpy(&ctl_array[1], ctl_data, ctl_data_len);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 		   "WMI CTL TABLE: pdev %d ctl len %d\n",
@@ -13369,6 +13396,7 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	if (ret) {
 		ath12k_warn(ar->ab, "Failed to send WMI_PDEV_SET_CTL_TABLE_CMDID\n");
 		dev_kfree_skb(skb);
+		return ret;
 	}
 
 	return 0;
@@ -14041,8 +14069,13 @@ void
 ath12k_update_regd_cac_timeout_ext(struct ath12k *ar,
 				   struct ieee80211_regdomain *regd)
 {
-	s32 cac_timeout_ms = ar->ar_extn.cac_timeout_override_ms;
+	s32 cac_timeout_ms;
 	int i;
+
+	if (!ar || !regd)
+		return;
+
+	cac_timeout_ms = ar->ar_extn.cac_timeout_override_ms;
 
 	if (cac_timeout_ms == NO_CAC_OVERRIDE)
 		return;
@@ -14614,7 +14647,7 @@ ath12k_vendor_sdwf_msduq_send_event(struct ath12k *ar,
 	struct wiphy *wiphy;
 	int buf_len;
 
-	if (!ar || !ar->ah || !ar->ah->hw)
+	if (!ar || !ar->ah || !ar->ah->hw || !evt_data)
 		return;
 
 	wiphy = ar->ah->hw->wiphy;

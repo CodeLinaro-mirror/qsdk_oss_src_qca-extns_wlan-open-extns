@@ -61,14 +61,14 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 
 	ahvif = get_ahvif_from_dev_name(in->netdev_name);
 	if (!ahvif) {
-		ath12k_warn(NULL, "ipa vp_num setup: ahvif not found for netdev=%s\n",
+		ath12k_ipa_err(NULL, "ipa vp_num setup: ahvif not found for netdev=%s\n",
 			    in->netdev_name);
 		return;
 	}
 
 	vp_num = get_vp_num_from_dev_name(in->netdev_name, ahvif);
 	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
-		ath12k_warn(NULL, "ipa vp_num setup: invalid vp_num=%d for netdev=%s\n",
+		ath12k_ipa_err(NULL, "ipa vp_num setup: invalid vp_num=%d for netdev=%s\n",
 			    vp_num, in->netdev_name);
 		return;
 	}
@@ -76,14 +76,14 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 	rcu_read_lock();
 	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
 	if (!arvif) {
-		ath12k_warn(NULL, "ipa vp_num setup: arvif not found for link_id=%u netdev=%s\n",
+		ath12k_ipa_err(NULL, "ipa vp_num setup: arvif not found for link_id=%u netdev=%s\n",
 			    link_id, in->netdev_name);
 		goto err;
 	}
 
 	dev = dev_get_by_name(&init_net, in->netdev_name);
 	if (!dev) {
-		ath12k_warn(NULL, "ipa vp_num setup: net_device not found for netdev=%s\n",
+		ath12k_ipa_err(NULL, "ipa vp_num setup: net_device not found for netdev=%s\n",
 			    in->netdev_name);
 		goto err;
 	}
@@ -558,8 +558,8 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 	cumac_dp = ath12k_ab_to_dp(cumac_ab);
 
 	eth = skb_eth_hdr(skb);
-	peer_id = ath12k_ipa_cb_get_ta_peer_id(skb->cb);
-	vdev_id = ath12k_ipa_cb_get_vap_id(skb->cb);
+	peer_id = ath12k_ipa_cb_get_ta_peer_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
+	vdev_id = ath12k_ipa_cb_get_vap_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
 
 	rcu_read_lock();
 

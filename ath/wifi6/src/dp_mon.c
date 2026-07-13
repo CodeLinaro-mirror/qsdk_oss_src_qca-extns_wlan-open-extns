@@ -16,6 +16,8 @@
 #include "hal_qcn9074.h"
 #include "../ath12k_cmn_extn.h"
 
+#define ATH12K_WIFI6_PHYRX_ERR_MAX	64
+
 /* Allocate undecoded_meta and phyrx_abort_info if not already done.
  * Called by both ops since either may arrive first.
  */

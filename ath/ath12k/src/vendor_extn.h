@@ -462,6 +462,18 @@ static int ath12k_fill_cp_tx_scan_radio_stats(struct sk_buff *vendor_event,
 	return 0;
 }
 
+struct ath12k_dp_rx_undecoded_stats;
+static int ath12k_get_dp_rx_undecoded_stats_len(void)
+{
+	return 0;
+}
+
+static int ath12k_fill_rx_undecoded_stats(struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_undecoded_stats *rx_undecoded_stats)
+{
+	return 0;
+}
+
 int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 				  struct wireless_dev *wdev,
 				  const void *data,
@@ -834,6 +846,12 @@ int ath12k_get_cp_tx_scan_radio_stats_len(void);
 struct ath12k_mgmt_frame_stats;
 int ath12k_fill_cp_tx_scan_radio_stats(struct sk_buff *vendor_event,
 		struct ath12k_mgmt_frame_stats *mgmt_stats);
+
+int ath12k_get_dp_rx_undecoded_stats_len(void);
+
+int ath12k_fill_rx_undecoded_stats(
+		struct sk_buff *vendor_event,
+		struct ath12k_dp_rx_undecoded_stats *rx_undecoded_stats);
 
 int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 				  struct wireless_dev *wdev,

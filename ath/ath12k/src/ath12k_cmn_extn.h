@@ -743,7 +743,6 @@ struct hal_mon_ppdu_info_extn {
 	struct ath12k_phyrx_abort_info *phyrx_abort_info;
 };
 
-#define ATH12K_WIFI6_PHYRX_ERR_MAX	64
 #define ATH12K_PHYRX_ERR_MAX		128
 #define ATH12K_PHYRX_ERR_MASK_WORD_BITS	BITS_PER_TYPE(u32)
 /* Bit shift to position the upper 32-bit half of the 64-bit PHY error mask */

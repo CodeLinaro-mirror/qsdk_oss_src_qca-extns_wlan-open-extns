@@ -16692,6 +16692,67 @@ int ath12k_fill_cp_tx_scan_radio_stats(struct sk_buff *vendor_event,
 	return 0;
 }
 
+int ath12k_get_dp_rx_undecoded_stats_len(void)
+{
+	struct ath12k_dp_rx_undecoded_stats stats;
+	int total_size = 0;
+
+	total_size += nla_total_size(sizeof(stats.rx_undecoded_count));
+	total_size += nla_total_size(sizeof(stats.phyrx_error_mask));
+	total_size += nla_total_size(sizeof(stats.phyrx_error_mask_cont));
+	total_size += nla_total_size(sizeof(stats.rx_undecoded_error));
+	total_size = nla_total_size_nested(total_size);
+	return total_size;
+}
+
+int ath12k_fill_rx_undecoded_stats(struct sk_buff *vendor_event,
+				   struct ath12k_dp_rx_undecoded_stats *rx_undecoded_stats)
+{
+	struct nlattr *attr;
+
+	if (!rx_undecoded_stats || !rx_undecoded_stats->is_set)
+		return 0;
+
+	attr = nla_nest_start(vendor_event,
+			      QCA_VENDOR_ATTR_WLAN_TELEMETRY_RX_UNDECODED_STATS);
+	if (!attr) {
+		ath12k_err(NULL, "nla nest failure: rx undecoded stats");
+		return -EINVAL;
+	}
+
+	if (nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_COUNT,
+			rx_undecoded_stats->rx_undecoded_count)) {
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_PHY_ERR_MASK,
+			rx_undecoded_stats->phyrx_error_mask)) {
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_PHY_ERR_MASK_CONT,
+			rx_undecoded_stats->phyrx_error_mask_cont)) {
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put(vendor_event,
+		    QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_ERROR_ARRAY,
+		    sizeof(rx_undecoded_stats->rx_undecoded_error),
+		    rx_undecoded_stats->rx_undecoded_error)) {
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	nla_nest_end(vendor_event, attr);
+	return 0;
+}
+
 int ath12k_vendor_dcs_sim_handler(struct wiphy *wihpy,
 				  struct wireless_dev *wdev,
 				  const void *data,

@@ -99,6 +99,13 @@ static u32 ath12k_transform_intf_bitmap(int input_bitmap,
 	for (int i = 0; i < ATH12K_MAX_20MHZ_SEGMENTS; ++i)
 		input_bits[i] = BIT(i) & input_bitmap;
 
+	if (bandwidth == ATH12K_CHWIDTH_80 && primary_index >= 4)
+		return 0;
+	if (bandwidth == ATH12K_CHWIDTH_160 && primary_index >= 8)
+		return 0;
+	if (bandwidth == ATH12K_CHWIDTH_320 && primary_index >= 16)
+		return 0;
+
 	for (int i = 0; i < num_sub_chans; ++i) {
 		int src = i, dst = i;
 
@@ -112,6 +119,8 @@ static u32 ath12k_transform_intf_bitmap(int input_bitmap,
 		} else if (bandwidth == ATH12K_CHWIDTH_320) {
 			dst = intf_map_320[primary_index][i];
 		}
+		if (dst < 0 || dst >= ATH12K_MAX_20MHZ_SEGMENTS)
+			return 0;
 		output_bits[dst] = input_bits[src];
 	}
 
@@ -578,8 +587,7 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	if (metrics.rx_time_cu > metrics.reg_rx_cu)
 		metrics.rx_time_cu = metrics.reg_rx_cu;
 
-	metrics.wasted_tx_cu = ((curr->tx_waste_time >> 8) * 100) /
-			(metrics.reg_tsf_delta >> 8);
+	metrics.wasted_tx_cu = ((curr->tx_waste_time >> 8) * 100) / tsf_den;
 
 	if (metrics.reg_tx_cu < metrics.wasted_tx_cu)
 		metrics.wasted_tx_cu = metrics.reg_tx_cu;
@@ -610,7 +618,7 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 				     dcs_get_phyerr_penalty(ar);
 	metrics.total_wasted_cu += (metrics.reg_ofdm_phyerr_cu > 0) ?
 				    (((metrics.reg_ofdm_phyerr_cu >> 8) * 100) /
-				     (metrics.reg_tsf_delta >> 8)) : 0;
+				     tsf_den) : 0;
 	metrics.ofdm_phy_err_rate = (curr->reg_ofdm_phyerr_cnt * 1000) /
 			     curr->listen_time;
 	metrics.cck_phy_err_rate = (curr->reg_cck_phyerr_cnt * 1000) /

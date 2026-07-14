@@ -1637,6 +1637,7 @@ static bool ieee80211_mesh_peer_bw_update(struct link_sta_info *link_sta,
 		}
 	} else if (elems->he_operation) {
 parse_he_6ghz_operation:
+		;
 		const struct ieee80211_he_operation *he_oper = elems->he_operation;
 
 		if (band == NL80211_BAND_6GHZ) {
@@ -1697,6 +1698,7 @@ parse_he_6ghz_operation:
 		}
 	} else if (elems->vht_operation) {
 parse_vht_operation:
+		;
 		const struct ieee80211_vht_operation *vht_oper = elems->vht_operation;
 
 		switch (vht_oper->chan_width) {
@@ -1718,6 +1720,7 @@ parse_vht_operation:
 		}
 	} else if (elems->ht_operation) {
 parse_ht_operation:
+		;
 		const struct ieee80211_ht_operation *ht_oper = elems->ht_operation;
 
 		if (ht_oper->ht_param & IEEE80211_HT_PARAM_CHAN_WIDTH_ANY)

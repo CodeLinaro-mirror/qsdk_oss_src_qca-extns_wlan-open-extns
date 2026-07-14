@@ -5,6 +5,7 @@
 #include "../core.h"
 #include "../debug.h"
 #include "ini.h"
+#include "kprobe.h"
 #include <linux/vmalloc.h>
 
 /* Variable to track the ath12k cfg global initialization */
@@ -1217,6 +1218,9 @@ void ath12k_cfg_global_init(void)
 {
 	char global_file[ATH12K_CFG_FILE_NAME_MAX] = {0};
 	char global_file_i[ATH12K_CFG_FILE_NAME_MAX] = {0};
+#ifdef CONFIG_KPROBES
+	int ret;
+#endif
 
 	ath12k_info(NULL, "Initializing global INI configuration");
 
@@ -1248,6 +1252,12 @@ void ath12k_cfg_global_init(void)
 	/* Mark global initialization as complete */
 	ath12k_cfg_global_init_done = true;
 	ath12k_info(NULL, "Global INI configuration initialized successfully");
+
+#ifdef CONFIG_KPROBES
+	ret = ath12k_kprobe_init();
+	if (ret)
+		ath12k_err(NULL, "Failed to init kprobe, err=%d\n", ret);
+#endif
 }
 EXPORT_SYMBOL(ath12k_cfg_global_init);
 
@@ -1259,6 +1269,10 @@ void ath12k_cfg_global_deinit(void)
 		ath12k_dbg(NULL, ATH12K_DBG_INI, "Global INI configuration not initialized");
 		return;
 	}
+
+#ifdef CONFIG_KPROBES
+	ath12k_kprobe_exit();
+#endif
 	/* Release the global store */
 	ath12k_cfg_store_put(ath12k_cfg_global_store);
 	ath12k_cfg_global_init_done = false;

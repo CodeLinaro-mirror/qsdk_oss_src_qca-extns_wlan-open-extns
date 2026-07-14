@@ -875,10 +875,12 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	station_params->listen_interval = 0;
 
 	if (mode < MESH_PREAMBLE_EHT)
-		station_params->link_sta_params.link_id = -1;
+		station_params->link_sta_params.link_id =
+			ieee80211_vif_is_mld(vif) ?
+			(int)mesh_params->peers[0].link_id : -1;
 	else
 		station_params->link_sta_params.link_id =
-			vif->bss_conf.link_id;
+			link_conf->link_id;
 
 	station_params->link_sta_params.mld_mac =
 		is_zero_ether_addr(mesh_params->peer_mld_mac) ?
@@ -1064,6 +1066,8 @@ int ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy, struct ieee80211_v
 	rcu_read_unlock();
 
 	memset(&params, 0, sizeof(params));
+
+	params.link_sta_params.link_id = -1;
 
 	/* AID and listen_interval properties can be set only for unassociated
 	 * station. They will be checked in cfg80211_check_station_change().
@@ -1334,6 +1338,7 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 		sta_params.support_p2p_ps  = -1;
 		sta_params.sta_flags_mask  = BIT(NL80211_STA_FLAG_MFP);
 		sta_params.sta_flags_set   = BIT(NL80211_STA_FLAG_MFP);
+		sta_params.link_sta_params.link_id = -1;
 		ret = rdev->ops->change_station(wiphy, dev, sta->sta.addr, &sta_params);
 		if (ret)
 			pr_warn_ratelimited("managed_mesh_dbg install_peer_key: MFP flag set failed for %pM (ret=%d)\n",

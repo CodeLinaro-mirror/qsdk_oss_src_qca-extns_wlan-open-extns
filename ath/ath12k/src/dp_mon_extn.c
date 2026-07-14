@@ -6,6 +6,11 @@
 #include "dp_mon_extn.h"
 #include "../dp_mon.h"
 
+#define ATH12K_UNDECODED_METADATA_EVENT	1UL
+
+ATOMIC_NOTIFIER_HEAD(ath12k_undecoded_metadata_chain);
+EXPORT_SYMBOL_GPL(ath12k_undecoded_metadata_chain);
+
 static void ath12k_dp_mon_free_tlv_logger(struct ath12k_dp_mon_tlv_logger **tlv_logger);
 
 static int
@@ -183,3 +188,12 @@ void ath12k_dp_mon_tlv_logger_clear_buf(struct ath12k_pdev_mon_dp *mon_pdev, int
 	       DP_TLV_LOGGER_MAX_TLVS_PER_PPDU * sizeof(struct ath12k_dp_mon_tlv_info));
 }
 EXPORT_SYMBOL(ath12k_dp_mon_tlv_logger_clear_buf);
+
+int ath12k_undecoded_metadata_notif_call_chain(
+		struct ath12k_undecoded_metadata_notif_event *event)
+{
+	return atomic_notifier_call_chain(
+		       &ath12k_undecoded_metadata_chain,
+		       ATH12K_UNDECODED_METADATA_EVENT, event);
+}
+EXPORT_SYMBOL_GPL(ath12k_undecoded_metadata_notif_call_chain);

@@ -1285,7 +1285,8 @@ static u32 ieee80211_calc_beacon_ie_checksum_raw(const struct ieee80211_mgmt *mg
 }
 
 /**
- * ieee80211_mesh_install_peer_key - Install pairwise key and authorize a mesh peer.
+ * ieee80211_mesh_install_peer_key - Install pairwise key (or authorize
+ *	directly for an open BSS) and authorize a mesh peer.
  *
  * Called from ieee80211_update_mesh_peer_caps_work before capability intersection.
  * Retries silently on subsequent beacons if the GTK is not yet available.
@@ -1310,6 +1311,18 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 
 	if (peer->key_installed)
 		return;
+
+	/* Open BSS: no pairwise key to install — authorize directly */
+	if (!peer->peer_ucast_cipher) {
+		ret = ieee80211_vendor_mesh_authorize_peer(wiphy, &sdata->vif, sta->sta.addr);
+		if (ret) {
+			pr_warn_ratelimited("managed_mesh_dbg install_peer_key: authorize failed for %pM (ret=%d)\n",
+					    sta->sta.addr, ret);
+			return;
+		}
+		peer->key_installed = true;
+		return;
+	}
 
 	for (i = 0; i < IEEE80211_MLD_MAX_NUM_LINKS; i++) {
 		struct ieee80211_bss_conf *lc =
@@ -1731,8 +1744,9 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 		cap_changed = true;
 
 	/* Schedule update_cap_wk if capabilities changed, or if RSN check
-	 * passed and auto key-install is needed (skipped when
-	 * parse_beacon_install_key is set — consumer manages key install). */
+	 * passed and the peer still needs key install (secure BSS) or
+	 * authorization (open BSS) — skipped when parse_beacon_install_key
+	 * is set, since the consumer manages both in that mode. */
 	if (cap_changed || (rsn_check_passed &&
 			    !sta->sta.sta_extn.peer_info.parse_beacon_install_key &&
 			    !sta->sta.sta_extn.peer_info.key_installed))
@@ -2206,10 +2220,6 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 			goto exit;
 	}
 
-	/* Capture whether this is the first intersection before calling it,
-	 * since ieee80211_mesh_beacon_intersect sets intersection_done on success. */
-	bool first_intersection = !sta->sta_extn.peer_info.intersection_done;
-
 	ret = ieee80211_mesh_beacon_intersect(sdata, link_conf, sta, elems, mgmt, rx_status->band);
 
 	if (ret == 0) {
@@ -2221,24 +2231,6 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 		/* Update checksum on success — reuses new_checksum computed above,
 		 * no second calculation needed. */
 		sta->sta_extn.peer_info.beacon_ie_checksum = new_checksum;
-
-		/* Authorize the peer directly after first successful intersection
-		 * ONLY for open BSS (peer_ucast_cipher == 0 — set by the "both open"
-		 * path in ieee80211_mesh_rsn_ie_check) in default auto-manage mode.
-		 * For secured BSS, update_cap_wk installs the key first and then
-		 * authorizes — authorizing here before the key is in place would be
-		 * incorrect. On re-intersections the peer is already authorized.
-		 * When parse_beacon_install_key = true, consumer manages auth. */
-		if (first_intersection &&
-		    !sta->sta_extn.peer_info.parse_beacon_install_key &&
-		    sta->sta_extn.peer_info.peer_ucast_cipher == 0) {
-			int auth_ret = ieee80211_vendor_mesh_authorize_peer(
-					sdata->local->hw.wiphy,
-					&sdata->vif, sta->addr);
-			if (auth_ret)
-				pr_warn_ratelimited("managed_mesh_dbg beacon: authorize failed for %pM after intersection (ret=%d)\n",
-						    sta->addr, auth_ret);
-		}
 	}
 
 exit:

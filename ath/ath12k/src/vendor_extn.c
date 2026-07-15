@@ -13090,10 +13090,10 @@ void ath12k_vendor_send_event(struct ath12k_base *ab,
  * Only the 5th octet may vary when ATH12K_MBSSID_MAX_INTERFACES == 16.
  * Preserve the upper nibble and modify the lower nibble for each vif.
  */
-void ath12k_compute_mbssid_mac(u8 mac[ETH_ALEN], u8 vif_id)
+void ath12k_compute_mbssid_mac(struct ath12k_base *ab, u8 mac[ETH_ALEN], u8 vif_id)
 {
 	if (vif_id >= ATH12K_MBSSID_MAX_INTERFACES) {
-		ath12k_err(NULL, "Invalid BSS ID for multiple BSSID group\n");
+		ath12k_err(ab, "Invalid BSS ID for multiple BSSID group\n");
 		return;
 	}
 
@@ -13152,6 +13152,7 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 	struct ieee80211_hw *hw;
 	struct ath12k_hw *ah;
 	struct ath12k *ar = NULL;
+	struct ath12k_base *ab = NULL;
 	struct ath12k_link_vif *arvif;
 	u8 mac_addr[ETH_ALEN], *base_addr;
 	u8 radio_idx, vif_id = 0xff;
@@ -13199,20 +13200,6 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 		return -EINVAL;
 	}
 
-	if (vif_id > (TARGET_NUM_VDEVS - 1)) {
-		ath12k_err(NULL, "Invalid BSS id\n");
-		return -EINVAL;
-	}
-
-	/* Optional MBSSID group parameters from userspace */
-	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED]) {
-		mbssid_enabled = nla_get_flag(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED]);
-		if (vif_id >= ATH12K_MBSSID_MAX_INTERFACES) {
-			ath12k_err(NULL, "Invalid BSS ID for multiple BSSID group\n");
-			return -EINVAL;
-		}
-	}
-
 	/* Get hw/ah to know which byte index to use for VIF ID */
 	hw = wiphy_to_ieee80211_hw(wiphy);
 	ah = hw ? hw->priv : NULL;
@@ -13220,15 +13207,31 @@ int ath12k_vendor_derive_link_bss_addr_extn(struct wiphy *wiphy,
 		return -EINVAL;
 	ar = &ah->radio[radio_idx];
 
+	ab = ar->ab;
+
+	if (vif_id > (TARGET_NUM_VDEVS - 1)) {
+		ath12k_err(ab, "Invalid BSS id\n");
+		return -EINVAL;
+	}
+
+	/* Optional MBSSID group parameters from userspace */
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED]) {
+		mbssid_enabled = nla_get_flag(tb[QCA_WLAN_VENDOR_ATTR_MAC_CONFIG_MBSSID_ENABLED]);
+		if (vif_id >= ATH12K_MBSSID_MAX_INTERFACES) {
+			ath12k_err(ab, "Invalid BSS ID for multiple BSSID group\n");
+			return -EINVAL;
+		}
+	}
+
 	base_addr = wiphy->addresses[radio_idx].addr;
 	if (iftype == NL80211_IFTYPE_AP && mbssid_enabled) {
 		if (!ar->supports_6ghz) {
-			ath12k_err(NULL,
+			ath12k_err(ab,
 				   "Static MAC address with MBSSID enabled is allowed only in 6 GHz\n");
 			return -EINVAL;
 		}
 		ether_addr_copy(mac_addr, base_addr);
-		ath12k_compute_mbssid_mac(mac_addr, vif_id);
+		ath12k_compute_mbssid_mac(ab, mac_addr, vif_id);
 
 		vif_id = ((16 + (mac_addr[5] & 0x0F)) - (base_addr[5] & 0x0F)) % 16;
 	} else {

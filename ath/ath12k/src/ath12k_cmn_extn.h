@@ -450,20 +450,64 @@ struct ath12k_wsi_remap_work {
 };
 
 /**
+ * struct ath12k_wifi6_phyrx_abort_info - PHY abort and SIG field metadata
+ * @phyrx_abort: Set to 1 if PHY aborted the reception of this PPDU
+ * @phyrx_abort_reason: PHY abort reason code (valid when phyrx_abort is set)
+ * L-SIG/L-SIG-A fields:
+ * @l_sig_length: PSDU length in octets
+ * @l_sig_a_parity: Even parity over rate and length fields
+ * @l_sig_a_pkt_type: Packet type (rate field encoding)
+ * @l_sig_a_implicit_sounding: Captured implicit sounding flag
+ * HT-SIG fields:
+ * @ht_length: PSDU length in octets
+ * @smoothing: Smoothing recommended flag
+ * @not_sounding: Not sounding flag
+ * @aggregation: PSDU contains A-MPDU flag
+ * @ht_stbc: Space-time block coding streams
+ * @ht_crc: HT-SIG CRC
+ * VHT-SIG-A fields:
+ * @vht_no_txop_ps: TXOP_PS_NOT_ALLOWED flag
+ * @vht_crc: VHT-SIG-A CRC
+ * HE-SIG-A SU fields:
+ * @he_sig_a_su_crc: HE-SIG-A SU CRC
+ * HE-SIG-A MU-DL fields:
+ * @he_sig_a_mu_dl_crc: HE-SIG-A MU-DL CRC
+ */
+struct ath12k_wifi6_phyrx_abort_info {
+	bool phyrx_abort;
+	u8   phyrx_abort_reason;
+	u32  l_sig_length:12;
+	u32  l_sig_a_parity:1;
+	u32  l_sig_a_pkt_type:4;
+	u32  l_sig_a_implicit_sounding:1;
+	u32  ht_length:16;
+	u32  smoothing:1;
+	u32  not_sounding:1;
+	u32  aggregation:1;
+	u32  ht_stbc:2;
+	u32  ht_crc:8;
+	u32  vht_no_txop_ps:1;
+	u32  vht_crc:8;
+	u32  he_sig_a_su_crc:4;
+	u32  he_sig_a_mu_dl_crc:4;
+};
+
+/**
  * struct hal_mon_ppdu_info_extn - Monitor-mode PPDU extension metadata
  * @rx_state: RX pipeline state at the time this PPDU was reported
  * @rx_antenna: RX antenna bitmap (one bit per RF chain) indicating chains that contributed
  * @rssi: Per-chain RSSI(signed), indexed by RF chain (up to 8 entries)
  * @sw_frame_group_id: Software-defined frame group identifier for this PPDU
  * @frm_type_info: Aggregated 802.11 frame-type counters for the PPDU
+ * @phyrx_abort_info: PHY abort and SIG field metadata; NULL when feature is disabled
  */
-
 struct hal_mon_ppdu_info_extn {
 	u8 rx_state;
 	u32 rx_antenna;
 	s8 rssi[8];
 	u8 sw_frame_group_id;
 	struct hal_rx_frm_type_info frm_type_info;
+	struct ath12k_wifi6_phyrx_abort_info *phyrx_abort_info;
 };
 
 struct ath12k_dp_rx_scan_radio_stats {
@@ -476,10 +520,39 @@ struct ath12k_dp_rx_scan_radio_stats {
 	u32 rx_data_pkts;
 };
 
+/* PHY error reason codes 0-53 are valid; codes 54-63 are reserved */
+#define ATH12K_WIFI6_PHYRX_ERR_MAX 64
+
+/**
+ * struct ath12k_wifi6_undecoded_metadata - Undecoded metadata capture state
+ * @undecoded_metadata_capture: Flag indicating capture is currently armed
+ * @phyrx_error_mask: Lower 32 bits of the PHY RX error mask (errors 0-31)
+ * @phyrx_error_mask_cont: Upper 32 bits of the PHY RX error mask (errors 32-63)
+ * @rx_undecoded_count: Total count of undecoded PPDUs processed
+ * @rx_undecoded_error: Per-error-code count of undecoded PPDUs
+ */
+struct ath12k_wifi6_undecoded_metadata {
+	bool undecoded_metadata_capture;
+	u32  phyrx_error_mask;
+	u32  phyrx_error_mask_cont;
+	u32  rx_undecoded_count;
+	u32  rx_undecoded_error[ATH12K_WIFI6_PHYRX_ERR_MAX];
+};
+
+/**
+ * struct ath12k_pdev_mon_dp_extn - Per-pdev monitor datapath extension
+ * @rx_scan_radio_stats: Scan radio RX statistics
+ * @rx_tlv_log: RX TLV logger instance; NULL if logging is disabled
+ * @tx_tlv_log: TX TLV logger instance; NULL if logging is disabled
+ * @undecoded_meta: Undecoded metadata capture state; NULL when feature is disabled
+ * @phyrx_abort_info: PHY abort and SIG field metadata for the current PPDU; NULL when feature is disabled
+ */
 struct ath12k_pdev_mon_dp_extn {
 	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
 	struct ath12k_dp_mon_tlv_logger *rx_tlv_log;
 	struct ath12k_dp_mon_tlv_logger *tx_tlv_log;
+	struct ath12k_wifi6_undecoded_metadata *undecoded_meta;
+	struct ath12k_wifi6_phyrx_abort_info *phyrx_abort_info;
 };
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);

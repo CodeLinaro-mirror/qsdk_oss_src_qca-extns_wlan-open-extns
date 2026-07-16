@@ -732,6 +732,10 @@ void ath12k_ini_override_runtime_params(struct ath12k_base *ab)
 	ab->mem_params.dp_params.dp_num_clients_max = ath12k_cfg_get(ab, ATH12K_INI_DP_NUM_CLIENTS_MAX);
 	ab->mem_params.dp_params.rxdma_monitor_buf_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_MONITOR_BUF_RING_SIZE);
 	ab->mem_params.dp_params.rxdma_monitor_dst_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_MONITOR_DST_RING_SIZE);
+	ab->mem_params.dp_params.tx_monitor_buf_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_BUF_RING_SIZE);
+	ab->mem_params.dp_params.tx_monitor_dst_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_DST_RING_SIZE);
+	ab->mem_params.dp_params.tx_monitor_num_ppdu_desc = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_NUM_PPDU_DESC);
+	ab->mem_params.dp_params.tx_monitor_num_status_buf = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_NUM_STATUS_BUF);
 	ab->mem_params.dp_params.mon_num_ppdu_desc = ath12k_cfg_get(ab, ATH12K_INI_DP_MON_NUM_PPDU_DESC);
 	ab->mem_params.dp_params.ppeds_hotlist_len_max = ath12k_cfg_get(ab, ATH12K_INI_DP_PPEDS_HOTLIST_LEN_MAX);
 	ab->mem_params.dp_params.num_pool_ppeds_tx_desc = ath12k_cfg_get(ab, ATH12K_INI_DP_NUM_POOL_PPEDS_TX_DESC);

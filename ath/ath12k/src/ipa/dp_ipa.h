@@ -817,6 +817,7 @@ struct ath12k_ipa_config {
  *                         @vdev_to_iface[] to indicate a free/unassigned slot.
  *                         WiFi7: ATH12K_IPA_MAX_SESSION (7).
  *                         WiFi8: ATH12K_INVALID_AHVIF_ID (0).
+ * @session_link_mask:     Session bit mask for MLO links.
  * @curr_prod_bw:          Current producer (RX) bandwidth vote.
  * @curr_cons_bw:          Current consumer (TX) bandwidth vote.
  * @is_db_ddr_mapped:      True when doorbell registers are DDR-mapped.
@@ -879,6 +880,7 @@ struct ath12k_ipa {
 	bool *disable_intrabss_fwd;
 	u16 max_session_id;
 	u16 invalid_session_id;
+	u8 *session_link_mask;
 	u32 curr_prod_bw;
 	u32 curr_cons_bw;
 	bool is_db_ddr_mapped;

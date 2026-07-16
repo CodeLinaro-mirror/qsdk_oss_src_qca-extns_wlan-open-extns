@@ -87,6 +87,18 @@ ath12k_wifi6_hal_mon_parse_vht_sig_a(const void *tlv_data,
 		ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
 	else
 		ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_MU_MIMO;
+
+	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
+		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+			ppdu_info->ppdu_info_extn.phyrx_abort_info;
+
+		abort_info->vht_no_txop_ps =
+			le32_get_bits(*(__le32 *)vht_sig_a_info,
+				      VHT_SIG_A_INFO_0_TXOP_PS_NOT_ALLOWED);
+		abort_info->vht_crc =
+			le32_get_bits(*(__le32 *)(vht_sig_a_info + sizeof(u32)),
+				      VHT_SIG_A_INFO_1_CRC);
+	}
 }
 
 static __always_inline void
@@ -106,6 +118,24 @@ ath12k_wifi6_hal_mon_parse_ht_sig(const void *tlv_data,
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
 	ppdu_info->nss = (ppdu_info->mcs >> 3) + 1;
 	ppdu_info->is_stbc = HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, STBC);
+
+	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
+		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+			ppdu_info->ppdu_info_extn.phyrx_abort_info;
+
+		abort_info->ht_length =
+			HAL_RX_GET(ht_sig_info, HT_SIG_INFO_0, LENGTH);
+		abort_info->smoothing =
+			HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, SMOOTHING);
+		abort_info->not_sounding =
+			HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, NOT_SOUNDING);
+		abort_info->aggregation =
+			HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, AGGREGATION);
+		abort_info->ht_stbc =
+			HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, STBC);
+		abort_info->ht_crc =
+			HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, CRC);
+	}
 }
 
 static __always_inline u8
@@ -246,6 +276,18 @@ ath12k_wifi6_hal_mon_parse_l_sig_a(const void *tlv_data,
 	ppdu_info->rate = rate;
 	ppdu_info->ofdm_flag = 1;
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
+
+	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
+		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+			ppdu_info->ppdu_info_extn.phyrx_abort_info;
+
+		abort_info->l_sig_length =
+			le32_get_bits(*(__le32 *)l_sig_a_info, L_SIG_A_INFO_0_LENGTH);
+		abort_info->l_sig_a_parity =
+			le32_get_bits(*(__le32 *)l_sig_a_info, L_SIG_A_INFO_0_PARITY);
+		abort_info->l_sig_a_pkt_type =
+			le32_get_bits(*(__le32 *)l_sig_a_info, L_SIG_A_INFO_0_RATE_MASK);
+	}
 }
 
 static __always_inline void
@@ -508,6 +550,15 @@ ath12k_wifi6_hal_mon_parse_he_sig_mu(const void *tlv_data,
 	ppdu_info->he_flags2 |= value;
 
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_MU_MIMO;
+
+	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
+		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+			ppdu_info->ppdu_info_extn.phyrx_abort_info;
+
+		abort_info->he_sig_a_mu_dl_crc =
+			le32_get_bits(*(__le32 *)(he_sig_a_mu_dl_info + sizeof(u32)),
+				      HE_SIG_A_MU_DL_INFO_1_CRC);
+	}
 }
 
 static __always_inline void
@@ -662,6 +713,15 @@ ath12k_wifi6_hal_mon_parse_he_sig_su(const void *tlv_data,
 
 	ppdu_info->beamformed = HAL_RX_GET(he_sig_a_su_info, HE_SIG_A_SU_INFO_1, TXBF);
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
+
+	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
+		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+			ppdu_info->ppdu_info_extn.phyrx_abort_info;
+
+		abort_info->he_sig_a_su_crc =
+			le32_get_bits(*(__le32 *)(he_sig_a_su_info + sizeof(u32)),
+				      HE_SIG_A_SU_INFO_1_CRC);
+	}
 }
 
 static __always_inline void
@@ -1036,8 +1096,12 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 		ppdu_info->rx_duration =
 			HAL_RX_GET(tlv_data, RXPCU_PPDU_END_INFO_9,
 				   RX_PPDU_DURATION);
+		ath12k_wifi6_hal_rx_get_phyrx_abort(tlv_data, ppdu_info);
 		break;
 	}
+	case HAL_PHYRX_ABORT_REQUEST:
+		/* PHY abort request info is parsed from RXPCU_PPDU_END_INFO TLV */
+		break;
 	case HAL_RX_MPDU_START:
 		ath12k_wifi6_hal_mon_rx_parse_mpdu_start(tlv_data, userid, ppdu_info);
 		break;

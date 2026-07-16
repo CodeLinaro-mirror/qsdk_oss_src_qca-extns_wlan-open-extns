@@ -4292,6 +4292,9 @@ static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
 	int ret = -1;
 	u32 bitmap[2];
 
+	if (!data)
+		return -EINVAL;
+
 	switch (param) {
 	case SR_SELF_OBSS_PD_TX_ENABLE:
 		ret = ath12k_set_obss_pd_enable_bit(ar, value,
@@ -4795,7 +4798,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		     }
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_ANI_OFDM_LEVEL:
-		 if (value < -128 && value>127) {
+		 if ((s32)value < -128 || (s32)value > 127) {
 		     ath12k_err(NULL, "value should between -128 to 127");
 		     return -EINVAL;
 		 }
@@ -6091,13 +6094,16 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
         struct ath12k_link_vif *arvif = NULL;
         struct ath12k_hw *ah = NULL;
         struct ath12k *ar;
-        u32 *data = (u32 *)params->data;
-        u32 param = params->value;
+        u32 *data;
+        u32 param;
         bool reload = false;
         u32 value;
         int ret = -1;
 
         lockdep_assert_wiphy(wiphy);
+
+	data = (u32 *)params->data;
+	param = params->value;
 
         vif = wdev_to_ieee80211_vif(wdev);
         if (!vif || !data)
@@ -6111,26 +6117,23 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
 
         ah = ahvif->ah;
 
-        rcu_read_lock();
         if (ah && params->link_id == INVALID_LINK_ID) {
                 arvif = &ahvif->deflink;
         } else {
                 if (params->link_id < ATH12K_NUM_MAX_LINKS)
-                        arvif = rcu_dereference(ahvif->link[params->link_id]);
+                        arvif = rcu_dereference_protected(ahvif->link[params->link_id],
+							  lockdep_is_held(&wiphy->mtx));
         }
         if (!arvif || !arvif->ar) {
-                rcu_read_unlock();
                 return -EINVAL;
         }
         ar = arvif->ar;
-        rcu_read_unlock();
 
 	ath12k_dbg(NULL, ATH12K_DBG_CFG,
                    "vif: %p param: %d value: %d if: %d link: %d\n",
                    vif, param, value,
                    params->ifindex, params->link_id);
 
-        /* Call sleepable WMI path outside RCU read-side critical section. */
         ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload);
 
         if (!ret && reload)
@@ -6564,23 +6567,21 @@ int ath12k_vendor_set_nav_override_config_extn(struct wiphy *wiphy,
     }
 
     /* Resolve MLO link */
-    rcu_read_lock();
     if (params->link_id == INVALID_LINK_ID) {
         arvif = &ahvif->deflink;
     } else if (params->link_id < IEEE80211_MLD_MAX_NUM_LINKS) {
-        arvif = rcu_dereference(ahvif->link[params->link_id]);
+        arvif = rcu_dereference_protected(ahvif->link[params->link_id],
+					  lockdep_is_held(&wiphy->mtx));
     }
 
     if (!arvif || !arvif->ar) {
         ath12k_err(NULL,
             "NAV-SET ERROR: arvif/ar NULL for link=%u\n",
             params->link_id);
-        rcu_read_unlock();
         return -EINVAL;
     }
 
     ar = arvif->ar;
-    rcu_read_unlock();
 
     /* Send WMI */
     ret = ath12k_wmi_pdev_set_param(ar,
@@ -6610,6 +6611,7 @@ int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
     struct ath12k_link_vif *arvif = NULL;
     struct sk_buff *skb;
     u32 combined;
+    u32 nav_status, nav_threshold;
 
     if (!wdev) {
         ath12k_err(NULL, "NAV-GET ERROR: wdev NULL\n");
@@ -6634,9 +6636,8 @@ int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
         arvif = &ahvif->deflink;
         ath12k_err(NULL, "Using deflink\n");
     } else if (params->link_id < IEEE80211_MLD_MAX_NUM_LINKS) {
-        rcu_read_lock();
-        arvif = rcu_dereference(ahvif->link[params->link_id]);
-        rcu_read_unlock();
+        arvif = rcu_dereference_protected(ahvif->link[params->link_id],
+					  lockdep_is_held(&wiphy->mtx));
         ath12k_err(NULL, "Using link=%u\n", params->link_id);
     }
 
@@ -6645,8 +6646,9 @@ int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
         return -EINVAL;
     }
 
-    combined = (arvif->nav_status & 0x3) |
-               (arvif->nav_threshold << 2);
+    nav_status = arvif->nav_status;
+    nav_threshold = arvif->nav_threshold;
+    combined = (nav_status & 0x3) | (nav_threshold << 2);
 
     skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
     if (!skb) {
@@ -6665,8 +6667,8 @@ int ath12k_vendor_get_nav_override_config_extn(struct wiphy *wiphy,
 
     /* Tool‑specific attributes (cfg80211tool expects these for ID 74) */
     if (nla_put_u32(skb, 3 , combined) ||             /* dparam0 */
-        nla_put_u32(skb, 1 , arvif->nav_status) ||    /* value0 */
-        nla_put_u32(skb, 2 , arvif->nav_threshold)) { /* value1 */
+        nla_put_u32(skb, 1 , nav_status) ||           /* value0 */
+        nla_put_u32(skb, 2 , nav_threshold)) {        /* value1 */
         kfree_skb(skb);
         ath12k_err(NULL, "tool attr nla_put failed\n");
         return -EINVAL;
@@ -8508,15 +8510,19 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
         struct ieee80211_hw *hw = NULL;
         struct ath12k_hw *ah = NULL;
         struct ath12k *ar = NULL;
-        u32 param = params->value;
+        u32 param;
         u32 value = 0;
-        u8 radio_idx = params->radio_idx;
+        u8 radio_idx;
         int ret = -1;
         bool reload = false;
 
         lockdep_assert_wiphy(wiphy);
 
+	param = params->value;
+	radio_idx = params->radio_idx;
+
         hw = wiphy_to_ieee80211_hw(wiphy);
+
         ah = hw->priv;
 
 	if ((param == QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2 ||
@@ -8621,17 +8627,24 @@ int ath12k_vendor_set_wiphy_sr_params_extn(struct wiphy *wiphy,
 	struct ieee80211_hw *hw = NULL;
 	struct ath12k_hw *ah = NULL;
 	struct ath12k *ar = NULL;
-	u32 param = params->value;
-	void *data = params->data;
-	u32 data_len = params->data_len;
-	u32 value = params->length;
-	u32 flags = params->flags;
+	u32 param;
+	void *data;
+	u32 data_len;
+	u32 value;
+	u32 flags;
 	bool reload = false;
 	int ret;
 
 	lockdep_assert_wiphy(wiphy);
 
+	param = params->value;
+	data = params->data;
+	data_len = params->data_len;
+	value = params->length;
+	flags = params->flags;
+
 	hw = wiphy_to_ieee80211_hw(wiphy);
+
 	ah = hw->priv;
 
 	if (params->radio_idx >= ah->num_radio) {
@@ -9895,6 +9908,9 @@ static int ath12k_vendor_maxrate_eht_formula(enum nl80211_band band,
 					     const struct cfg80211_bitrate_mask *mask,
 					     u64 *value)
 {
+	if (band >= NUM_NL80211_BANDS)
+		return -EINVAL;
+
 	u16 eht_mask = mask->control[band].eht_mcs[0];
 	int mcs = (eht_mask == 0xFFFF) ? 13 : __fls(eht_mask);
 	u32 nbps;
@@ -9945,6 +9961,9 @@ static int ath12k_vendor_maxrate_he_formula(enum nl80211_band band,
 					    const struct cfg80211_bitrate_mask *mask,
 					    u64 *value)
 {
+	if (band >= NUM_NL80211_BANDS)
+		return -EINVAL;
+
 	u16 he_mask = mask->control[band].he_mcs[0];
 	int mcs = (he_mask == 0xFFFF) ? 11 : __fls(he_mask);
 	u32 nbps;

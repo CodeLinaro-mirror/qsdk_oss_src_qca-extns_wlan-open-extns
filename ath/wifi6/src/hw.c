@@ -29,6 +29,7 @@
 #include "hal_qcn9160.h"
 #include "../../cfr.h"
 #include "../../dp_stats.h"
+#include "../../dp_mon.h"
 
 
 static u8 ath12k_wifi6_hw_qcn9074_mac_from_pdev_id(int pdev_idx)
@@ -638,11 +639,144 @@ static const struct ieee80211_ops ath12k_ops_wifi6 = {
 	.get_6ghz_dev_deployment_type	= ath12k_mac_op_get_6ghz_dev_deployment_type,
 };
 
+/*
+ * ath12k_mem_profile_based_param_wifi6 - Per-profile runtime memory parameters
+ * for WiFi6.
+ */
+static const struct ath12k_mem_profile_based_param
+ath12k_mem_profile_based_param_wifi6[] = {
+	[ATH12K_MEM_PROFILE_DEFAULT] = {
+		.num_vdevs			= 16 + 1,
+		.num_bridge_vdevs		= 8,
+		.num_max_vdevs_nlink		= (16 + 1) + 8,
+		.target_mem_mode		= ATH12K_QMI_TARGET_MEM_MODE_DEFAULT,
+		.num_stations_single		= 0,
+		.num_stations_dbs		= 0,
+		.num_stations_dbs_sbs		= 0,
+		.monitor_support		= true,
+		.cfr_support			= true,
+		.spectral_support		= true,
+		.tx_monitor_support		= true,
+		.dp_params = {
+			.rxdma_buf_ring_size		= 8192,
+			.rx_release_ring_size		= 16384,
+			.reo2ppe_ring			= 16384,
+			.ppe2tcl_ring			= 8192,
+			.tqm2ppe_ring_size		= 32768,
+			.tx_comp_ppeds_ring_size	= 32768,
+			.num_pool_tx_desc		= 32768,
+			.ppe_wbm2sw_ring_size		= 32768,
+			.rxdma_monitor_buf_ring_size	= 8192,
+			.rxdma_monitor_dst_ring_size	= 8192,
+			.smart_mon_filter_default	= DP_SMART_MON_PROFILE_1G,
+			.mon_num_ppdu_desc		= 128,
+			.rx_desc_count			= 12288,
+			.dp_max_clients			= 512,
+			.num_pool_ppeds_tx_desc		= 0x8000,
+			.ppeds_hotlist_len_max		= 1024,
+			.dp_num_clients_max		= 64,
+			.dp_mon_status_buf		= 320,
+			.reo_dst_ring_size		= { 8192, 8192, 8192,
+							    8192, 8192 },
+			.tcl_data_ring_size		= { 2048, 2048, 2048,
+							    2048, 2048 },
+			.tx_compl_ring_size		= { 32768, 32768, 32768,
+							    32768, 32768 },
+		},
+	},
+	[ATH12K_MEM_PROFILE_BALANCED] = {
+		.num_vdevs			= 8 + 1,
+		.num_bridge_vdevs		= 0,
+		.num_max_vdevs_nlink		= 0,
+		.target_mem_mode		= ATH12K_QMI_TARGET_MEM_MODE_512M,
+		.num_stations_single		= 128,
+		.num_stations_dbs		= 64,
+		.num_stations_dbs_sbs		= 42,
+		.monitor_support		= true,
+		.cfr_support			= true,
+		.spectral_support		= true,
+		.tx_monitor_support		= false,
+		.dp_params = {
+			.rxdma_buf_ring_size		= 8192,
+			.rx_release_ring_size		= 8192,
+			.reo2ppe_ring			= 2048,
+			.ppe2tcl_ring			= 2048,
+			.tqm2ppe_ring_size		= 8192,
+			.tx_comp_ppeds_ring_size	= 16384,
+			.num_pool_tx_desc		= 16384,
+			.ppe_wbm2sw_ring_size		= 8192,
+			.rxdma_monitor_buf_ring_size	= 256,
+			.rxdma_monitor_dst_ring_size	= 512,
+			.smart_mon_filter_default	= DP_SMART_MON_PROFILE_512M |
+							  (DP_SMART_MON_FILTER_MASK &
+							   ~DP_SMART_MON_VALID),
+			.mon_num_ppdu_desc		= 128,
+			.rx_desc_count			= 8192,
+			.dp_max_clients			= 512,
+			.num_pool_ppeds_tx_desc		= 0x8000,
+			.ppeds_hotlist_len_max		= 1024,
+			.dp_num_clients_max		= 64,
+			.dp_mon_status_buf		= 320,
+			.reo_dst_ring_size		= { 8192, 8192, 8192,
+							    8192, 8192 },
+			.tcl_data_ring_size		= { 2048, 2048, 2048,
+							    2048, 2048 },
+			.tx_compl_ring_size		= { 16384, 16384, 16384,
+							    16384, 16384 },
+		},
+	},
+	[ATH12K_MEM_PROFILE_OPTIMIZED] = {
+		.num_vdevs			= 8 + 1,
+		.num_bridge_vdevs		= 0,
+		.num_max_vdevs_nlink		= 0,
+		.target_mem_mode		= ATH12K_QMI_TARGET_MEM_MODE_256M,
+		.num_stations_single		= 128,
+		.num_stations_dbs		= 64,
+		.num_stations_dbs_sbs		= 42,
+		.monitor_support		= true,
+		.cfr_support			= false,
+		.spectral_support		= false,
+		.tx_monitor_support		= false,
+		.dp_params = {
+			.rxdma_buf_ring_size		= 2048,
+			.rx_release_ring_size		= 4096,
+			.reo2ppe_ring			= 2048,
+			.ppe2tcl_ring			= 2048,
+			.tqm2ppe_ring_size		= 8192,
+			.tx_comp_ppeds_ring_size	= 8192,
+			.num_pool_tx_desc		= 8192,
+			.ppe_wbm2sw_ring_size		= 8192,
+			.rxdma_monitor_buf_ring_size	= 256,
+			.rxdma_monitor_dst_ring_size	= 512,
+			.smart_mon_filter_default	= DP_SMART_MON_PROFILE_256M |
+							  (DP_SMART_MON_FILTER_MASK &
+							   ~DP_SMART_MON_VALID),
+			.mon_num_ppdu_desc		= 8,
+			.rx_desc_count			= 8192,
+			.dp_max_clients			= 512,
+			.num_pool_ppeds_tx_desc		= 0x2000,
+			.ppeds_hotlist_len_max		= 256,
+			.dp_num_clients_max		= 56,
+			.dp_mon_status_buf		= 20,
+			.reo_dst_ring_size		= { 2048, 2048, 2048,
+							    512, 512 },
+			.tcl_data_ring_size		= { 512, 512, 512,
+							    128, 128 },
+			.tx_compl_ring_size		= { 8192, 8192, 8192,
+							    1024, 1024 },
+		},
+	},
+};
+
 int ath12k_wifi6_hw_init(struct ath12k_base *ab)
 {
 	struct ath12k_hw_params *hw_params = NULL;
 	struct ath12k_hw_params *hw_params_msi8 = NULL;
 	int i;
+
+	/* Set per-device mem_params for WiFi6 */
+	ab->mem_params = ath12k_mem_profile_based_param_wifi6[ath12k_active_mem_profile];
+	ath12k_max_clients = ab->mem_params.dp_params.dp_max_clients;
 
 	for (i = 0; i < ARRAY_SIZE(ath12k_wifi6_hw_params); i++) {
 		hw_params = &ath12k_wifi6_hw_params[i];

@@ -331,6 +331,7 @@
 	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
 	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_RADIO_TX_ON_DFS) \
+	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -433,6 +434,20 @@
 #define ATH12K_CFG_RF_SWITCH_CONFIG \
 	ATH12K_CFG_INI_BOOL("rf_switch_config", false, \
 	"RF path: false=primary/full 5G range (default), true=secondary/high 5G range")
+
+/*
+ * ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP - Skip partner chip DUMP collection
+ *
+ * false = Partner chip dump is collected
+ * true = Partner chip dump is not collected
+ *
+ * In case of a cumac HW crash and fallback to mode0 recovery, this flag indicates
+ * if dump is required to be collected for the partner chips. By default, dump
+ * is not collected.
+ */
+#define ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP \
+	ATH12K_CFG_INI_BOOL("skip_partner_chip_dump", true, \
+	"Indicate whether partner chip dump collection is needed for cumac hw crash")
 
 #define ATH12K_CFG_TWT_INTERFERENCE_THRESH_SETUP \
 	ATH12K_CFG_INI_UINT("twt_interference_thresh_setup", \

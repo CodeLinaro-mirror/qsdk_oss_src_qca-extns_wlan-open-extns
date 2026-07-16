@@ -5,6 +5,7 @@
 #include "../../dp_mon.h"
 #include "dp_mon.h"
 #include "../../dp_mon_filter.h"
+#include "../ath12k_cmn_extn.h"
 
 void
 ath12k_wifi6_dp_mon_rx_setup_mon_mode_filter(struct ath12k_dp *dp,
@@ -127,3 +128,67 @@ int ath12k_wifi6_dp_mon_rx_update_ring_filter(struct ath12k_pdev_dp *dp_pdev)
 
 	return 0;
 }
+
+void
+ath12k_wifi6_dp_mon_rx_undecoded_metadata_config_filter(struct ath12k_pdev_dp *dp_pdev)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct dp_mon_rx_filter rx_filter = {0};
+	struct htt_rx_ring_tlv_filter *rx_tlv_filter;
+	enum dp_mon_filter_mode mode = DP_MON_FILTER_MONITOR_MODE;
+	enum dp_mon_filter_srng_type srng_type =
+				DP_MON_FILTER_SRNG_TYPE_RXDMA_MONITOR_STATUS;
+
+	/* Start with the existing monitor mode filter for the status ring */
+	rx_filter = dp_mon_pdev->rx_filter[mode][srng_type];
+	rx_tlv_filter = &rx_filter.rx_tlv_filter;
+
+	/* Setup the filter to subscribe to FP PHY status TLV */
+	rx_tlv_filter->fp_phy_err = 1;
+	rx_tlv_filter->fp_phy_err_buf_src = ATH12K_WIFI6_FP_PHY_ERR_BUF_SRC_SW2RXDMA;
+	rx_tlv_filter->fp_phy_err_buf_dest = ATH12K_WIFI6_FP_PHY_ERR_BUF_DEST_RXDMA2SW;
+	rx_tlv_filter->phy_err_mask = mon_dp_extn->undecoded_meta->phyrx_error_mask;
+	rx_tlv_filter->phy_err_mask_cont = mon_dp_extn->undecoded_meta->phyrx_error_mask_cont;
+	rx_tlv_filter->phy_err_filter_valid = true;
+
+	ath12k_dp_mon_rx_display_filters(dp, mode, &rx_filter);
+	dp_mon_pdev->rx_filter[mode][srng_type] = rx_filter;
+}
+EXPORT_SYMBOL(ath12k_wifi6_dp_mon_rx_undecoded_metadata_config_filter);
+
+void
+ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter(struct ath12k_pdev_dp *dp_pdev)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	struct ath12k_pdev_mon_dp_extn *mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct dp_mon_rx_filter rx_filter = {0};
+	struct htt_rx_ring_tlv_filter *rx_tlv_filter;
+	enum dp_mon_filter_mode mode = DP_MON_FILTER_MONITOR_MODE;
+	enum dp_mon_filter_srng_type srng_type =
+				DP_MON_FILTER_SRNG_TYPE_RXDMA_MONITOR_STATUS;
+
+	/* Get the existing monitor mode filter for the status ring */
+	rx_filter = dp_mon_pdev->rx_filter[mode][srng_type];
+	rx_tlv_filter = &rx_filter.rx_tlv_filter;
+
+	/* Reset the PHY error filter fields */
+	rx_tlv_filter->fp_phy_err = 0;
+	rx_tlv_filter->fp_phy_err_buf_src = ATH12K_WIFI6_FP_PHY_ERR_BUF_SRC_NONE;
+	rx_tlv_filter->fp_phy_err_buf_dest = ATH12K_WIFI6_FP_PHY_ERR_BUF_DEST_RELEASING;
+	rx_tlv_filter->phy_err_mask = 0;
+	rx_tlv_filter->phy_err_mask_cont = 0;
+	rx_tlv_filter->phy_err_filter_valid = true;
+
+	/* Reset the error masks in the extension struct */
+	if (mon_dp_extn->undecoded_meta) {
+		mon_dp_extn->undecoded_meta->phyrx_error_mask = 0;
+		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont = 0;
+	}
+
+	ath12k_dp_mon_rx_display_filters(dp, mode, &rx_filter);
+	dp_mon_pdev->rx_filter[mode][srng_type] = rx_filter;
+}
+EXPORT_SYMBOL(ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter);

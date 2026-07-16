@@ -503,6 +503,137 @@ ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(struct ath12k_ipa *ipa_ctx)
 	return 0;
 }
 
+/**
+ * ath12k_wifi8_dp_ipa_w2i() - IPA exception flow handler (WLAN to IPA)
+ * @priv: private context (ath12k_wlan_ipa_priv)
+ * @evt: IPA event type
+ * @data: event data (typically sk_buff pointer)
+ *
+ * Valid data packets are submitted to mac80211
+ * for processing.
+ *
+ * Context: Can be called from process context
+ * Return: None
+ */
+static void ath12k_wifi8_dp_ipa_w2i(void *priv,
+				    enum ipa_dp_evt_type evt,
+				    unsigned long data)
+{
+	struct sk_buff *skb = (struct sk_buff *)data;
+	struct ath12k_ipa *ipa_ctx;
+	struct ethhdr *eth;
+	struct ath12k_base *cumac_ab;
+	struct ath12k_dp *cumac_dp;
+	struct ath12k_pdev_dp *cumac_dp_pdev, *dp_pdev;
+	struct ath12k *cumac_ar, *ar;
+	struct ieee80211_hw *hw;
+	struct ath12k_dp_peer *dp_peer;
+	struct ath12k_dp_link_peer *dp_link_peer;
+	struct ieee80211_rx_status *status;
+	struct ath12k_link_vif *cumac_arvif;
+	int i;
+	u16 peer_id;
+	u8 vdev_id, hw_link_id;
+
+	if (!skb) {
+		ath12k_ipa_err(NULL, "skb is NULL");
+		return;
+	}
+
+	if (evt != IPA_RECEIVE) {
+		ath12k_ipa_err(NULL, "ipa gave wrong event: 0x%X", evt);
+		goto drop;
+	}
+
+	ipa_ctx = (struct ath12k_ipa *)priv;
+	if (!ipa_ctx) {
+		ath12k_ipa_err(NULL, "ipa_ctx is NULL, dropping pkt");
+		if (evt == IPA_RECEIVE)
+			dev_kfree_skb_any(skb);
+		return;
+	}
+	ipa_ctx->stats.rx_excep++;
+
+	cumac_ab = ipa_ctx->ab;
+	cumac_dp = ath12k_ab_to_dp(cumac_ab);
+
+	eth = skb_eth_hdr(skb);
+	peer_id = ath12k_ipa_cb_get_ta_peer_id(skb->cb);
+	vdev_id = ath12k_ipa_cb_get_vap_id(skb->cb);
+
+	rcu_read_lock();
+
+	cumac_arvif = ath12k_mac_get_arvif_by_vdev_id(cumac_ab, vdev_id);
+	if (!cumac_arvif) {
+		ath12k_ipa_err(cumac_ab, "cumac_arvif is NULL");
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	cumac_ar = cumac_arvif->ar;
+	if (!cumac_ar) {
+		ath12k_ipa_err(cumac_ab, "cumac_ar is NULL");
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	cumac_dp_pdev = ath12k_dp_to_dp_pdev(cumac_dp, cumac_ar->pdev_idx);
+	dp_peer = ath12k_dp_peer_find_by_peerid_index(cumac_dp, cumac_dp_pdev, peer_id);
+	if (!dp_peer) {
+		ath12k_ipa_err(cumac_ab, "dp_peer is null (peer_id=%d mac=%pM)", peer_id,
+			   eth->h_source);
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	for (i = 0; i < ATH12K_DP_PEER_MAX_MLO_LINKS; i++) {
+		dp_link_peer = rcu_dereference(dp_peer->link_peers[i]);
+		if (dp_link_peer) {
+			hw_link_id = (u8)i;
+			break;
+		}
+	}
+
+	if (!dp_peer->is_authorized) {
+		ath12k_ipa_err(cumac_ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
+			   peer_id, eth->h_source, eth->h_dest,
+			   cpu_to_be16(eth->h_proto), dp_peer->addr);
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	dp_pdev = ath12k_dp_hw_grp_to_dp_pdev(cumac_dp->dp_hw_grp, hw_link_id);
+	if (!dp_pdev) {
+		ath12k_ipa_err(cumac_ab, "IPA_W2I: dp_pdev NULL for hw_link_id=%u", hw_link_id);
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	hw = dp_pdev->hw;
+	ar = dp_pdev->ar;
+	skb->protocol = eth->h_proto;
+
+	/* reset skb cb and fill with ieee80211_rx_status */
+	memset(skb->cb, 0, sizeof(skb->cb));
+	status = IEEE80211_SKB_RXCB(skb);
+
+	status->flag |= RX_FLAG_8023;
+	status->band = ar->rx_channel->band;
+
+	status->link_id = dp_peer->hw_links[dp_pdev->hw_link_id];
+	status->link_valid = true;
+
+	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
+	ipa_ctx->stats.sent_to_mac++;
+
+	rcu_read_unlock();
+	return;
+drop:
+	ipa_ctx->stats.rx_drop_excep++;
+	dev_kfree_skb_any(skb);
+	return;
+}
+
 static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.dp_srng_cleanup = ath12k_wifi8_dp_ipa_srng_cleanup,
 	.dp_srng_setup = ath12k_wifi8_dp_ipa_srng_setup,
@@ -529,6 +660,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_get_session_id = ath12k_wifi8_ipa_get_session_id,
 	.ipa_initialize_default = NULL,
 	.ipa_uc_offload_enable = NULL,
+	.dp_ipa_w2i = ath12k_wifi8_dp_ipa_w2i,
 };
 
 int

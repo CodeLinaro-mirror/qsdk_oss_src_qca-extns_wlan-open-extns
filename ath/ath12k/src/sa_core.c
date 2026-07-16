@@ -1597,6 +1597,9 @@ int sa_core_init(struct ath12k *ar,
 	} else {
 		sa_core_wmi_set_rx_antenna(ab, ar->wmi, ar->pdev->pdev_id,
 					   rx_antenna);
+		ath12k_wmi_pdev_set_param(ar,
+			WMI_PDEV_PARAM_SMART_ANTENNA_DEFAULT_ANTENNA,
+			tx_defaultant, ar->pdev->pdev_id);
 	}
 
 	for (i = 0; i < WMI_SMART_ANT_MAX_RATE_SERIES; i++)

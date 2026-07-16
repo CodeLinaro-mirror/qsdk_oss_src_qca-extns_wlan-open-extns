@@ -14398,18 +14398,13 @@ const char *ath12k_phymode_str(enum wmi_phy_mode mode)
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 /**
- * ath12k_vendor_mesh_peer_dump - Dump mesh peer information
+ * ath12k_vendor_mesh_peer_dump - Send mesh peer info as a binary vendor reply.
  *
  * @wiphy: wiphy pointer
  * @vif: virtual interface pointer
- * @peer_mld_mac: MAC address of specific peer to dump, or NULL for all peers
+ * @peer_mld_mac: specific peer MAC to dump, or NULL for all peers
  *
- * Prints the MAC address, AID, and all mesh_peer_info fields for a specific
- * mesh peer (when peer_mld_mac is non-NULL) or for every mesh peer on the
- * interface (when peer_mld_mac is NULL).
- *
- * Return: 0 on success, -ENOENT if the specified peer was not found,
- *         or a negative error code on other failures.
+ * Return: 0 on success, -ENOENT if peer not found, or negative error code.
  */
 static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 					struct ieee80211_vif *vif,
@@ -14417,11 +14412,18 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 {
 	struct ieee80211_sub_if_data *sdata;
 	struct sta_info *sta;
-	struct mesh_peer_info *peer_info;
 	bool found = false;
+	int num_peers = 0, idx = 0;
+	int ret = 0;
+	unsigned long now;
+	size_t payload_size;
+	struct ieee80211_mesh_peer_dump_entry *entries = NULL;
+	struct sk_buff *skb;
 
-	if (!vif)
+	if (!vif) {
+		ath12k_err(NULL, "mesh_peer_dump: vif is NULL\n");
 		return -EINVAL;
+	}
 
 	sdata = vif_to_sdata(vif);
 
@@ -14432,64 +14434,103 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 
 	lockdep_assert_wiphy(wiphy);
 
+	/* Pass 1: count matching peers under rcu_read_lock. */
+	rcu_read_lock();
 	list_for_each_entry_rcu(sta, &sdata->local->sta_list, list) {
 		if (sta->sdata != sdata)
 			continue;
-
 		if (!sta->sta.sta_extn.peer_info.is_mesh_peer)
 			continue;
+		if (peer_mld_mac && !ether_addr_equal(sta->sta.addr, peer_mld_mac))
+			continue;
+		num_peers++;
+		if (peer_mld_mac)
+			break;
+	}
+	rcu_read_unlock();
 
-		/* If a specific MAC is provided, skip non-matching peers */
+	payload_size = (size_t)num_peers * sizeof(*entries);
+	if (payload_size) {
+		entries = kvmalloc(payload_size, GFP_KERNEL);
+		if (!entries) {
+			ath12k_err(NULL, "mesh_peer_dump: failed to alloc %zu bytes\n",
+				   payload_size);
+			return -ENOMEM;
+		}
+	}
+
+	/* Pass 2: snapshot jiffies once, then fill the entry array. */
+	now = jiffies;
+	rcu_read_lock();
+	list_for_each_entry_rcu(sta, &sdata->local->sta_list, list) {
+		struct mesh_peer_info *peer_info;
+		struct ieee80211_mesh_peer_dump_entry *peer_entry;
+
+		if (sta->sdata != sdata)
+			continue;
+		if (!sta->sta.sta_extn.peer_info.is_mesh_peer)
+			continue;
 		if (peer_mld_mac && !ether_addr_equal(sta->sta.addr, peer_mld_mac))
 			continue;
 
-		peer_info = &sta->sta.sta_extn.peer_info;
+		peer_info  = &sta->sta.sta_extn.peer_info;
+		peer_entry = &entries[idx++];
 		found = true;
 
-		pr_info("\t----------------------------------------------------------\n");
-		pr_info("\tMesh Peer MAC : %pM\n", sta->sta.addr);
-		pr_info("\tAID           : %u\n", sta->sta.aid);
-		pr_info("\t  -- Peer Info --\n");
-		pr_info("\t  is_mesh_peer   : %s\n",
-		       peer_info->is_mesh_peer ? "true" : "false");
-		pr_info("\t  phymode        : %s\n",
-		       ath12k_phymode_str(peer_info->mesh_peer_phymode));
-		pr_info("\t  nss            : %u\n",
-		       peer_info->mesh_peer_nss);
-		pr_info("\t  -- Beacon Tracking --\n");
-		pr_info("\t  miss_count     : %u\n",
-		       peer_info->beacon_miss_count);
-		{
-			unsigned long now = jiffies;
-			unsigned long delta_ms = peer_info->last_beacon_time ?
-						 jiffies_to_msecs(now - peer_info->last_beacon_time) : 0;
-			pr_info("\t  current_time   : %lu jiffies\n", now);
-			pr_info("\t  last_beacon    : %lu jiffies\n",
-			       peer_info->last_beacon_time);
-			pr_info("\t  beacon_age     : %lu sec\n", delta_ms / 1000);
-		}
-		pr_info("\t  -- Beacon Intersection --\n");
-		pr_info("\t  done           : %s\n",
-		       peer_info->intersection_done ? "true" : "false");
-		pr_info("\t  attempts       : %u\n",
-		       peer_info->intersect_attempts);
-		pr_info("\t  successes      : %u\n",
-		       peer_info->intersect_successes);
-		pr_info("\t  failures       : %u\n",
-		       peer_info->intersect_failures);
-		pr_info("\t----------------------------------------------------------\n");
+		ether_addr_copy(peer_entry->mac, sta->sta.addr);
+		peer_entry->aid                 = sta->sta.aid;
+		peer_entry->is_mesh_peer        = (u8)peer_info->is_mesh_peer;
+		peer_entry->phymode             = (u32)peer_info->mesh_peer_phymode;
+		peer_entry->nss                 = peer_info->mesh_peer_nss;
+		peer_entry->beacon_miss_count   = peer_info->beacon_miss_count;
+		peer_entry->last_beacon_jiffies = (u64)peer_info->last_beacon_time;
+		peer_entry->current_jiffies     = (u64)now;
+		peer_entry->beacon_age_sec      = peer_info->last_beacon_time ?
+						 (u64)((now - peer_info->last_beacon_time) / HZ)
+						 : 0;
+		peer_entry->intersection_done   = (u8)peer_info->intersection_done;
+		peer_entry->intersect_attempts  = peer_info->intersect_attempts;
+		peer_entry->intersect_successes = peer_info->intersect_successes;
+		peer_entry->intersect_failures  = peer_info->intersect_failures;
 
 		if (peer_mld_mac)
 			break;
 	}
+	rcu_read_unlock();
 
 	if (peer_mld_mac && !found) {
 		ath12k_err(NULL, "mesh_peer_dump: peer %pM not found\n",
 			   peer_mld_mac);
+		kvfree(entries);
 		return -ENOENT;
 	}
 
-	return 0;
+	/* Pack entry array; skip PARAM_DATA when num_peers is zero. */
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy,
+						   (payload_size ?
+						    nla_total_size(payload_size) : 0) +
+						   nla_total_size(sizeof(u32)));
+	if (!skb) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	if ((payload_size &&
+	     nla_put(skb, QCA_WLAN_VENDOR_ATTR_PARAM_DATA,
+		     payload_size, entries))                            ||
+	    nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_PARAM_LENGTH, num_peers)) {
+		kfree_skb(skb);
+		ret = -ENOBUFS;
+		goto err;
+	}
+
+	kvfree(entries);
+	return cfg80211_vendor_cmd_reply(skb);
+
+err:
+	ath12k_err(NULL, "mesh_peer_dump: failed to build reply skb, err: %d\n", ret);
+	kvfree(entries);
+	return ret;
 }
 
 int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,

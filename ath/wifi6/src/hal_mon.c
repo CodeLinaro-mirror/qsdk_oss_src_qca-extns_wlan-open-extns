@@ -446,7 +446,7 @@ ath12k_wifi6_hal_mon_parse_he_sig_mu(const void *tlv_data,
 
 	ppdu_info->sgi = he_gi;
 	ppdu_info->ltf_size = he_ltf;
-	hal_get_radiotap_he_gi_ltf(&he_gi, &he_ltf);
+	hal_get_radiotap_gi_ltf(&he_gi, &he_ltf);
 	value = he_gi << HE_GI_SHIFT;
 	ppdu_info->he_data5 |= value;
 
@@ -621,7 +621,7 @@ ath12k_wifi6_hal_mon_parse_he_sig_su(const void *tlv_data,
 		break;
 	}
 	ppdu_info->sgi = he_gi;
-	hal_get_radiotap_he_gi_ltf(&he_gi, &he_ltf);
+	hal_get_radiotap_gi_ltf(&he_gi, &he_ltf);
 	value = he_gi << HE_GI_SHIFT;
 	ppdu_info->he_data5 |= value;
 	value = he_ltf << HE_LTF_SIZE_SHIFT;

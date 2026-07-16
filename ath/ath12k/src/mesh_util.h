@@ -39,6 +39,27 @@ enum ath12k_extn_mesh_conf_cmd_type {
 	ATH12K_EXTN_MESH_CONF_PEER_DUMP = 6,
 };
 
+/* Per-peer binary payload for the mesh peer_dump vendor reply. */
+struct ieee80211_mesh_peer_dump_entry {
+	u8   mac[ETH_ALEN];
+	u16  aid;
+	u8   is_mesh_peer;
+	u32  phymode;               /* enum wmi_phy_mode value */
+	u32  nss;
+	u8   beacon_miss_count;
+	u64  last_beacon_jiffies;
+	u64  current_jiffies;
+	u64  beacon_age_sec;
+	u8   intersection_done;
+	u32  intersect_attempts;
+	u32  intersect_successes;
+	u32  intersect_failures;
+} __packed;
+
+/* ABI size guard: keep in sync with the userspace definition. */
+static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 55,
+	      "ieee80211_mesh_peer_dump_entry size mismatch");
+
 #define MESH_BYTE_MASK 0xFF
 #define MESH_NIBBLE_MASK 0xF
 #define MESH_DBG_MCS_OFFSET 0

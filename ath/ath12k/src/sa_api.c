@@ -154,7 +154,7 @@ int ath12k_unregister_smart_ant_ops(void)
 }
 EXPORT_SYMBOL(ath12k_unregister_smart_ant_ops);
 
-int ath12k_smart_ant_api_channel_change(struct ath12k *ar)
+int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool reconnect)
 {
 	struct ath12k_link_vif *arvif, *sa_arvif = NULL;
 	int ret;
@@ -203,7 +203,8 @@ int ath12k_smart_ant_api_channel_change(struct ath12k *ar)
 		return ret;
 	}
 
-	sa_core_notify_all_peers_connected(ar);
+	if (reconnect)
+		sa_core_notify_all_peers_connected(ar);
 
 	return 0;
 }

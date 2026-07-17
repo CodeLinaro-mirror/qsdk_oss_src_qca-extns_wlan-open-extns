@@ -178,8 +178,8 @@ u32 ath12k_wifi6_dp_get_rx_mon_refill_ring_size(struct ath12k_base *ab)
 
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp);
 void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp);
-int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp);
-void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp);
+int ath12k_wifi6_dp_mon_rx_ring_init(struct ath12k_dp *dp);
+void ath12k_wifi6_dp_mon_rx_ring_deinit(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 mac_id);
 void ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup(struct ath12k_pdev_dp *dp_pdev);

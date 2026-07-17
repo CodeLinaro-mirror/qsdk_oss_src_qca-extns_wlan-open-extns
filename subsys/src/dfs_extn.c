@@ -91,9 +91,21 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 			sdata->wdev.links[link_id].cac_time_ms =
 				first_wdev->links[first_link_id].cac_time_ms;
 		} else {
+			/* No peer AP/mesh link found yet on this chanctx.
+			 * Derive the CAC timing from the already-running hrtimer
+			 * so that cac_start_time + cac_time_ms aligns with when
+			 * the timer will fire.  Using IEEE80211_DFS_MIN_CAC_TIME_MS
+			 * here would cause cfg80211_cac_event() to WARN_ON because
+			 * jiffies won't have advanced 60 s when the short residual
+			 * timer expires.
+			 */
+			ktime_t remaining =
+				hrtimer_get_remaining(&chanctx->dfs_cac_timer);
+			unsigned int remaining_ms = (unsigned int)
+				max_t(s64, 0LL, ktime_to_ms(remaining));
+
 			sdata->wdev.links[link_id].cac_start_time = jiffies;
-			sdata->wdev.links[link_id].cac_time_ms =
-				IEEE80211_DFS_MIN_CAC_TIME_MS;
+			sdata->wdev.links[link_id].cac_time_ms = remaining_ms;
 		}
 	}
 }

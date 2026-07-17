@@ -59,9 +59,6 @@ bool ath12k_wifi8_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 					   qos_nw_delay, vlan_ahvif, NULL);
 		return true;
 	} else if (skb->fast_xmit) {
-		ath12k_err(NULL,
-			   "drop fast_xmit skb: missing MLO assist tag (mark 0x%x)\n",
-			   skb->mark);
 		ath12k_mac_ieee80211_free_txskb(ahvif->ah->hw, skb, NULL, NULL, dp_vif,
 						DP_TX_ENQ_DROP_INV_ENCAP_FAST,
 						0, false);

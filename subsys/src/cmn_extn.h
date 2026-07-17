@@ -418,6 +418,15 @@ ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 	return;
 }
 
+static inline bool
+ieee80211_qcn_5g_320mhz_csa_extn(struct ieee80211_sub_if_data *sdata,
+				      const struct ieee802_11_elems *elems,
+				      bool support_320,
+				      struct cfg80211_chan_def *chandef)
+{
+	return false;
+}
+
 static inline void
 ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 				  struct wireless_dev *wdev,
@@ -495,6 +504,11 @@ ieee80211_update_eht_cap_from_240mhz_nl(struct ieee80211_sub_if_data *sdata,
 
 void ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 					  struct ieee80211_conn_settings *conn);
+
+bool ieee80211_qcn_5g_320mhz_csa_extn(struct ieee80211_sub_if_data *sdata,
+				      const struct ieee802_11_elems *elems,
+				      bool support_320,
+				      struct cfg80211_chan_def *chandef);
 
 void ieee80211_scan_radio_do_open_extn(struct ieee80211_sub_if_data *sdata,
 				       struct wireless_dev *wdev,
@@ -724,6 +738,23 @@ struct ieee80211_ext_mon_rx_event_extn {
 	struct ieee80211_hw *hw;
 };
 
+/**
+ * struct ieee80211_ext_mon_tx_event_extn - Extended monitor TX notifier event
+ * @mpdu: Raw MPDU SKB (no radiotap; tx dev in mpdu->dev). Freed by the driver
+ *        after the chain returns; listeners must skb_clone() to retain it.
+ * @hw: ieee80211_hw the frame was transmitted on. Valid only during the
+ *      callback; do not store it.
+ * @sdata: ieee80211_sub_if_data backing the transmitting interface. Used to
+ *       check IEEE80211_SDATA_EXT_TX_MONITOR_ENABLED and to source the event
+ *       type from extn_tx_mon_evt_typ. Same lifetime constraints as @hw.
+ *
+ * Dispatched from txmon workqueue (process) context; callbacks may sleep.
+ */
+struct ieee80211_ext_mon_tx_event_extn {
+	struct sk_buff *mpdu;
+	struct ieee80211_hw *hw;
+	struct ieee80211_sub_if_data *sdata;
+};
 #ifndef CPTCFG_QCN_EXTN
 static inline int
 ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb)
@@ -749,6 +780,42 @@ ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn t
 {
 	return -1;
 }
+static inline int
+ieee80211_register_ext_mon_tx_notifier_extn(struct notifier_block *nb)
+{
+	return -1;
+}
+static inline int
+ieee80211_unregister_ext_mon_tx_notifier_extn(struct notifier_block *nb)
+{
+	return -1;
+}
+static inline bool
+ieee80211_ext_mon_tx_notifier_has_listeners_extn(void)
+{
+	return false;
+}
+static inline int
+ieee80211_ext_mon_tx_notify(struct ieee80211_hw *hw,
+			    struct ieee80211_sub_if_data *sdata,
+			    struct sk_buff *mpdu)
+{
+	return NOTIFY_BAD;
+}
+static inline int
+ieee80211_ext_mon_tx_notifier_call_extn_nc(enum ieee80211_ext_mon_event_type_extn type,
+					   struct ieee80211_ext_mon_tx_event_extn *event)
+{
+	return NOTIFY_BAD;
+}
+static inline void ieee80211_set_ext_tx_monitor(struct ieee80211_vif *vif, bool enable)
+{
+}
+static inline void
+ieee80211_set_ext_tx_mon_evt_typ(struct ieee80211_vif *vif,
+				 enum ieee80211_ext_mon_event_type_extn type)
+{
+}
 #else
 int ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb);
 int ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb);
@@ -756,6 +823,19 @@ bool ieee80211_ext_mon_rx_notifier_has_listeners_extn(void);
 int
 ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn type,
 					struct ieee80211_ext_mon_rx_event_extn *event);
+int ieee80211_register_ext_mon_tx_notifier_extn(struct notifier_block *nb);
+int ieee80211_unregister_ext_mon_tx_notifier_extn(struct notifier_block *nb);
+bool ieee80211_ext_mon_tx_notifier_has_listeners_extn(void);
+int
+ieee80211_ext_mon_tx_notify(struct ieee80211_hw *hw,
+			    struct ieee80211_sub_if_data *sdata,
+			    struct sk_buff *mpdu);
+int
+ieee80211_ext_mon_tx_notifier_call_extn_nc(enum ieee80211_ext_mon_event_type_extn type,
+					   struct ieee80211_ext_mon_tx_event_extn *event);
+void ieee80211_set_ext_tx_monitor(struct ieee80211_vif *vif, bool enable);
+void ieee80211_set_ext_tx_mon_evt_typ(struct ieee80211_vif *vif,
+				      enum ieee80211_ext_mon_event_type_extn type);
 #endif /* CPTCFG_QCN_EXTN */
 
 #endif /* CMN_EXTN_H */

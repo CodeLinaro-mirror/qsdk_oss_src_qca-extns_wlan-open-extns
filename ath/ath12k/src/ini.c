@@ -5,6 +5,7 @@
 #include "../core.h"
 #include "../debug.h"
 #include "ini.h"
+#include "kprobe.h"
 #include <linux/vmalloc.h>
 
 /* Variable to track the ath12k cfg global initialization */
@@ -699,6 +700,44 @@ ath12k_cfg_section_parse_to_store(struct ath12k_base *ab,
 						     ath12k_cfg_get_ctx(ab)->store);
 }
 
+void ath12k_ini_override_runtime_params(struct ath12k_base *ab)
+{
+	if (!ab || !ab->cfg_ctx || !ab->cfg_ctx->store)
+		return;
+
+	ab->mem_params.tx_monitor_support = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR);
+	ab->mem_params.dp_params.rxdma_buf_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_BUF_RING);
+	ab->mem_params.dp_params.ppe2tcl_ring = ath12k_cfg_get(ab, ATH12K_INI_DP_PPE2TCL_RING_SIZE);
+	ab->mem_params.dp_params.reo2ppe_ring = ath12k_cfg_get(ab, ATH12K_INI_DP_REO2PPE_RING_SIZE);
+	ab->mem_params.dp_params.rx_release_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RX_RELEASE_RING_SIZE);
+	ab->mem_params.dp_params.reo_dst_ring_size[0] = ath12k_cfg_get(ab, ATH12K_INI_DP_REO_DST_RING0_SIZE);
+	ab->mem_params.dp_params.reo_dst_ring_size[1] = ath12k_cfg_get(ab, ATH12K_INI_DP_REO_DST_RING1_SIZE);
+	ab->mem_params.dp_params.reo_dst_ring_size[2] = ath12k_cfg_get(ab, ATH12K_INI_DP_REO_DST_RING2_SIZE);
+	ab->mem_params.dp_params.reo_dst_ring_size[3] = ath12k_cfg_get(ab, ATH12K_INI_DP_REO_DST_RING3_SIZE);
+	ab->mem_params.dp_params.reo_dst_ring_size[4] = ath12k_cfg_get(ab, ATH12K_INI_DP_REO_DST_RING4_SIZE);
+	ab->mem_params.dp_params.tcl_data_ring_size[0] = ath12k_cfg_get(ab, ATH12K_INI_DP_TCL_DATA_RING0_SIZE);
+	ab->mem_params.dp_params.tcl_data_ring_size[1] = ath12k_cfg_get(ab, ATH12K_INI_DP_TCL_DATA_RING1_SIZE);
+	ab->mem_params.dp_params.tcl_data_ring_size[2] = ath12k_cfg_get(ab, ATH12K_INI_DP_TCL_DATA_RING2_SIZE);
+	ab->mem_params.dp_params.tcl_data_ring_size[3] = ath12k_cfg_get(ab, ATH12K_INI_DP_TCL_DATA_RING3_SIZE);
+	ab->mem_params.dp_params.tcl_data_ring_size[4] = ath12k_cfg_get(ab, ATH12K_INI_DP_TCL_DATA_RING4_SIZE);
+	ab->mem_params.dp_params.tx_comp_ppeds_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMP_PPEDS_RING_SIZE);
+	ab->mem_params.dp_params.tx_compl_ring_size[0] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_0);
+	ab->mem_params.dp_params.tx_compl_ring_size[1] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_1);
+	ab->mem_params.dp_params.tx_compl_ring_size[2] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_2);
+	ab->mem_params.dp_params.tx_compl_ring_size[3] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_3);
+	ab->mem_params.dp_params.tx_compl_ring_size[4] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_4);
+	ab->mem_params.dp_params.ppe_wbm2sw_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_PPE_WBM2SW_RING_SIZE);
+	ab->mem_params.dp_params.tqm2ppe_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TQM2PPE_RING_SIZE);
+	ab->mem_params.dp_params.rx_desc_count = ath12k_cfg_get(ab, ATH12K_INI_DP_RX_DESC_COUNT);
+	ab->mem_params.dp_params.dp_num_clients_max = ath12k_cfg_get(ab, ATH12K_INI_DP_NUM_CLIENTS_MAX);
+	ab->mem_params.dp_params.rxdma_monitor_buf_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_MONITOR_BUF_RING_SIZE);
+	ab->mem_params.dp_params.rxdma_monitor_dst_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_MONITOR_DST_RING_SIZE);
+	ab->mem_params.dp_params.mon_num_ppdu_desc = ath12k_cfg_get(ab, ATH12K_INI_DP_MON_NUM_PPDU_DESC);
+	ab->mem_params.dp_params.ppeds_hotlist_len_max = ath12k_cfg_get(ab, ATH12K_INI_DP_PPEDS_HOTLIST_LEN_MAX);
+	ab->mem_params.dp_params.num_pool_ppeds_tx_desc = ath12k_cfg_get(ab, ATH12K_INI_DP_NUM_POOL_PPEDS_TX_DESC);
+}
+EXPORT_SYMBOL(ath12k_ini_override_runtime_params);
+
 /**
  * ath12k_cfg_on_create - Create the cfg store context
  * @ab: reference to ath12_base
@@ -1217,6 +1256,9 @@ void ath12k_cfg_global_init(void)
 {
 	char global_file[ATH12K_CFG_FILE_NAME_MAX] = {0};
 	char global_file_i[ATH12K_CFG_FILE_NAME_MAX] = {0};
+#ifdef CONFIG_KPROBES
+	int ret;
+#endif
 
 	ath12k_info(NULL, "Initializing global INI configuration");
 
@@ -1248,6 +1290,12 @@ void ath12k_cfg_global_init(void)
 	/* Mark global initialization as complete */
 	ath12k_cfg_global_init_done = true;
 	ath12k_info(NULL, "Global INI configuration initialized successfully");
+
+#ifdef CONFIG_KPROBES
+	ret = ath12k_kprobe_init();
+	if (ret)
+		ath12k_err(NULL, "Failed to init kprobe, err=%d\n", ret);
+#endif
 }
 EXPORT_SYMBOL(ath12k_cfg_global_init);
 
@@ -1259,6 +1307,10 @@ void ath12k_cfg_global_deinit(void)
 		ath12k_dbg(NULL, ATH12K_DBG_INI, "Global INI configuration not initialized");
 		return;
 	}
+
+#ifdef CONFIG_KPROBES
+	ath12k_kprobe_exit();
+#endif
 	/* Release the global store */
 	ath12k_cfg_store_put(ath12k_cfg_global_store);
 	ath12k_cfg_global_init_done = false;
@@ -1288,6 +1340,7 @@ int ath12k_cfg_init(struct ath12k_base *ab)
 	 /* Check if this radio is already initialized */
 	if (ab->cfg_ctx && ab->cfg_ctx->initialized) {
 		ath12k_dbg(ab, ATH12K_DBG_BOOT, "INI Configuration already initialized for this radio\n");
+		ath12k_ini_override_runtime_params(ab);
 		return 0;
 	}
 
@@ -1313,6 +1366,9 @@ int ath12k_cfg_init(struct ath12k_base *ab)
 
 		ath12k_cfg_parse_section_store(ab, ini_buf);
 	}
+
+	ath12k_ini_override_runtime_params(ab);
+
 	/* Mark this radio's configuration as initialized */
 	ab->cfg_ctx->initialized = true;
 	ath12k_info(ab, "Successfully initialized INI info \n");

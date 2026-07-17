@@ -11,6 +11,7 @@
 #define WLAN_OUI_QCN_HEADER_LEN                4 /* WLAN_OUI_QCN + type */
 #define WLAN_OUI_QCN_ATTR_VER                  1
 #define WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP     0x0B
+#define WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA      0x0C
 
 #define IEEE80211_EHT_240MHZ_PHY_SOUNDING_DIM_320MHZ_MASK       BIT(0) | BIT(1)
 

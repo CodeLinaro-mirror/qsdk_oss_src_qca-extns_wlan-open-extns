@@ -250,6 +250,7 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 static inline int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 						  struct wireless_dev *wdev,
 						  u8 hw_link_id,
+						  u8 radio_idx,
 						  int event_type)
 {
     return -1;
@@ -297,7 +298,7 @@ void ath12k_compute_link_vif_mac(u8 *mac_addr,
 }
 
 static inline
-void ath12k_compute_mbssid_mac(u8 *mac, u8 vif_id)
+void ath12k_compute_mbssid_mac(struct ath12k_base *ab, u8 *mac, u8 vif_id)
 {
 }
 
@@ -546,6 +547,7 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 				    struct wireless_dev *wdev,
 				    u8 hw_link_id,
+				    u8 radio_idx,
 				    int event_type);
 
 void ath12k_vendor_send_event(struct ath12k_base *ab,
@@ -567,7 +569,7 @@ void ath12k_compute_link_vif_mac(u8 *mac_addr,
 				 u8 vif_id,
 				 bool use_byte0);
 
-void ath12k_compute_mbssid_mac(u8 mac[ETH_ALEN], u8 vif_id);
+void ath12k_compute_mbssid_mac(struct ath12k_base *ab, u8 mac[ETH_ALEN], u8 vif_id);
 
 int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 			    struct wireless_dev *wdev,

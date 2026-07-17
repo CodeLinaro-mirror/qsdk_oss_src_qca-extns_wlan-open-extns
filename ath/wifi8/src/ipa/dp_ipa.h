@@ -111,6 +111,11 @@ int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab);
 void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab);
 int ath12k_wifi8_dp_fill_tx_src(struct ath12k_base *ab);
 int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create);
+void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
+						struct ipa_wdi_reg_intf_in_params *in);
+void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id);
+void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
+						  int intf_idx);
 
 static inline u8
 ath12k_ipa_cb_get_vap_id(const struct ipa_wdi6_rx_skb_cb *cb)

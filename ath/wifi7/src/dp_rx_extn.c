@@ -176,13 +176,16 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		}
 
 		msdu->priority = rx_mpdu_info->tid;
-	        /* convert 802.3 frame to 802.11 frame so MAC80211 can create APVLAN
-	         * interface
+		/* Convert 802.3 frame to 802.11 so mac80211 can handle it correctly.
+		 * For 4addr frames, this is needed to support APVLAN interface creation.
+		 * For TKIP peers, fast-rx is not set in mac80211, so RX_FLAG_8023 must
+		 * be cleared and the frame converted to route through normal RX handlers.
 		 */
-	        if (!peer->use_4addr &&
-		    (rx_spd->rx_msdu_info.fr_ds && rx_spd->rx_msdu_info.to_ds)) {
+		if ((!peer->use_4addr &&
+		    (rx_spd->rx_msdu_info.fr_ds && rx_spd->rx_msdu_info.to_ds)) ||
+		     peer->sec_type == HAL_ENCRYPT_TYPE_TKIP_MIC) {
 			ath12k_wifi7_convert_eth_2_80211_frame(rx_spd);
-	                status->flag &= ~RX_FLAG_8023;
+			status->flag &= ~RX_FLAG_8023;
 		}
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

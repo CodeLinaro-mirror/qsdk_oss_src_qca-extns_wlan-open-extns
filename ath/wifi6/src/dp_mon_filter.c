@@ -137,12 +137,14 @@ ath12k_wifi6_dp_mon_rx_undecoded_metadata_config_filter(struct ath12k_pdev_dp *d
 	struct ath12k_dp *dp = dp_pdev->dp;
 	struct dp_mon_rx_filter rx_filter = {0};
 	struct htt_rx_ring_tlv_filter *rx_tlv_filter;
-	enum dp_mon_filter_mode mode = DP_MON_FILTER_MONITOR_MODE;
+	enum dp_mon_filter_mode mode = DP_MON_FILTER_UNDECODED_METADATA_CAPTURE_MODE;
 	enum dp_mon_filter_srng_type srng_type =
 				DP_MON_FILTER_SRNG_TYPE_RXDMA_MONITOR_STATUS;
 
-	/* Start with the existing monitor mode filter for the status ring */
-	rx_filter = dp_mon_pdev->rx_filter[mode][srng_type];
+	/* Start with the existing monitor mode filter as base, stored under
+	 * dedicated undecoded mode slot to avoid overwriting MONITOR_MODE.
+	 */
+	rx_filter = dp_mon_pdev->rx_filter[DP_MON_FILTER_MONITOR_MODE][srng_type];
 	rx_tlv_filter = &rx_filter.rx_tlv_filter;
 
 	/* Setup the filter to subscribe to FP PHY status TLV */
@@ -166,11 +168,11 @@ ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter(struct ath12k_pdev_dp *dp
 	struct ath12k_dp *dp = dp_pdev->dp;
 	struct dp_mon_rx_filter rx_filter = {0};
 	struct htt_rx_ring_tlv_filter *rx_tlv_filter;
-	enum dp_mon_filter_mode mode = DP_MON_FILTER_MONITOR_MODE;
+	enum dp_mon_filter_mode mode = DP_MON_FILTER_UNDECODED_METADATA_CAPTURE_MODE;
 	enum dp_mon_filter_srng_type srng_type =
 				DP_MON_FILTER_SRNG_TYPE_RXDMA_MONITOR_STATUS;
 
-	/* Get the existing monitor mode filter for the status ring */
+	/* Read from the dedicated undecoded mode slot */
 	rx_filter = dp_mon_pdev->rx_filter[mode][srng_type];
 	rx_tlv_filter = &rx_filter.rx_tlv_filter;
 

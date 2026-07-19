@@ -262,6 +262,9 @@ static void ath12k_me_snoop_grp_free(struct ath12k_me_peer_grp *grp)
 	struct ath12k_me_db *db = grp->db;
 	struct ath12k_me_peer *peer, *tmp;
 
+	if (!db)
+		return;
+
 	lockdep_assert_held(&db->lock);
 
 	/* Remove group from hash list first to prevent new lookups */
@@ -273,6 +276,8 @@ static void ath12k_me_snoop_grp_free(struct ath12k_me_peer_grp *grp)
 		kfree_rcu(peer, rcu);
 	}
 
+	/* Clear db pointer before put to prevent re-entry */
+	grp->db = NULL;
 	/* Drop DB reference */
 	ath12k_me_db_put(db);
 	/* Free the group */

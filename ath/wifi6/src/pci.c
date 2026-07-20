@@ -39,6 +39,9 @@ static int ath12k_wifi6_pci_probe(struct pci_dev *pdev,
 	int scan_radio;
 
 
+	if (!pdev->dev.of_node)
+		return -EINVAL;
+
 	if (!of_property_read_u32(pdev->dev.of_node, "qcom,scan_radio", &scan_radio)) {
 		if (!scan_radio) {
 			dev_err(&pdev->dev,

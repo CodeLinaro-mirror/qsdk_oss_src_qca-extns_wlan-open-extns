@@ -767,6 +767,9 @@ ath12k_wifi6_hal_mon_rx_parse_mpdu_start(const void *tlv_data, u32 userid,
 	peer_id = HAL_RX_GET_SW_PEER_ID(rx_mpdu_start);
 	if (peer_id)
 		ppdu_info->peer_id = peer_id;
+	if (unlikely(userid >= HAL_MAX_UL_MU_USERS))
+		return;
+
 	ppdu_info->userstats[userid].sw_peer_id = peer_id;
 
 	ppdu_info->userstats[userid].enc_type =

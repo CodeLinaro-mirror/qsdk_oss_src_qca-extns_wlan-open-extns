@@ -392,7 +392,7 @@ int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool creat
 	}
 
 	spin_lock_bh(&dp->rx_desc_lock);
-	for (i = 0; i < ab->hw_params->num_rx_spt_pages; i++) {
+	for (i = 0; i < ATH12K_NUM_RX_SPT_PAGES; i++) {
 		rx_desc = dp->rxbaddr[i];
 		if (!rx_desc)
 			continue;

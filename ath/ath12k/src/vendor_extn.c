@@ -12878,7 +12878,7 @@ int ath12k_vendor_get_rropinfo(struct wiphy *wiphy,
  */
 int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 				    struct wireless_dev *wdev,
-				    u8 hw_link_id, int event_type)
+				    u8 hw_link_id, u8 radio_idx, int event_type)
 {
 	struct sk_buff *skb;
 
@@ -12893,12 +12893,17 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 		kfree_skb(skb);
 		return -EINVAL;
 	}
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_FW_RECOVERY_RADIO_IDX, radio_idx)) {
+		kfree_skb(skb);
+		return -EINVAL;
+	}
 	if (nla_put_u8(skb, QCA_VENDOR_ATTR_FW_RECOVERY_EVENT_TYPE, event_type)) {
 		kfree_skb(skb);
 		return -EINVAL;
 	}
 
-	ath12k_info(NULL, "send event to userspace hw_link_id %d event type is %d\n", hw_link_id, event_type );
+	ath12k_info(NULL, "send event to userspace hw_link_id %u radio_idx %u event type is %d\n",
+		    hw_link_id, radio_idx, event_type);
 	cfg80211_vendor_event(skb, GFP_KERNEL);
 
 	return 0;
@@ -12952,14 +12957,6 @@ int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
 
 	return 0;
 }
-
-/**
- * ath12k_vendor_send_event - Driver helper to
- * send a device-wide firmware recovery vendor event
- * @ab: Pointer to the ath12k base device context
- * @event_flag: Vendor-defined recovery event type
- * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
- */
 
 /**
  * ath12k_vendor_nfcal_power_event - Send a noise floor calibration power
@@ -13029,6 +13026,13 @@ err:
 	return -EINVAL;
 }
 
+/**
+ * ath12k_vendor_send_event - Driver helper to
+ * send a device-wide firmware recovery vendor event
+ * @ab: Pointer to the ath12k base device context
+ * @event_flag: Vendor-defined recovery event type
+ * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
+ */
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag)
 {
@@ -13047,9 +13051,10 @@ void ath12k_vendor_send_event(struct ath12k_base *ab,
 		if (ar && ar->ah && ar->ah->hw && ar->ah->hw->wiphy) {
 			ath12k_vendor_fw_recovery_event(ar->ah->hw->wiphy, NULL,
 							ar->hw_link_id,
+							ar->radio_idx,
 							event_flag);
-			ath12k_info(ab, "FW recovery vendor event send: event_type: %u link: %d\n",
-					event_flag, ar->hw_link_id);
+			ath12k_info(ab, "FW recovery vendor event send: event_type: %u link: %u, radio_idx: %u\n",
+					event_flag, ar->hw_link_id, ar->radio_idx);
 		} else {
 			ath12k_err(ab, "Cannot send recovery vendor event: invalid radio context\n");
 

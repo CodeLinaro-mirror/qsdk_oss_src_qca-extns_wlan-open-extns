@@ -922,10 +922,17 @@ static int ath12k_cbs_submit_scan(struct ath12k *ar, struct ath12k_cbs *cbs)
 	scan_arg->vdev_id = arvif->vdev_id;
 	scan_arg->pdev_id = ar->pdev ? ar->pdev->pdev_id : 0;
 	scan_arg->notify_scan_events = WMI_SCAN_EVENT_STARTED | WMI_SCAN_EVENT_COMPLETED;
-	scan_arg->min_rest_time = cbs->rest_time;
-	scan_arg->max_rest_time = cbs->min_dwell_rest_time;
-	scan_arg->idle_time = cbs->wait_time;
-	scan_arg->burst_duration = cbs->cbs_total_dwell_time;
+	scan_arg->min_rest_time = 0;
+	scan_arg->max_rest_time = 0;
+	scan_arg->idle_time = 0;
+
+	scan_arg->dwell_time_active = cbs->dwell_split_time;
+	scan_arg->dwell_time_active_2g = cbs->dwell_split_time;
+	scan_arg->dwell_time_active_6g = cbs->dwell_split_time;
+	scan_arg->dwell_time_passive = cbs->dwell_split_time;
+	scan_arg->dwell_time_passive_6g = cbs->dwell_split_time;
+	scan_arg->burst_duration = cbs->dwell_split_time;
+
 	scan_arg->extn.scan_start_offset = cbs->scan_offset[cbs->scan_offset_idx];
 	scan_arg->chan_list.num_chan = 1;
 	scan_arg->chan_list.chan = kcalloc(1, sizeof(struct chan_info), GFP_KERNEL);
@@ -940,11 +947,11 @@ static int ath12k_cbs_submit_scan(struct ath12k *ar, struct ath12k_cbs *cbs)
 	scan_arg->chan_list.chan[0].phymode = MODE_11BE_EHT20;
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
-		   "CBS: submit_scan: vdev_id=%u freq=%u offset=%ums offset_idx=%u chan_list_idx=%u/%u dwell_split_cnt=%d/%d\n",
+		   "CBS: submit_scan: vdev_id=%u freq=%u offset=%ums offset_idx=%u chan_list_idx=%u/%u dwell_split_cnt=%d/%d dwell_time=%d\n",
 		   scan_arg->vdev_id, scan_arg->chan_list.chan[0].freq,
 		   scan_arg->extn.scan_start_offset, cbs->scan_offset_idx,
 		   cbs->chan_list_idx, cbs->nchans,
-		   cbs->dwell_split_cnt, cbs->max_dwell_split_cnt);
+		   cbs->dwell_split_cnt, cbs->max_dwell_split_cnt, cbs->dwell_split_time);
 
 	ret = ath12k_wmi_send_scan_start_cmd(ar, scan_arg);
 

@@ -38,6 +38,7 @@
 #include "dp_mon_extn.h"
 #include "../dp_mon.h"
 #include "../net/mac80211/ieee80211_i.h"
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #include "mesh_util.h"
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
@@ -3235,7 +3236,7 @@ static void ath12k_wsi_bypass_workfn(struct work_struct *work)
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
-                                          u32 value, bool *reload)
+                                          u32 value, bool *reload, u32 flags)
 {
 	struct ath12k *ar = arvif->ar;
 	int ret = -1;
@@ -4248,6 +4249,51 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 				mon_extn->tx_tlv_log->tlv_logging_enable = 0;
 		}
 		ret = 0;
+		break;
+	}
+	/* PHY_ERR_MASK carries a 64-bit value: lo in data, hi in flags.
+	 */
+	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_PHY_ERR_MASK: {
+		const struct ath12k_dp_arch_mon_ops *mon_ops;
+		struct ath12k_pdev_dp *dp_pdev;
+
+		if (!ath12k_scan_radio_supported(ar->pdev)) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "undecoded: not a scan radio, param=%d\n", param);
+			return -EINVAL;
+		}
+		dp_pdev = &ar->dp;
+		if (!dp_pdev->dp_mon_pdev)
+			return -EINVAL;
+		mon_ops = ath12k_dp_mon_ops_get(dp_pdev->dp);
+		if (mon_ops && mon_ops->rx_undecoded_phy_err_mask_set)
+			ret = mon_ops->rx_undecoded_phy_err_mask_set(dp_pdev,
+								value, flags);
+		else
+			ret = -EOPNOTSUPP;
+
+		break;
+	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_METADATA_CAPTURE: {
+		const struct ath12k_dp_arch_mon_ops *mon_ops;
+		struct ath12k_pdev_dp *dp_pdev;
+
+		if (!ath12k_scan_radio_supported(ar->pdev)) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "undecoded: not a scan radio, param=%d\n", param);
+			return -EINVAL;
+		}
+		dp_pdev = &ar->dp;
+		if (!dp_pdev->dp_mon_pdev)
+			return -EINVAL;
+		mon_ops = ath12k_dp_mon_ops_get(dp_pdev->dp);
+		if (mon_ops && mon_ops->rx_undecoded_metadata_capture_set) {
+			ret = mon_ops->rx_undecoded_metadata_capture_set(dp_pdev, value);
+			if (!ret)
+				ret = ath12k_dp_mon_rx_update_filter(ar);
+		} else {
+			ret = -EOPNOTSUPP;
+		}
 		break;
 	}
 	default:
@@ -6565,7 +6611,7 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
                    vif, param, value,
                    params->ifindex, params->link_id);
 
-        ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload);
+        ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload, params->flags);
 
         if (!ret && reload)
                 ath12k_vendor_event_iface_reload_link(wiphy, wdev, params->link_id);
@@ -11150,6 +11196,19 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		*value = ath12k_get_monitor_version(ar->ab);
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_METADATA_CAPTURE: {
+		struct ath12k_pdev_dp *dp_pdev;
+		struct ath12k_pdev_mon_dp_extn *mon_extn = NULL;
+
+		if (!ath12k_scan_radio_supported(ar->pdev))
+			return -EINVAL;
+		dp_pdev = &ar->dp;
+		if (dp_pdev->dp_mon_pdev)
+			mon_extn = &dp_pdev->dp_mon_pdev->pdev_mon_dp_extn;
+		*value = (mon_extn && mon_extn->undecoded_meta) ? mon_extn->undecoded_meta->undecoded_metadata_capture : 0;
+		ret = 0;
+		break;
+	}
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);

@@ -1946,6 +1946,7 @@ int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 	}
 
 	in.mld_enabled = is_mlo;
+
 	ret = ipa_wdi_reg_intf_per_inst(&in);
 	if (ret) {
 		ath12k_err(NULL, "ipa_wdi_reg_intf: register IPA interface failed: ret = %d",ret);
@@ -2333,6 +2334,8 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 
 	case WLAN_AP_CONNECT:
 		mutex_lock(&ipa_ctx->event_lock);
+		if (is_mlo && ipa_ctx->session_link_mask && link_id < BITS_PER_BYTE)
+			ipa_ctx->session_link_mask[session_id] |= BIT(link_id);
 		if (ipa_ctx->vdev_to_iface[session_id] < ipa_ctx->max_iface) {
 			ath12k_info(ab, "Vdev already connected\n");
 			mutex_unlock(&ipa_ctx->event_lock);
@@ -2409,6 +2412,13 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 
 	case WLAN_AP_DISCONNECT:
 		mutex_lock(&ipa_ctx->event_lock);
+		if (is_mlo && ipa_ctx->session_link_mask && link_id < BITS_PER_BYTE) {
+			ipa_ctx->session_link_mask[session_id] &= ~BIT(link_id);
+			if (ipa_ctx->session_link_mask[session_id] != 0) {
+				mutex_unlock(&ipa_ctx->event_lock);
+				return 0;
+			}
+		}
 		if (ath12k_wlan_ipa_uc_is_enabled(ipa_ctx->config)) {
 			mutex_unlock(&ipa_ctx->event_lock);
 			ath12k_dp_ipa_arch_op_uc_offload_enable(ipa_ctx,
@@ -2428,9 +2438,11 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 				break;
 			}
 		}
-		mutex_unlock(&ipa_ctx->event_lock);
 		ath12k_info(ab, "AP disconnected, vdev_to_iface[%u] = %u\n",
 			    session_id, ipa_ctx->vdev_to_iface[session_id]);
+		/* Always reset so the next AP_CONNECT can re-register. */
+		ipa_ctx->vdev_to_iface[session_id] = ipa_ctx->max_iface;
+		mutex_unlock(&ipa_ctx->event_lock);
 		break;
 
 	case WLAN_CLIENT_CONNECT_EX:

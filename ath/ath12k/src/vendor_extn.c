@@ -11961,6 +11961,22 @@ static void ath12k_super_chan_power_caps(u32 channel_flags,
 		*power_types |= BIT(3);
 }
 
+static const char *ath12k_super_chan_power_mode_to_str(u8 power_mode)
+{
+	switch (power_mode) {
+	case ATH12K_SUPER_CHAN_POWER_MODE_NONE:
+		return "NONE";
+	case ATH12K_SUPER_CHAN_POWER_MODE_LPI:
+		return "LPI";
+	case ATH12K_SUPER_CHAN_POWER_MODE_STANDARD:
+		return "STANDARD";
+	case ATH12K_SUPER_CHAN_POWER_MODE_VLP:
+		return "VLP";
+	default:
+		return "UNKNOWN";
+	}
+}
+
 static bool ath12k_super_chan_mode_supported(u32 channel_flags, u8 power_mode)
 {
 	bool mode_supported;
@@ -11992,8 +12008,9 @@ static void ath12k_super_chan_dump(struct ath12k *ar,
 	u8 power_mode;
 
 	ath12k_info(ar->ab,
-		   "Freq = %d\tPower types = 0x%x\tBest power mode = 0x%x\n",
-		   channel->center_freq, power_types, best_power_mode);
+		    "Freq = %d\tPower types = 0x%x\tBest power mode = %s\n",
+		    channel->center_freq, power_types,
+		    ath12k_super_chan_power_mode_to_str(best_power_mode));
 
 	for (power_mode = ATH12K_SUPER_CHAN_POWER_MODE_LPI;
 	     power_mode <= ATH12K_SUPER_CHAN_POWER_MODE_VLP;
@@ -12004,8 +12021,9 @@ static void ath12k_super_chan_dump(struct ath12k *ar,
 							 power_mode);
 
 		ath12k_info(ar->ab,
-		   "Power mode = %d\tPSD flag = %d\tPSD power = %d\tEIRP power = %d\tChan flags = 0x%x\tChannel state = %d\tMin bw = %d\tMax bw = %d\tAFC_NOT_DONE = %d\n",
-		   power_mode, mode_supported ? psd_flag : 0,
+		   "Power mode = %s\tPSD flag = %d\tPSD power = %d\tEIRP power = %d\tChan flags = 0x%x\tChannel state = %d\tMin bw = %d\tMax bw = %d\tAFC_NOT_DONE = %d\n",
+		   ath12k_super_chan_power_mode_to_str(power_mode),
+		   mode_supported ? psd_flag : 0,
 		   mode_supported ? channel->psd : 0,
 		   mode_supported ? channel->max_reg_power : 0,
 		   mode_supported ? channel_flags : IEEE80211_CHAN_DISABLED,

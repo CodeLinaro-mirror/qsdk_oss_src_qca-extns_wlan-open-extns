@@ -1630,7 +1630,9 @@ int ath12k_vendor_rule_config_notify(struct wiphy *wiphy,
 			BIT(QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_NETDEV_IF_INDEX);
 	}
 
-	ath12k_vendor_send_rule_config_notify(vif, &params);
+	ret = ath12k_vendor_send_rule_config_notify(vif, &params);
+	if (ret)
+		return ret;
 
 	ath12k_info(NULL,
 		    "scs rule config notify: mac=%pM rule_id=%u req_type=%u tid=%u\n",
@@ -1796,28 +1798,33 @@ static int ath12k_wsi_bypass_event(struct ath12k_base *ab, int status)
  */
 static int ath12k_vendor_event_iface_reload(struct wiphy *wiphy, u8 radio_idx)
 {
-        struct ieee80211_hw *hw = NULL;
-        struct ath12k_hw *ah = NULL;
-        struct ath12k *ar = NULL;
-        struct ath12k_link_vif *arvif = NULL;
-        struct wireless_dev *wdev = NULL;
+	struct ieee80211_hw *hw = NULL;
+	struct ath12k_hw *ah = NULL;
+	struct ath12k *ar = NULL;
+	struct ath12k_link_vif *arvif = NULL;
+	struct wireless_dev *wdev = NULL;
+	int ret;
 
-        hw = wiphy_to_ieee80211_hw(wiphy);
-        ah = hw->priv;
-        ar = &ah->radio[radio_idx];
-        if (!ar) {
-                ath12k_err(NULL, "Failed to find ar\n");
-                return -ENODATA;
-        }
-        list_for_each_entry(arvif, &ar->arvifs, list) {
-                wdev = ieee80211_vif_to_wdev(arvif->ahvif->vif);
-                if (!wdev) {
-                        ath12k_err(NULL, "Failed to find wdev\n");
-                        return -ENODATA;
-                }
-                ath12k_vendor_event_iface_reload_link(wiphy, wdev, arvif->link_id);
-        }
-	        return 0;
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	ah = hw->priv;
+
+	if (radio_idx >= ah->num_radio) {
+		ath12k_err(NULL, "Invalid radio index %u\n", radio_idx);
+		return -EINVAL;
+	}
+
+	ar = &ah->radio[radio_idx];
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		wdev = ieee80211_vif_to_wdev(arvif->ahvif->vif);
+		if (!wdev) {
+			ath12k_err(NULL, "Failed to find wdev\n");
+			return -ENODATA;
+		}
+		ret = ath12k_vendor_event_iface_reload_link(wiphy, wdev, arvif->link_id);
+		if (ret)
+			return ret;
+	}
+	return 0;
 }
 
 static int ath12k_set_ampdu_aggr_size_arvif(struct ath12k_link_vif *arvif, u32 value)
@@ -4716,16 +4723,19 @@ static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
 					   ath12k_extact_sr_type(data, data_len));
 		break;
 	case SR_SELF_HESIGA_SR15_ENABLE:
-		ret = ath12k_set_self_hesiga_sr15_enable(ar,
-							 *(uint8_t*)data);
+		if (data_len < sizeof(uint8_t))
+			return -EINVAL;
+		ret = ath12k_set_self_hesiga_sr15_enable(ar, *(uint8_t *)data);
 		break;
 	case SR_SELF_PSR_TX_ENABLE:
-		ret = ath12k_set_self_psr_tx_enable(ar,
-						    *(uint8_t*)data);
+		if (data_len < sizeof(uint8_t))
+			return -EINVAL;
+		ret = ath12k_set_self_psr_tx_enable(ar, *(uint8_t *)data);
 		break;
 	case SR_SELF_SAFETY_MARGIN_PSR:
-		ret = ath12k_set_self_safety_margin_psr(ar,
-							*(uint8_t*)data);
+		if (data_len < sizeof(uint8_t))
+			return -EINVAL;
+		ret = ath12k_set_self_safety_margin_psr(ar, *(uint8_t *)data);
 		break;
 	case SR_SELF_OBSS_PD_CTRL_FRAME:
 		ret = ath12k_configure_obss_pd_ctrl_frame(ar, value,
@@ -4733,30 +4743,35 @@ static int ath12k_vendor_set_sr_radio_params(struct ath12k *ar,
 							  ath12k_extact_sr_type(data, data_len));
 		break;
 	case SR_SELF_ENABLE_TRUNCATION:
-		ret = ath12k_set_self_sr_enable_truncation(ar,
-							   *(uint8_t*)data);
+		if (data_len < sizeof(uint8_t))
+			return -EINVAL;
+		ret = ath12k_set_self_sr_enable_truncation(ar, *(uint8_t *)data);
 		break;
 	case SR_SELF_OBSS_PPDU_MIN_DUR:
-		ret = ath12k_set_self_sr_obss_ppdu_min_dur(ar,
-							   *(uint8_t*)data);
+		if (data_len < sizeof(uint8_t))
+			return -EINVAL;
+		ret = ath12k_set_self_sr_obss_ppdu_min_dur(ar, *(uint8_t *)data);
 		break;
 	case SR_SELF_SRG_BSS_COLOR_BITMAP:
+		if (data_len < sizeof(u32))
+			return -EINVAL;
 		bitmap[0] = value;
 		memcpy(&bitmap[1], data, sizeof(u32));
-		ret = ath12k_set_self_srg_bss_color_bitmap(ar,
-							   bitmap);
+		ret = ath12k_set_self_srg_bss_color_bitmap(ar, bitmap);
 		break;
 	case SR_SELF_SRG_PARTIAL_BSSID_BITMAP:
+		if (data_len < sizeof(u32))
+			return -EINVAL;
 		bitmap[0] = value;
 		memcpy(&bitmap[1], data, sizeof(u32));
-		ret = ath12k_set_self_srg_partial_bssid_bitmap(ar,
-							       bitmap);
+		ret = ath12k_set_self_srg_partial_bssid_bitmap(ar, bitmap);
 		break;
 	case SR_SELF_SRG_OBSS_COLOR_ENABLE_BITMAP:
+		if (data_len < sizeof(u32))
+			return -EINVAL;
 		bitmap[0] = value;
 		memcpy(&bitmap[1], data, sizeof(u32));
-		ret = ath12k_set_self_srg_obss_color_enable_bitmap(ar,
-								   bitmap);
+		ret = ath12k_set_self_srg_obss_color_enable_bitmap(ar, bitmap);
 		break;
 	case SR_SELF_SRG_OBSS_BSSID_ENABLE_BITMAP:
 		bitmap[0] = value;

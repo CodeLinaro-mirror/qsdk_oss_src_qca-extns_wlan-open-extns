@@ -965,7 +965,8 @@ ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 	return 0;
 }
 
-void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
+void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
+				struct ath12k_link_vif *arvif)
 {
 	/* Protects the extensions data update for an interface*/
 	spin_lock_init(&ahvif->ath12k_vif_extn.data_lock);
@@ -978,6 +979,13 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 	ahvif->dp_vif.dp_extn.mdbg = 0;
 	ahvif->dp_vif.dp_extn.mesh_tx = 0;
 #endif
+
+	ath12k_gpr_arvif_init(arvif);
+}
+
+void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
+{
+	ath12k_gpr_arvif_deinit(arvif);
 }
 
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)

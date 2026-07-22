@@ -252,6 +252,7 @@ ath12k_dp_tx_assign_buffer_hot(struct ath12k_dp_hw_group *dp_hw_grp, u8 ring_id)
 	struct list_head *hot_list = &dp_hw_grp->extn.tx_hot_desc_list[ring_id];
 	LIST_HEAD(batch);
 	int i;
+	u32 *tx_desc_used_cnt;
 
 	/* Fast path: hot list has entries – no lock needed. */
 	desc = list_first_entry_or_null(hot_list,
@@ -270,7 +271,8 @@ ath12k_dp_tx_assign_buffer_hot(struct ath12k_dp_hw_group *dp_hw_grp, u8 ring_id)
 			break;
 
 		desc->in_use = true;
-		this_cpu_inc(dp_hw_grp->pcpu_tx->cnt);
+		tx_desc_used_cnt = this_cpu_ptr(dp_hw_grp->tx_desc_used_cnt);
+		(*tx_desc_used_cnt)++;
 
 		list_move_tail(&desc->list, &batch);
 	}

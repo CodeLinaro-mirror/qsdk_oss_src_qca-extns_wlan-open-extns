@@ -2861,6 +2861,7 @@ static int dp_ipa_register_is_ipa_ready(struct ath12k_base *ab)
 	if (ret == -EEXIST) {
 		ath12k_info(ab, "IPA is ready, invoke callback\n");
 		ath12k_ipa_ready_cb(ab->ath12k_base_extn.ipa_ctx);
+		ret = 0;
 	} else if (ret) {
 		ath12k_err(ab, "Failed to check for IPA readiness\n");
 		return ret;
@@ -2893,6 +2894,21 @@ void ath12k_dp_rx_buf_alloc(struct ath12k_base *ab, struct dp_rxdma_ring *ring)
 	/* TODO: Handle SMMU MAP of these buffers if IPA pipes are enabled */
 }
 
+/* Allocate DMA ring memory for rx_refill_buf_ring2 at probe time */
+int ath12k_dp_ipa_rx_refill_buf_ring_alloc(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	int ret;
+
+	ret = ath12k_dp_srng_alloc(ab, &dp->rx_refill_buf_ring2.refill_buf_ring,
+				   HAL_RXDMA_BUF, 2, 0, IPA_RX_REFILL_BUF_RING);
+	if (ret)
+		ath12k_err(ab, "Failed to alloc rx_refill_buf_ring2 for IPA\n");
+
+	return ret;
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_rx_refill_buf_ring_alloc);
+
 /* Allocate Intermediate RX refill ring for Refilling buffers from IPA and HOST */
 static int dp_ipa_setup_rx_refill_buf_ring(struct ath12k_base *ab)
 {
@@ -2900,18 +2916,20 @@ static int dp_ipa_setup_rx_refill_buf_ring(struct ath12k_base *ab)
 	int ring_id;
 	int ret;
 
-	ret = ath12k_dp_srng_setup(ab, &dp->rx_refill_buf_ring2.refill_buf_ring,
-				   HAL_RXDMA_BUF, 2, 0, IPA_RX_REFILL_BUF_RING);
-
+	/* DMA memory was allocated at probe via ath12k_dp_ipa_rx_refill_buf_ring_alloc;
+	 * here we only initialize the HAL ring and set up HTT.
+	 */
+	ret = ath12k_dp_srng_init(ab, &dp->rx_refill_buf_ring2.refill_buf_ring,
+				  HAL_RXDMA_BUF, 2, 0);
 	if (ret) {
-		ath12k_err(ab, "Failed to setup rx_refill_buf_ring2 for IPA\n");
+		ath12k_err(ab, "Failed to init rx_refill_buf_ring2 for IPA\n");
 		return ret;
 	}
 
 	ring_id = dp->rx_refill_buf_ring2.refill_buf_ring.ring_id;
 	ret = ath12k_dp_tx_htt_srng_setup(ab, ring_id, 0, HAL_RXDMA_BUF);
 	if (ret) {
-		ath12k_err(ab, "Failed to rAL_RXDMA_BUF ring for IPA\n");
+		ath12k_err(ab, "Failed to setup HAL_RXDMA_BUF ring for IPA\n");
 		return ret;
 	}
 
@@ -2926,6 +2944,13 @@ static void dp_ipa_cleanup_rx_refill_buf_ring(struct ath12k_base *ab)
 	ath12k_dp_srng_cleanup(ab, &dp->rx_refill_buf_ring2.refill_buf_ring);
 	ath12k_dp_srng_cleanup(ab, &dp->rx_refill_buf_ring3.refill_buf_ring);
 }
+
+/* Free DMA ring memory for rx_refill_buf_ring2 */
+void ath12k_dp_ipa_rx_refill_buf_ring_free(struct ath12k_base *ab)
+{
+        dp_ipa_cleanup_rx_refill_buf_ring(ab);
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_rx_refill_buf_ring_free);
 
 static u32 dp_ipa_set_default_routing(u32 reo_dest)
 {
@@ -4180,7 +4205,7 @@ void ath12k_wlan_ipa_evt_handler (struct work_struct *work)
 							    entry->vdev_id,
 							    entry->pdev_idx,
 							    entry->mac_addr, &entry->dev,
-							    NL80211_IFTYPE_UNSPECIFIED,
+							    NL80211_IFTYPE_AP,
 							    NL80211_BAND_UNSPECIFIED,
 							    entry->is_mlo);
 					rhashtable_remove_fast(ctx->mac_table,

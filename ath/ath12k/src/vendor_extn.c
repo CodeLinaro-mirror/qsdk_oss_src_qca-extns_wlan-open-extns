@@ -12698,7 +12698,13 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		ret = 0;
 		break;
 	}
-        default:
+	case QCA_WLAN_VENDOR_RADIO_PARAM_GET_CHAN_UTIL:
+		ret = ath12k_vendor_get_chan_util(ar, value);
+		if (ret)
+			ath12k_warn(ar->ab,
+				    "failed to get chan util: %d\n", ret);
+		return ret;
+	default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
                 break;
@@ -13450,6 +13456,71 @@ int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
  *
  * Return: 0 on success or a negative error code on failure.
  */
+
+/**
+ * ath12k_vendor_get_chan_util - Fetch pdev stats and compute channel
+ * utilization.
+ * @ar: Pointer to the ath12k radio context
+ * @value: Output pointer to store the computed channel utilization (0-100).
+ *
+ * Fetches firmware pdev stats synchronously, computes channel utilization as
+ * (rx_clear_count * 100) / cycle_count.
+ *
+ * Return: 0 on success or a negative error code on failure.
+ */
+int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value)
+{
+	struct ath12k_fw_stats_req_params params = {};
+	struct ath12k_fw_stats_pdev *pdev;
+	u32 rx_clear_count;
+	u32 cycle_count = 0;
+	int ret;
+
+	if (!ar || !value)
+		return -EINVAL;
+
+	params.pdev_id = ar->pdev->pdev_id;
+	params.stats_id = WMI_REQUEST_PDEV_STAT;
+
+	ret = ath12k_mac_get_fw_stats(ar, &params);
+	if (ret) {
+		ath12k_warn(ar->ab,
+			    "failed to fetch pdev stats for chan util: %d\n",
+			    ret);
+		return ret;
+	}
+
+	spin_lock_bh(&ar->data_lock);
+	pdev = list_first_entry_or_null(&ar->fw_stats.pdevs,
+					struct ath12k_fw_stats_pdev, list);
+	if (!pdev) {
+		spin_unlock_bh(&ar->data_lock);
+		ath12k_warn(ar->ab, "no pdev stats available for chan util\n");
+		return -ENODATA;
+	}
+
+	rx_clear_count = pdev->rx_clear_count;
+	cycle_count = pdev->cycle_count;
+	spin_unlock_bh(&ar->data_lock);
+
+	if (!cycle_count) {
+		ath12k_warn(ar->ab, "cycle_count is zero, cannot compute chan util\n");
+		return -ENODATA;
+	}
+
+	*value = (u32)div_u64((u64)rx_clear_count * 100, cycle_count);
+	if (*value > 100) {
+		ath12k_warn(ar->ab,
+			    "chan util value %u exceeds 100, clamping to 100\n",
+			    *value);
+		*value = 100;
+	}
+	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+		   "chan util: hw_link_id=%u rx_clear_count=%u cycle_count=%u chan_util=%u%%\n",
+		   ar->hw_link_id, rx_clear_count, cycle_count, *value);
+	return 0;
+}
+
 int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
 				    const struct ath12k_wmi_nfcal_power_event *param)
 {

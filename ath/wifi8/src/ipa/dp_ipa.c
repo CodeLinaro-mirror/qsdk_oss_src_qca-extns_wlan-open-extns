@@ -67,7 +67,20 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 	}
 
 	vp_num = get_vp_num_from_dev_name(in->netdev_name, ahvif);
-	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
+	if (vp_num == -EEXIST) {
+		/*
+		 * VP was already allocated on the first connect (e.g. DFS
+		 * restart reconnect).  Compute the VP number directly from
+		 * ahvif_id so we can still reprogram the hardware VP entry
+		 * for the new link_id without re-allocating.
+		 */
+		u8 ahvif_id = ahvif->dp_vif.ahvif_id;
+
+		if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
+		    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
+			return;
+		vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
+	} else if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
 		ath12k_ipa_err(NULL, "ipa vp_num setup: invalid vp_num=%d for netdev=%s\n",
 			    vp_num, in->netdev_name);
 		return;
@@ -88,6 +101,7 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 		goto err;
 	}
 
+	in->vpnum = vp_num;
 	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, dev, arvif);
 	dev_put(dev);
 
@@ -100,28 +114,48 @@ void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
 {
 	struct ath12k_vif *ahvif;
 	struct ath12k_link_vif *arvif;
+	struct ath12k_base *ab = NULL;
+	u8 ahvif_id;
 	int vp_num;
 
 	ahvif = get_ahvif_from_dev_name(dev_name);
 	if (!ahvif)
 		return;
 
-	vp_num = get_vp_num_from_dev_name(dev_name, ahvif);
-	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num))
+	/*
+	 * Compute VP number directly from ahvif_id — do NOT call
+	 * alloc_vp_num here.  alloc_vp_num would fail with -EEXIST
+	 * (VP still allocated) and the early-return would skip both
+	 * dealloc_vp_num and the hardware VP entry clear.
+	 */
+	ahvif_id = ahvif->dp_vif.ahvif_id;
+	if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
+	    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
 		return;
+	vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
 
+	/*
+	 * Retrieve arvif under rcu_read_lock, save the ab pointer, then
+	 * drop the lock before calling dealloc_vp_num: dealloc calls
+	 * synchronize_rcu() which sleeps and must NOT run under
+	 * rcu_read_lock.
+	 */
 	rcu_read_lock();
 	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
-	ath12k_dp_ipa_dealloc_vp_num(ahvif);
-	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, NULL);
+	if (arvif)
+		ab = arvif->ar->ab;
 	rcu_read_unlock();
 
+	ath12k_dp_ipa_dealloc_vp_num(ahvif);
+
+	if (ab)
+		ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(ab, vp_num, NULL);
 }
 
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
 						  int intf_idx)
 {
-
+	in->intf_idx = intf_idx;
 }
 
 static u8 ath12k_wifi8_dp_ipa_get_wdi_version(void)
@@ -430,6 +464,11 @@ static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
 	memset(ipa_ctx->vdev_to_iface, ipa_ctx->max_iface,
 	       array_size(ipa_ctx->max_session_id, sizeof(*ipa_ctx->vdev_to_iface)));
 
+	ipa_ctx->session_link_mask = vzalloc(array_size(ipa_ctx->max_session_id,
+					     sizeof(*ipa_ctx->session_link_mask)));
+	if (!ipa_ctx->session_link_mask)
+		goto err_free_vdev_to_iface;
+
 	/* Initialize iface_context slots */
 	for (i = 0; i < ipa_ctx->max_iface; i++) {
 		iface_context = &ipa_ctx->iface_context[i];
@@ -448,6 +487,9 @@ static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
 			ipa_ctx->max_iface, ipa_ctx->wdi_version);
 	return 0;
 
+err_free_vdev_to_iface:
+	vfree(ipa_ctx->vdev_to_iface);
+	ipa_ctx->vdev_to_iface = NULL;
 err_free_iface:
 	vfree(ipa_ctx->iface_context);
 	ipa_ctx->iface_context = NULL;
@@ -459,6 +501,8 @@ err_free_iface:
  */
 static void ath12k_wifi8_ipa_iface_context_deinit(struct ath12k_ipa *ipa_ctx)
 {
+	vfree(ipa_ctx->session_link_mask);
+	ipa_ctx->session_link_mask = NULL;
 	vfree(ipa_ctx->vdev_to_iface);
 	ipa_ctx->vdev_to_iface = NULL;
 	vfree(ipa_ctx->iface_context);
@@ -596,8 +640,8 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 
 	if (!dp_peer->is_authorized) {
 		ath12k_ipa_err(cumac_ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
-			   peer_id, eth->h_source, eth->h_dest,
-			   cpu_to_be16(eth->h_proto), dp_peer->addr);
+			       peer_id, eth->h_source, eth->h_dest,
+			       cpu_to_be16(eth->h_proto), dp_peer->addr);
 		rcu_read_unlock();
 		goto drop;
 	}

@@ -236,7 +236,7 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 		return -EINVAL;
 	}
 
-	dp_peer = ath12k_dp_peer_find_by_addr(dp_hw, addr, vif);
+	dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, params->hw_link_id);
 
 	if (dp_peer) {
 		spin_unlock_bh(&dp_hw->peer_hash_lock);
@@ -284,8 +284,7 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 }
 
 void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 *addr,
-				 struct ieee80211_sta *sta, u8 hw_link_id,
-				 struct ieee80211_vif *vif)
+				 struct ieee80211_sta *sta, u8 hw_link_id)
 {
 	struct ath12k_dp_peer *dp_peer;
 	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
@@ -296,7 +295,7 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 	if (sta)
 		dp_peer = ath12k_dp_peer_find_by_addr_and_sta(dp_hw, addr, sta);
 	else
-		dp_peer = ath12k_dp_peer_find_by_addr(dp_hw, addr, vif);
+		dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, hw_link_id);
 
 	if (!dp_peer) {
 		spin_unlock_bh(&dp_hw->peer_hash_lock);

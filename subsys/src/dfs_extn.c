@@ -11,6 +11,7 @@
 #include "../ieee80211_i.h"
 #include "../../wireless/core.h"
 #include "dfs_extn.h"
+#include "../mesh.h"
 
 /**
  * ieee80211_bootup_cac_start_timer_extn - start boot-up CAC timer for a
@@ -113,6 +114,17 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 /**
  * ieee80211_bootup_cac_mesh_vdev_up_extn - trigger vdev_up for mesh vdevs
  * after boot-up CAC completes on a shared chanctx.
+ * @ctx: the chanctx whose CAC timer just fired
+ *
+ * cfg80211_cac_event() is sent for only one link per chanctx by the caller,
+ * and its netlink notification carries only that link's netdev ifindex. Any
+ * other mesh vdev sharing this chanctx (e.g. an AP root co-located on the
+ * same DFS channel) never sees the CAC event on its own ifindex,
+ * so its userspace state machine stays stuck in DFS and drops all peering
+ * frames. cfg80211_clear_cac_started() skips NL80211_IFTYPE_MESH_POINT
+ * wdevs, so cac_started is still set here for every mesh link that has
+ * joined; call cfg80211_cac_event() and clear cac_started for each one so
+ * every mesh netdev gets its own scoped CAC-finished notification.
  */
 void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
 {
@@ -126,13 +138,54 @@ void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
 		 * enable_beacon is set by ieee80211_start_mesh() when the mesh
 		 * joined during boot-up CAC.  Use it as the guard instead of
 		 * cac_started, which cfg80211_clear_cac_started() has already
-		 * cleared for all wdevs on this channel by the time we get here.
+		 * cleared for every non-mesh wdev on this channel by the time
+		 * we get here.
 		 */
 		if (!iter_link->sdata->vif.bss_conf.enable_beacon)
 			continue;
+
+		if (iter_link->sdata->wdev.links[iter_link->link_id].cac_started) {
+			struct cfg80211_chan_def chandef =
+						iter_link->conf->chanreq.oper;
+
+			cfg80211_cac_event(iter_link->sdata->dev, &chandef,
+					   NL80211_RADAR_CAC_FINISHED,
+					   GFP_KERNEL, iter_link->link_id);
+			iter_link->sdata->wdev.links[iter_link->link_id].cac_started =
+									false;
+		}
+
 		ieee80211_link_info_change_notify(iter_link->sdata, iter_link,
 						  BSS_CHANGED_BEACON_ENABLED);
+		/*
+		 * vdev_up has now been sent to firmware (arvif->is_up = true).
+		 * Call netif_carrier_on() so the bridge layer starts udhcpc
+		 * and DHCP DISCOVERs are sent only when the firmware can TX them.
+		 * This is the counterpart to the deferred netif_carrier_on in
+		 * ieee80211_start_mesh() which is skipped during boot-up CAC.
+		 */
+		ieee80211_bootup_cac_mesh_carrier_on(iter_link->sdata);
 	}
+}
+
+/**
+ * ieee80211_bootup_cac_mesh_carrier_on - bring up mesh carrier after boot-up CAC
+ *
+ * Called after vdev_up has been sent to firmware so that arvif->is_up is true.
+ * Calls netif_carrier_on() to start udhcpc; DHCP DISCOVERs will now be
+ * forwarded by ath12k_wifi7_mcbc_handler instead of being dropped.
+ */
+void ieee80211_bootup_cac_mesh_carrier_on(struct ieee80211_sub_if_data *sdata)
+{
+	if (!sdata || sdata->vif.type != NL80211_IFTYPE_MESH_POINT)
+		return;
+
+	if (netif_carrier_ok(sdata->dev))
+		return;
+
+	pr_debug("mac80211: boot-up CAC complete: netif_carrier_on for mesh %s\n",
+		 sdata->name);
+	netif_carrier_on(sdata->dev);
 }
 
 /**

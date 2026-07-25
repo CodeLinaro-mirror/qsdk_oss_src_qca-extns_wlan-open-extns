@@ -203,7 +203,9 @@ static void ath12k_mac_accumulate_avg_link_rssi(void *data,
 	s32 *rssi_total_array = data;
 	struct ath12k_sta *ahsta = ath12k_sta_to_ahsta(sta);
 
-	rssi_total_array[ahsta->ahsta_extn.primary_soc_id] += ahsta->ahsta_extn.avg_link_rssi;
+	if (ahsta->ahsta_extn.primary_soc_id >= 0 &&
+	    ahsta->ahsta_extn.primary_soc_id < ATH12K_MAX_SOCS)
+		rssi_total_array[ahsta->ahsta_extn.primary_soc_id] += ahsta->ahsta_extn.avg_link_rssi;
 }
 
 static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab)
@@ -428,10 +430,12 @@ static void ath12k_peer_calculate_avg_rssi(struct ath12k_hw *ah,
 		num_psocs++;
 		if (ahsta->assoc_link_id == link_id) {
 			link_rssi = arsta->arsta_extn.rssi_assoc;
-		} else {
+		} else if (assoc_arvif) {
 			link_rssi = ath12k_derive_link_rssi(ah, arvif,
 							    assoc_arvif,
 							    arsta->arsta_extn.rssi_assoc);
+		} else {
+			link_rssi = arsta->arsta_extn.rssi_assoc;
 		}
 
 		total_rssi += link_rssi;
@@ -558,11 +562,14 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 		if (!arvif->ar->ab->hw_params->is_plink_preferable) {
 			ath12k_err(NULL, "Skip UMAC selection ...\n");
 			psoc_id = ath12k_get_ab_device_id(arvif->ar->ab);
-			plink_preferable[psoc_id] = false;
+			if (psoc_id >= 0 && psoc_id < ATH12K_MAX_SOCS)
+				plink_preferable[psoc_id] = false;
 			continue;
 		}
 
 		psoc_id = ath12k_get_ab_device_id(arvif->ar->ab);
+		if (psoc_id < 0 || psoc_id >= ATH12K_MAX_SOCS)
+			continue;
 		plink_preferable[psoc_id] = true;
 		chan_width = arvif->chanctx.def.width;
 		ml_ch_width[psoc_id] = ath12k_mac_get_chan_width(chan_width);
@@ -666,6 +673,8 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 			bw = ml_ch_width[i];
 			cap = bw * (100 - cong);
 			total_ml_sta_count++;
+			if (!total_cap)
+				break;
 			grp_size = total_ml_sta_count * ((cap * 100) / total_cap);
 			group_size[i] = grp_size / 100;
 			if (grp_size % 100)
@@ -814,7 +823,9 @@ extern const struct sysfs_ops kobj_sysfs_ops;
 
 static void ath12k_vif_kobj_release(struct kobject *kobj)
 {
-	/* nothing */
+	struct ath12k_vif_sysfs_entry *entry =
+		container_of(kobj, struct ath12k_vif_sysfs_entry, kobj);
+	kfree(entry);
 }
 
 static struct kobj_type ath12k_vif_ktype = {
@@ -868,8 +879,11 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 		return;
 
 	ar->ar_extn.vifs_kobj = kobject_create_and_add("vifs", ar->ar_extn.radio_kobj);
-	if (!ar->ar_extn.vifs_kobj)
+	if (!ar->ar_extn.vifs_kobj) {
+		kobject_put(ar->ar_extn.radio_kobj);
+		ar->ar_extn.radio_kobj = NULL;
 		return;
+	}
 
 	for (i = 0; i <= 16; i++) {
 		struct ath12k_vif_sysfs_entry *entry;
@@ -883,7 +897,6 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 		kobject_init(&entry->kobj, &ath12k_vif_ktype);
 		if (kobject_add(&entry->kobj, ar->ar_extn.vifs_kobj, "%s", name)) {
 			kobject_put(&entry->kobj);
-			kfree(entry);
 			break;
 		}
 		for (r = 0; r < ar->ah->num_radio; r++) {
@@ -906,7 +919,6 @@ void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 			if (!entry)
 				continue;
 			kobject_put(&entry->kobj);
-			kfree(entry);
 			ar->ar_extn.vif_entries[i] = NULL;
 		}
 
@@ -1421,26 +1433,28 @@ void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ieee80211_link_sta *link_sta,
 				   struct ath12k_wmi_peer_assoc_arg *arg)
 {
-	struct ath12k_vif *ahvif = arvif->ahvif;
-	struct ath12k *ar = arvif->ar;
+	struct ath12k_vif *ahvif;
+	struct ath12k *ar;
 
-	if (!arsta || !link_sta || !arg) {
-		ath12k_err(ar->ab, "Link STA/Peer assoc args is NULL\n");
+	if (!arvif || !arsta || !link_sta || !arg)
 		return;
-	}
+
+	ahvif = arvif->ahvif;
+	ar = arvif->ar;
 
 	/* For statically added mesh peers, keys will be programmed by user.
 	 * Reset the need_ptk_4_way/need_gtk_2_way flag when sending peer assoc.
 	 *
 	 * Save calculated phymode and nss for peer lookup.
 	 */
-	if (ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+	if (ahvif && ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
 		arg->need_ptk_4_way = false;
 		arg->need_gtk_2_way = false;
-		link_sta->sta->sta_extn.peer_info.mesh_peer_phymode = arg->peer_phymode;
-		link_sta->sta->sta_extn.peer_info.mesh_peer_nss = arg->peer_nss;
+		if (link_sta->sta) {
+			link_sta->sta->sta_extn.peer_info.mesh_peer_phymode = arg->peer_phymode;
+			link_sta->sta->sta_extn.peer_info.mesh_peer_nss = arg->peer_nss;
+		}
 	}
-
 	return;
 }
 #endif

@@ -352,6 +352,7 @@
 	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_RADIO_TX_ON_DFS) \
 	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
+	ATH12K_CFG(ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -473,6 +474,17 @@
 #define ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP \
 	ATH12K_CFG_INI_BOOL("skip_partner_chip_dump", true, \
 	"Indicate whether partner chip dump collection is needed for cumac hw crash")
+
+/*
+ * ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY - Force Mode2 recovery even when FW
+ * supports Mode3 (client-retaining) recovery.
+ *
+ * false = Use the best recovery mode supported by FW
+ * true  = Always use Mode2 recovery, skip Mode3 even if FW supports it
+ */
+#define ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY \
+	ATH12K_CFG_INI_BOOL("mlo_force_mode2_recovery", true, \
+	"Force Mode2 MLO recovery, skip Mode3 even if FW supports it")
 
 #define ATH12K_CFG_TWT_INTERFERENCE_THRESH_SETUP \
 	ATH12K_CFG_INI_UINT("twt_interference_thresh_setup", \

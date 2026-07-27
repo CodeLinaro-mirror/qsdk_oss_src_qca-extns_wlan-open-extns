@@ -1834,6 +1834,14 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 				pwr_modes[i]);
 			if (ret == ATH12K_6GHZ_MODE_VALIDATE_PASS)
 				return 0;
+
+			/* For SP mode, bypass blocklist check for a STA before
+			 * AFC power event — firmware SP data not yet available.
+			 */
+			if (pwr_modes[i] == IEEE80211_REG_SP_AP &&
+			    ahvif->vdev_type == WMI_VDEV_TYPE_STA &&
+			    !ar->afc.is_6ghz_afc_power_event_received)
+				return 0;
 		}
 
 		return -EINVAL;

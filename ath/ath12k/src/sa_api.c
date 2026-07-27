@@ -154,9 +154,10 @@ int ath12k_unregister_smart_ant_ops(void)
 }
 EXPORT_SYMBOL(ath12k_unregister_smart_ant_ops);
 
-int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool reconnect)
+int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool re_init)
 {
 	struct ath12k_link_vif *arvif, *sa_arvif = NULL;
+	u8 init_flag = SA_NEW_RECONFIG;
 	int ret;
 
 	if (!ar)
@@ -165,6 +166,8 @@ int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool reconnect)
 	if (!ath12k_smart_ant_is_enable(ar->ab))
 		return 0;
 
+	if (!re_init)
+		init_flag = SA_SSR_CONFIG;
 	/*
 	 * Find the first started AP or STA link vif on this radio.
 	 * sa_core_init() uses the arvif only to read vdev_type, chanctx,
@@ -189,21 +192,24 @@ int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool reconnect)
 		return 0;
 	}
 
-	ret = sa_core_deinit(ar, SA_NEW_RECONFIG);
+	ret = sa_core_deinit(ar, init_flag);
 	if (ret) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_ANY,
 			   "SA channel change: deinit failed (%d)\n", ret);
 		return ret;
 	}
 
-	ret = sa_core_init(ar, sa_arvif, SA_NEW_RECONFIG);
+	ret = sa_core_init(ar, sa_arvif, init_flag);
 	if (ret) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_ANY,
 			   "SA channel change: init failed (%d)\n", ret);
 		return ret;
 	}
 
-	if (reconnect)
+	/* Doesn't need to handle STA connection explicitly SSR enforces
+	 * STAs do disconnection.
+	 */
+	if (re_init)
 		sa_core_notify_all_peers_connected(ar);
 
 	return 0;

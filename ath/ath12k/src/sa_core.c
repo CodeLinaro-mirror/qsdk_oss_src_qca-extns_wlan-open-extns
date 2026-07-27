@@ -1538,7 +1538,7 @@ int sa_core_init(struct ath12k *ar,
 		rcu_read_unlock();
 		return -1;
 	}
-	sa_mode = ops->sa_algo_init(&init_cfg, init_flags);
+	sa_mode = ops->sa_algo_init(&init_cfg, (init_flags & SA_NEW_CONFIG));
 	rcu_read_unlock();
 
 	if (sa_mode < 0) {
@@ -1562,7 +1562,7 @@ int sa_core_init(struct ath12k *ar,
 	 */
 	sa_ar->enable_mask = SA_ENABLE_MASK | (init_cfg.txrx_feedback &
 			(SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK));
-	if (init_flags & SA_NEW_CONFIG) {
+	if ((init_flags & SA_NEW_CONFIG) || (init_flags & SA_SSR_CONFIG)) {
 		sa_ar->state = SA_INIT_DONE_STATE;
 		sa_core_get_gpio_config(ar->radio_idx, &gpio_cfg);
 		sa_core_get_rts_ant_flag(ar->radio_idx, &en_rts);
@@ -1690,7 +1690,7 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 		ath12k_dbg(ab, ATH12K_DBG_ANY, "SA Core Deinit already done!\n");
 		return 0;
 	}
-	if (init_flags) {
+	if (init_flags & SA_NEW_CONFIG) {
 		/* Call deinit under RCU so the module cannot be unloaded
 		 * while we are executing inside it.
 		 */

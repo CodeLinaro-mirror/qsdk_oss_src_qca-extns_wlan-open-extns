@@ -733,6 +733,7 @@ void ath12k_ini_override_runtime_params(struct ath12k_base *ab)
 	ab->mem_params.dp_params.rxdma_monitor_buf_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_MONITOR_BUF_RING_SIZE);
 	ab->mem_params.dp_params.rxdma_monitor_dst_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_RXDMA_MONITOR_DST_RING_SIZE);
 	ab->mem_params.dp_params.tx_monitor_buf_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_BUF_RING_SIZE);
+	ab->mem_params.dp_params.tx_monitor_buf_ring_fill_lvl = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_BUF_RING_FILL_LVL);
 	ab->mem_params.dp_params.tx_monitor_dst_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_DST_RING_SIZE);
 	ab->mem_params.dp_params.tx_monitor_num_ppdu_desc = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_NUM_PPDU_DESC);
 	ab->mem_params.dp_params.tx_monitor_num_status_buf = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_MONITOR_NUM_STATUS_BUF);

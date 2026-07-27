@@ -236,7 +236,7 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 		return -EINVAL;
 	}
 
-	dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, params->hw_link_id);
+	dp_peer = ath12k_dp_peer_find_by_addr(dp_hw, addr, vif);
 
 	if (dp_peer) {
 		spin_unlock_bh(&dp_hw->peer_hash_lock);
@@ -249,6 +249,7 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 	if (!dp_peer)
 		return -ENOMEM;
 	ether_addr_copy(dp_peer->addr, addr);
+	dp_peer->vif = vif;
 	dp_peer->sta = params->sta;
 	dp_peer->is_mlo = params->is_mlo;
 	dp_peer->peer_id = params->is_mlo ? params->peer_id : ATH12K_DP_PEER_ID_INVALID;
@@ -284,7 +285,8 @@ int ath12k_wifi6_dp_peer_create(struct ath12k_hw *ah, u8 *addr,
 }
 
 void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 *addr,
-				 struct ieee80211_sta *sta, u8 hw_link_id)
+				 struct ieee80211_sta *sta, u8 hw_link_id,
+				 struct ieee80211_vif *vif)
 {
 	struct ath12k_dp_peer *dp_peer;
 	struct ath12k_dp_hw *dp_hw = &ah->dp_hw;
@@ -295,7 +297,7 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 	if (sta)
 		dp_peer = ath12k_dp_peer_find_by_addr_and_sta(dp_hw, addr, sta);
 	else
-		dp_peer = ath12k_dp_vdev_peer_find(dp_hw, addr, hw_link_id);
+		dp_peer = ath12k_dp_peer_find_by_addr(dp_hw, addr, vif);
 
 	if (!dp_peer) {
 		spin_unlock_bh(&dp_hw->peer_hash_lock);

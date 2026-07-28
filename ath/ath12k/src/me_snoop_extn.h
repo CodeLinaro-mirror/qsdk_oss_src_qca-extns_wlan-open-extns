@@ -59,6 +59,11 @@ void ath12k_core_me_notifier_unregister_extn(struct ath12k_base *ab)
 {
 }
 
+int ath12k_me_snoop_print_extn(struct ath12k_base *ab, struct ath12k_me_db *db)
+{
+	return -1;
+}
+
 #else
 /*
  * Initialize / De-initialize the DB for the hash list in ath12k_vif
@@ -78,6 +83,9 @@ int ath12k_dp_me_tx_ucast_grp_extn(struct ath12k_dp *dp, struct ath12k_dp_vif *d
 				   struct ath12k_dp_peer *peer,
 				   void *app_data,
 				   struct ath12k_dp_tx_msdu_info *msdu_info);
+
+int ath12k_me_snoop_print_extn(struct ath12k_base *ab, struct ath12k_me_db *db);
+
 int ath12k_me_snoop_event_notify(struct notifier_block *nb, unsigned long action, void *data);
 
 void  ath12k_core_me_notifier_register_extn(struct ath12k_base *ab);

@@ -131,4 +131,11 @@ ath12k_ipa_cb_get_ta_peer_id(const struct ipa_wdi6_rx_skb_cb *cb)
 		     IPA_WDI6_CB_TA_PEER_ID_MASK);
 }
 
+static inline u8
+ath12k_ipa_cb_get_hw_link_id(const struct ipa_wdi6_rx_skb_cb *cb)
+{
+	return (u8)((cb->packed >> IPA_WDI6_CB_HW_LINK_ID_SHIFT) &
+		    IPA_WDI6_CB_HW_LINK_ID_MASK);
+}
+
 #endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

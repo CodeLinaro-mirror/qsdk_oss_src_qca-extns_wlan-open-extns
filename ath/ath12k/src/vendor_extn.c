@@ -3850,6 +3850,19 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		else
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_EXTRA_EHT_LTF to firmware");
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_MODE:
+		if (value > WMI_BA_MODE_BUFFER_SIZE_1024) {
+			ath12k_err(NULL, "BA mode value should be between 0 and %d\n",
+				   WMI_BA_MODE_BUFFER_SIZE_1024);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_BA_MODE, value);
+		if (!ret)
+			arvif->vap_cfg.ba_mode = value;
+		else
+			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_BA_MODE to firmware");
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_NSS:
 		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
 				WMI_VDEV_PARAM_UL_NSS, value | WMI_HOST_VDEV_PARAM_EHT_MODE);
@@ -10966,6 +10979,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EXTRA_EHT_LTF:
 		*value = arvif->vap_cfg.extra_eht_ltf;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_MODE:
+		*value = arvif->vap_cfg.ba_mode;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_EHT_UL_NSS:

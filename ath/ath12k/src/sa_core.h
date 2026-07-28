@@ -21,6 +21,8 @@
 #define SA_NEW_RECONFIG			0x00
 /* Indicates vap init */
 #define SA_NEW_CONFIG			0x01
+/* Indicates SSR Handling */
+#define SA_SSR_CONFIG			0x02
 /* Mask to validate PER threashold */
 #define SA_MASK_PER_TH			0xFF
 /* Mask to validate minimum training packets */

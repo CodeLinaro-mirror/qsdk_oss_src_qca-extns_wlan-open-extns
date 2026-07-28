@@ -150,7 +150,8 @@ static inline int ath12k_smart_ant_api_stop(struct ath12k *ar, u8 init_flags)
 /**
  * ath12k_smart_ant_api_channel_change - Reconfigure Smart Antenna after AP channel change
  * @ar: ath12k radio context on which the channel changed
- * @reconnect: Set to re-connect the STAs
+ * @re_init: true during channel change to do partial init.
+ *           false during SSR handling to do full init with previous pdev configs
  *
  * Handles an AP channel change by tearing down and re-initialising the Smart
  * Antenna core in reconfiguration mode (SA_NEW_RECONFIG), then re-notifying
@@ -165,8 +166,18 @@ static inline int ath12k_smart_ant_api_stop(struct ath12k *ar, u8 init_flags)
  *
  * Return: 0 on success, negative errno on failure.
  */
-int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool reconnect);
+int ath12k_smart_ant_api_channel_change(struct ath12k *ar, bool re_init);
 
+/**
+ * ath12k_smart_ant_api_recovery_handler - Handle SSR event
+ * @ar: ath12k radio context on which the SSR post action triggered
+ *
+ * Handle SSR by enabling Smart Antenna feature by doing full init sequence
+ * with previous pdev configs. Doesn't need to handle STA connection explicitly
+ * as it all STAs do reconnection.
+ *
+ * Return: none with internal error reporting
+ */
 static inline void ath12k_smart_ant_api_recovery_handler(struct ath12k *ar)
 {
 	ath12k_smart_ant_api_channel_change(ar, false);

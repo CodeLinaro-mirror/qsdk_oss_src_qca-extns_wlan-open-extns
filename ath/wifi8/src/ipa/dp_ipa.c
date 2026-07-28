@@ -575,10 +575,10 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 	struct ath12k_dp_link_peer *dp_link_peer;
 	struct ieee80211_rx_status *status;
 	struct ath12k_link_vif *cumac_arvif;
+	struct ath12k_dp_hw_group *dp_hw_grp;
 	int i;
 	u16 peer_id;
 	u8 vdev_id, hw_link_id;
-
 	if (!skb) {
 		ath12k_ipa_err(NULL, "skb is NULL");
 		return;
@@ -600,55 +600,33 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 
 	cumac_ab = ipa_ctx->ab;
 	cumac_dp = ath12k_ab_to_dp(cumac_ab);
+	dp_hw_grp = cumac_dp->dp_hw_grp;
 
 	eth = skb_eth_hdr(skb);
 	peer_id = ath12k_ipa_cb_get_ta_peer_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
 	vdev_id = ath12k_ipa_cb_get_vap_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
+	hw_link_id = ath12k_ipa_cb_get_hw_link_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
 
 	rcu_read_lock();
 
-	cumac_arvif = ath12k_mac_get_arvif_by_vdev_id(cumac_ab, vdev_id);
-	if (!cumac_arvif) {
-		ath12k_ipa_err(cumac_ab, "cumac_arvif is NULL");
+	dp_pdev = ath12k_dp_hw_grp_to_dp_pdev(cumac_dp->dp_hw_grp, hw_link_id);
+	if (!dp_pdev) {
+		ath12k_ipa_err(cumac_ab, "IPA_W2I: dp_pdev NULL for hw_link_id=%u", hw_link_id);
 		rcu_read_unlock();
 		goto drop;
 	}
 
-	cumac_ar = cumac_arvif->ar;
-	if (!cumac_ar) {
-		ath12k_ipa_err(cumac_ab, "cumac_ar is NULL");
+	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp_pdev->dp, dp_pdev, peer_id);
+	if(!dp_peer) {
+		ath12k_ipa_err(cumac_ab, "IPA_W2I: dp_peer NULL for hw_link_id=%u peer_id %u", hw_link_id, peer_id);
 		rcu_read_unlock();
 		goto drop;
-	}
-
-	cumac_dp_pdev = ath12k_dp_to_dp_pdev(cumac_dp, cumac_ar->pdev_idx);
-	dp_peer = ath12k_dp_peer_find_by_peerid_index(cumac_dp, cumac_dp_pdev, peer_id);
-	if (!dp_peer) {
-		ath12k_ipa_err(cumac_ab, "dp_peer is null (peer_id=%d mac=%pM)", peer_id,
-			   eth->h_source);
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	for (i = 0; i < ATH12K_DP_PEER_MAX_MLO_LINKS; i++) {
-		dp_link_peer = rcu_dereference(dp_peer->link_peers[i]);
-		if (dp_link_peer) {
-			hw_link_id = (u8)i;
-			break;
-		}
 	}
 
 	if (!dp_peer->is_authorized) {
 		ath12k_ipa_err(cumac_ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
 			       peer_id, eth->h_source, eth->h_dest,
 			       cpu_to_be16(eth->h_proto), dp_peer->addr);
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	dp_pdev = ath12k_dp_hw_grp_to_dp_pdev(cumac_dp->dp_hw_grp, hw_link_id);
-	if (!dp_pdev) {
-		ath12k_ipa_err(cumac_ab, "IPA_W2I: dp_pdev NULL for hw_link_id=%u", hw_link_id);
 		rcu_read_unlock();
 		goto drop;
 	}
@@ -669,7 +647,6 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 
 	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
 	ipa_ctx->stats.sent_to_mac++;
-
 	rcu_read_unlock();
 	return;
 drop:

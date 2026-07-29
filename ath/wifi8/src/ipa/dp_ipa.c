@@ -1000,6 +1000,10 @@ ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 	ipa_ctx = IPA_CTX(ab);
 	ipa_ctx->arch_ops = &ipa_wifi8_arch_ops;
 
+	ath12k_ipa_update_ipa_config(ab);
+	if (!dp_ipa_enable())
+		return 0;
+
 	ret = ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(ipa_ctx);
 	if (ret) {
 		ath12k_ipa_err(ab, "failed to set ipa_ctx for all ab");

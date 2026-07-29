@@ -107,7 +107,6 @@ bool ath12k_wifi8_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 			   ATH12K_MLO_METADATA_MLO_ASSIST_TAG)) {
 			link_id = u32_get_bits(skb->mark,
 					       ATH12K_MLO_METADATA_LINKID_MASK);
-
 		} else if (info_flags & IEEE80211_TX_CTL_HW_80211_ENCAP) {
 			if (unlikely(!ath12k_wifi8_dp_tx_fetch_link_id(ahvif,
 								       skb, &link_id)))
@@ -143,7 +142,7 @@ bool ath12k_wifi8_dp_tx_check_fast_path(struct sk_buff *skb, u32 info_flags,
 		if (likely(is_recycler))
 			skb_ctrl->flags |= DP_SKB_RECYCLED;
 		ath12k_wifi8_ucast_handler(dp_vif, link_id, NULL, skb, skb_ctrl,
-					   qos_nw_delay, vlan_ahvif, NULL);
+					   qos_nw_delay, vlan_ahvif, NULL, false);
 		return true;
 
 drop:

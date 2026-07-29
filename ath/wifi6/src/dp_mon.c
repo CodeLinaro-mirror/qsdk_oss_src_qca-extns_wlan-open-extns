@@ -757,12 +757,20 @@ int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 m
 	if (!ath12k_dp_mon_rxdma1_enable(dp))
 		return 0;
 
-	ret = ath12k_dp_srng_setup(ab, ring,
-				   HAL_RXDMA_MONITOR_DST,
-				   0, srng_id,
-				   HAL_RX_MON_DST_RING_SIZE);
+	ret = ath12k_dp_srng_alloc(ab, ring,
+				    HAL_RXDMA_MONITOR_DST,
+				    0, srng_id,
+				    HAL_RX_MON_DST_RING_SIZE);
 	if (ret) {
-		ath12k_warn(dp, "failed to setup mon dest ring %d\n", srng_id);
+		ath12k_warn(dp, "failed to alloc mon dest ring %d\n", srng_id);
+		return ret;
+	}
+
+	ret = ath12k_dp_srng_init(ab, ring,
+				   HAL_RXDMA_MONITOR_DST,
+				   0, srng_id);
+	if (ret) {
+		ath12k_warn(dp, "failed to init mon dest ring %d\n", srng_id);
 		return ret;
 	}
 

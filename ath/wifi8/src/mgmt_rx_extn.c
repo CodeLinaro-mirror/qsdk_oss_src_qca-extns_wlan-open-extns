@@ -63,10 +63,10 @@ void ath12k_wifi8_mgmt_highpri_workqueue_extn(struct work_struct *work)
 	struct ath12k_base *ab = irq_grp->ab;
 
 	if (test_bit(ATH12K_FLAG_UMAC_RECOVERY_IN_PROGRESS, &ab->dev_flags))
-		return;
+		goto exit;
 
 	ath12k_wifi8_mgmt_highpri_service_srng_extn(ab, irq_grp);
-
+exit:
 	ath12k_mgmt_irq_grp_enable(irq_grp);
 }
 #else
@@ -76,10 +76,10 @@ void ath12k_wifi8_mgmt_highpri_tasklet_extn(struct tasklet_struct *t)
 	struct ath12k_base *ab = irq_grp->ab;
 
 	if (test_bit(ATH12K_FLAG_UMAC_RECOVERY_IN_PROGRESS, &ab->dev_flags))
-		return;
+		goto exit;
 
 	ath12k_wifi8_mgmt_highpri_service_srng_extn(ab, irq_grp);
-
+exit:
 	ath12k_mgmt_irq_grp_enable(irq_grp);
 }
 #endif

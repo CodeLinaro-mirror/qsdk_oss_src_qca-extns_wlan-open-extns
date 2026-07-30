@@ -27,6 +27,7 @@
 #include "../net/wireless/nl80211.h"
 #include "../debug.h"
 #include "../mac.h"
+#include "../erp.h"
 #include "esp_extn.h"
 #include "ini.h"
 #include "../cmn_defs.h"
@@ -1763,6 +1764,74 @@ static int ath12k_vendor_event_iface_reload_link(struct wiphy *wiphy,
         cfg80211_vendor_event(skb, GFP_KERNEL);
 
         return 0;
+}
+
+/**
+ * ath12k_vendor_suspend_device_event - Send a vendor NL event notifying
+ * userspace of a suspend_device operation outcome.
+ *
+ * @ar:     ath12k radio identified by radio_idx
+ * @status: 0 on success, negative error code on failure
+ *
+ * Uses the same event index and attribute set as the bypass_device event
+ * (QCA_NL80211_VENDOR_SUBCMD_SET_WIFI_INDEX) so userspace can handle both
+ * with a single listener:
+ *   PARAM  = QCA_WLAN_VENDOR_WIFI_PARAM_SUSPEND_DEVICE (96)
+ *   VALUE  = ar->pdev_suspend (1 = suspended, 0 = resumed)
+ *   STATUS = 0 on success, non-zero on failure
+ */
+static int ath12k_vendor_suspend_device_event(struct ath12k *ar,
+					      int status)
+{
+	struct ath12k_base *ab = ar->ab;
+	struct sk_buff *skb;
+
+	if (!ar->ah || !ar->ah->hw) {
+		ath12k_err(ab,
+			   "suspend_device_event: no valid ar/hw to send event\n");
+		return -EINVAL;
+	}
+
+	skb = cfg80211_vendor_event_alloc(ar->ah->hw->wiphy,
+					  NULL,
+					  NLMSG_DEFAULT_SIZE,
+					  QCA_NL80211_VENDOR_SUBCMD_SET_WIFI_INDEX,
+					  GFP_KERNEL);
+	if (!skb) {
+		ath12k_err(ab,
+			   "suspend_device_event: failed to alloc event skb\n");
+		return -ENOMEM;
+	}
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SET_RADIO_PARAM,
+			QCA_WLAN_VENDOR_WIFI_PARAM_SUSPEND_DEVICE)) {
+		ath12k_err(ab,
+			   "suspend_device_event: failed to put RADIO_PARAM\n");
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SET_RADIO_VALUE,
+			ar->pdev_suspend)) {
+		ath12k_err(ab,
+			   "suspend_device_event: failed to put RADIO_VALUE\n");
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	if (nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_SET_RADIO_STATUS,
+			(u32)status)) {
+		ath12k_err(ab,
+			   "suspend_device_event: failed to put RADIO_STATUS\n");
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	cfg80211_vendor_event(skb, GFP_KERNEL);
+	ath12k_info(ab,
+		    "suspend_device_event: sent value=%u status=%d\n",
+		    ar->pdev_suspend, status);
+	return 0;
 }
 
 static int ath12k_wsi_bypass_event(struct ath12k_base *ab, int status)
@@ -9462,6 +9531,15 @@ int ath12k_vendor_set_wiphy_params_extn(struct wiphy *wiphy,
 
 		ar->radio_cfg.radio_cfg_extn.scan_f_strict_passive_pch = value;
 		return 0;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_SUSPEND_DEVICE:
+		if (!params->data || params->data_len < sizeof(u32)) {
+			ath12k_err(NULL, "suspend_device: missing op value\n");
+			return -EINVAL;
+		}
+		memcpy(&value, params->data, sizeof(value));
+		params->value = value;
+		return ath12k_vendor_suspend_device_extn(wiphy, params);
+
 	default:
 		if (params->data_len < sizeof(u32)) {
 			ath12k_err(NULL, "Invalid data len: %u for radio param: %d\n",
@@ -13192,6 +13270,20 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		*value = ar->ab->is_bypassed ? 1 : 0;
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_WIFI_PARAM_SUSPEND_DEVICE:
+		/* Report 1 if the radio's pdev is currently suspended, else 0.
+		 * pdev_suspend is set by the WMI pdev suspend event handler
+		 * after firmware confirms the suspend, and cleared by the WMI
+		 * pdev resume event handler after firmware confirms the resume.
+		 * This reflects the actual firmware-level suspend state of the
+		 * radio identified by radio_idx.
+		 */
+		*value = ar->pdev_suspend ? 1 : 0;
+		ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+			   "get_suspend_state: radio_idx=%u pdev_suspend=%d\n",
+			   ar->radio_idx, ar->pdev_suspend);
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_BAND_INFO:
 		*value = ath12k_vendor_get_radio_band_info(ar);
 		ret = 0;
@@ -14282,6 +14374,235 @@ err:
 }
 
 /**
+ * ath12k_vendor_suspend_device_prechecks - Validate preconditions for
+ * suspend/resume operations.
+ * @ar:  ath12k radio identified by radio_idx
+ * @op:  operation (1 = suspend, 0 = resume)
+ *
+ * Checks common to both suspend and resume:
+ *  - op must be 1 (suspend) or 0 (resume)
+ *  - ab must not be bypassed
+ *  - no SSR in progress
+ *  - ERP must be off
+ *  - no WSI remap in progress
+ *  - Q6 must not be powered down
+ *
+ * Additional checks for suspend (op == 1):
+ *  - no active vdevs on the radio
+ *  - radio not already in pdev_suspend state
+ *
+ * Additional checks for resume (op == 0):
+ *  - radio must have pdev_user_suspend set
+ *
+ * Return: 0 if all prechecks pass, negative error code otherwise.
+ */
+static int ath12k_vendor_suspend_device_prechecks(struct ath12k *ar,
+						  u32 op)
+{
+	struct ath12k_base *ab = ar->ab;
+	int erp_state;
+
+	if (op != 1 && op != 0) {
+		ath12k_err(ab,
+			   "suspend_device: invalid value %u (1=suspend, 0=resume)\n",
+			   op);
+		return -EINVAL;
+	}
+
+	/* Common prechecks for both suspend and resume */
+	if (ab->is_bypassed) {
+		ath12k_err(ab, "suspend_device: ab is bypassed\n");
+		return -EPERM;
+	}
+
+	if (ath12k_hw_group_recovery_in_progress(ab->ag)) {
+		ath12k_err(ab, "suspend_device: SSR is in progress\n");
+		return -EBUSY;
+	}
+
+	erp_state = ath12k_erp_get_sm_state();
+	if (erp_state != ATH12K_ERP_OFF) {
+		ath12k_err(ab,
+			   "suspend_device: ERP is active (state=%d), cannot suspend\n",
+			   erp_state);
+		return -EBUSY;
+	}
+
+	if (ab->ag->wsi_remap_in_progress) {
+		ath12k_err(ab, "suspend_device: WSI bypass in progress\n");
+		return -EBUSY;
+	}
+
+	if (test_bit(ATH12K_FLAG_Q6_POWER_DOWN, &ab->dev_flags)) {
+		ath12k_err(ab, "suspend_device: Q6 is powered down\n");
+		return -EPERM;
+	}
+
+	/* Suspend-specific prechecks */
+	if (op == 1) {
+		if (ar->num_created_vdevs > 0) {
+			ath12k_err(ab,
+				   "suspend_device: vaps active on radio_idx=%u, cannot suspend\n",
+				   ar->radio_idx);
+			return -EBUSY;
+		}
+		/* Reject suspend if pdev_suspend is already set.
+		 * i.e the device is already in suspended state.
+		 */
+		if (ar->pdev_suspend) {
+			ath12k_err(ab,
+				   "suspend_device: radio_idx=%u already suspended (pdev_suspend=1), cannot suspend again\n",
+				   ar->radio_idx);
+			return -EALREADY;
+		}
+	} else {
+		if (!ar->pdev_user_suspend) {
+			ath12k_err(ab,
+				   "suspend_device: radio_idx=%u not user-suspended, cannot resume\n",
+				   ar->radio_idx);
+			return -EALREADY;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_suspend_device_extn - Suspend or resume a single ath12k_base.
+ * @wiphy: wiphy pointer (used to derive ah and the radio array)
+ * @params: generic vendor params; radio_idx identifies the target radio and
+ *          thereby the ab to control; value selects the operation:
+ *            1 - suspend: calls ath12k_mac_stop() on the radio identified by radio_idx
+ *            0 - resume:  calls ath12k_mac_start() on the radio identified by radio_idx
+ *
+ * Prechecks performed (both operations):
+ *  - params->value must be 1 (suspend) or 0 (resume)
+ *  - radio_idx must be valid (not INVALID_RADIO_INDEX and within range)
+ *  - ab must not be bypassed
+ *  - no SSR in progress
+ *  - ERP must be off
+ *  - no WSI remap in progress
+ *  - Q6 must not be powered down
+ *  - hw state must be ATH12K_HW_STATE_ON
+ *
+ * Additional prechecks for suspend (op == 1):
+ *  - no active vdevs on the radio
+ *  - radio not already in pdev_suspend state
+ *
+ * Additional prechecks for resume (op == 0):
+ *  - radio must have pdev_user_suspend set
+ *
+ * The caller must hold the wiphy mutex; hw_mutex is acquired internally
+ * around the ath12k_mac_stop() / ath12k_mac_start() calls.
+ *
+ * Return: 0 on success, negative error code on failure.
+ */
+int ath12k_vendor_suspend_device_extn(struct wiphy *wiphy,
+				     struct ath12k_wifi_generic_params *params)
+{
+	struct ieee80211_hw *hw;
+	struct ath12k_hw *ah;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	u8 radio_idx;
+	u32 op;
+	int ret = 0;
+
+	lockdep_assert_wiphy(wiphy);
+
+	if (!params) {
+		ath12k_err(NULL, "suspend_device: NULL params\n");
+		return -EINVAL;
+	}
+
+	op = params->value;
+
+	radio_idx = params->radio_idx;
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	ah = hw->priv;
+
+	if (radio_idx == INVALID_RADIO_INDEX || radio_idx >= ah->num_radio) {
+		ath12k_err(NULL,
+			   "suspend_device: invalid radio_idx %u (valid range 0-%u)\n",
+			   radio_idx, ah->num_radio ? ah->num_radio - 1 : 0);
+		return -EINVAL;
+	}
+
+	ar = &ah->radio[radio_idx];
+	ab = ar->ab;
+
+	/* From this point ab is valid — all failures post an event. */
+
+	ret = ath12k_vendor_suspend_device_prechecks(ar, op);
+	if (ret)
+		goto fail;
+
+	mutex_lock(&ah->hw_mutex);
+
+	if (ah->state != ATH12K_HW_STATE_ON) {
+		ath12k_err(ab,
+			   "suspend_device: hw not in ON state (state=%d)\n",
+			   ah->state);
+		ret = -EBUSY;
+		goto unlock_fail;
+	}
+
+	if (op == 1) {
+		/* Suspend: set pdev_user_suspend so that ath12k_mac_stop()
+		 * calls ath12k_mac_pdev_suspend() unconditionally (subject to the
+		 * allocated_vdev_map and pdev_suspend prechecks inside mac_stop).
+		 */
+		ar->pdev_user_suspend = true;
+		ath12k_mac_stop(ar);
+		ath12k_dbg(ab, ATH12K_DBG_CFG,
+			   "suspend_device: radio_idx=%u stopped "
+			   "pdev_user_suspend=%d pdev_suspend=%d\n",
+			   ar->radio_idx, ar->pdev_user_suspend,
+			   ar->pdev_suspend);
+
+		/* Determine the actual suspend outcome: ath12k_mac_pdev_suspend()
+		 * inside mac_stop may time out (logs a warning but does not fail
+		 * mac_stop), in which case pdev_suspend stays false.  Set
+		 * ret=-ETIMEDOUT if the radio did not confirm the suspend so the
+		 * unified event at fail: reports the real outcome.
+		 */
+		if (!ar->pdev_suspend)
+			ret = -ETIMEDOUT;
+
+		ath12k_info(ab,
+			    "suspend_device: ab suspended ret=%d\n", ret);
+	} else {
+		/* Resume: pdev_user_suspend is the authoritative flag that this
+		 * radio was stopped by a suspend_device command.
+		 */
+		ret = ath12k_mac_start(ar);
+		if (ret) {
+			ath12k_err(ab,
+				   "suspend_device: mac_start failed radio_idx=%u ret=%d "
+				   "pdev_user_suspend=%d pdev_suspend=%d\n",
+				   ar->radio_idx, ret,
+				   ar->pdev_user_suspend, ar->pdev_suspend);
+			ar->pdev_user_suspend = false;
+			goto unlock_fail;
+		}
+		ar->pdev_user_suspend = false;
+		ab->powerup_triggered = false;
+		ath12k_info(ab, "suspend_device: ab resumed successfully\n");
+	}
+
+unlock_fail:
+	mutex_unlock(&ah->hw_mutex);
+fail:
+	/* Single unified event for both success and failure paths.
+	 * ar->pdev_suspend reflects the current firmware suspend state of
+	 * the radio identified by radio_idx; ret is 0 on success, negative
+	 * on failure or timeout.
+	 */
+	ath12k_vendor_suspend_device_event(ar, ret);
+	return ret;
+}
+
+/*
  * ath12k_vendor_send_event - Driver helper to
  * send a device-wide firmware recovery vendor event
  * @ab: Pointer to the ath12k base device context

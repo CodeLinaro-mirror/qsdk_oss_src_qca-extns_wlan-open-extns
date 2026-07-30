@@ -11410,96 +11410,182 @@ static char ath12k_vendor_get_bw_dir(enum nl80211_band band, u16 chan)
 	return ' ';
 }
 
+/**
+ * struct ath12k_vendor_chan_center_map - Primary to center channel mapping
+ * @chan: Primary 20 MHz channel number.
+ * @center: Center channel index used for the requested bandwidth.
+ */
+struct ath12k_vendor_chan_center_map {
+	u16 chan;
+	u16 center;
+};
+
+/**
+ * struct ath12k_vendor_chan_320_center_map - 6 GHz 320 MHz center mapping
+ * @chan: Primary 20 MHz channel number.
+ * @center1: First valid 320 MHz center channel index for @chan.
+ * @center2: Second valid overlapping 320 MHz center index (0 if none).
+ */
+struct ath12k_vendor_chan_320_center_map {
+	u16 chan;
+	u16 center1;
+	u16 center2;
+};
+
+static const struct ath12k_vendor_chan_center_map
+ath12k_vendor_5g_bw80_center_map[] = {
+	{  36,  42 }, {  40,  42 }, {  44,  42 }, {  48,  42 },
+	{  52,  58 }, {  56,  58 }, {  60,  58 }, {  64,  58 },
+	{ 100, 106 }, { 104, 106 }, { 108, 106 }, { 112, 106 },
+	{ 116, 122 }, { 120, 122 }, { 124, 122 }, { 128, 122 },
+	{ 132, 138 }, { 136, 138 }, { 140, 138 }, { 144, 138 },
+	{ 149, 155 }, { 153, 155 }, { 157, 155 }, { 161, 155 },
+	{ 165, 171 }, { 169, 171 }, { 173, 171 }, { 177, 171 },
+};
+
+static const struct ath12k_vendor_chan_center_map
+ath12k_vendor_5g_bw160_center_map[] = {
+	{  36,  50 }, {  40,  50 }, {  44,  50 }, {  48,  50 },
+	{  52,  50 }, {  56,  50 }, {  60,  50 }, {  64,  50 },
+	{ 100, 114 }, { 104, 114 }, { 108, 114 }, { 112, 114 },
+	{ 116, 114 }, { 120, 114 }, { 124, 114 }, { 128, 114 },
+	{ 149, 163 }, { 153, 163 }, { 157, 163 }, { 161, 163 },
+	{ 165, 163 }, { 169, 163 }, { 173, 163 }, { 177, 163 },
+};
+
+static const struct ath12k_vendor_chan_center_map
+ath12k_vendor_6g_bw80_center_map[] = {
+	{   1,   7 }, {   5,   7 }, {   9,   7 }, {  13,   7 },
+	{  17,  23 }, {  21,  23 }, {  25,  23 }, {  29,  23 },
+	{  33,  39 }, {  37,  39 }, {  41,  39 }, {  45,  39 },
+	{  49,  55 }, {  53,  55 }, {  57,  55 }, {  61,  55 },
+	{  65,  71 }, {  69,  71 }, {  73,  71 }, {  77,  71 },
+	{  81,  87 }, {  85,  87 }, {  89,  87 }, {  93,  87 },
+	{  97, 103 }, { 101, 103 }, { 105, 103 }, { 109, 103 },
+	{ 113, 119 }, { 117, 119 }, { 121, 119 }, { 125, 119 },
+	{ 129, 135 }, { 133, 135 }, { 137, 135 }, { 141, 135 },
+	{ 145, 151 }, { 149, 151 }, { 153, 151 }, { 157, 151 },
+	{ 161, 167 }, { 165, 167 }, { 169, 167 }, { 173, 167 },
+	{ 177, 183 }, { 181, 183 }, { 185, 183 }, { 189, 183 },
+	{ 193, 199 }, { 197, 199 }, { 201, 199 }, { 205, 199 },
+	{ 209, 215 }, { 213, 215 }, { 217, 215 }, { 221, 215 },
+};
+
+static const struct ath12k_vendor_chan_center_map
+ath12k_vendor_6g_bw160_center_map[] = {
+	{   1,  15 }, {   5,  15 }, {   9,  15 }, {  13,  15 },
+	{  17,  15 }, {  21,  15 }, {  25,  15 }, {  29,  15 },
+	{  33,  47 }, {  37,  47 }, {  41,  47 }, {  45,  47 },
+	{  49,  47 }, {  53,  47 }, {  57,  47 }, {  61,  47 },
+	{  65,  79 }, {  69,  79 }, {  73,  79 }, {  77,  79 },
+	{  81,  79 }, {  85,  79 }, {  89,  79 }, {  93,  79 },
+	{  97, 111 }, { 101, 111 }, { 105, 111 }, { 109, 111 },
+	{ 113, 111 }, { 117, 111 }, { 121, 111 }, { 125, 111 },
+	{ 129, 143 }, { 133, 143 }, { 137, 143 }, { 141, 143 },
+	{ 145, 143 }, { 149, 143 }, { 153, 143 }, { 157, 143 },
+	{ 161, 175 }, { 165, 175 }, { 169, 175 }, { 173, 175 },
+	{ 177, 175 }, { 181, 175 }, { 185, 175 }, { 189, 175 },
+	{ 193, 207 }, { 197, 207 }, { 201, 207 }, { 205, 207 },
+	{ 209, 207 }, { 213, 207 }, { 217, 207 }, { 221, 207 },
+};
+
+static const struct ath12k_vendor_chan_320_center_map
+ath12k_vendor_6g_bw320_center_map[] = {
+	{   1,  31,   0 }, {   5,  31,   0 }, {   9,  31,   0 },
+	{  13,  31,   0 }, {  17,  31,   0 }, {  21,  31,   0 },
+	{  25,  31,   0 }, {  29,  31,   0 }, {  33,  31,  63 },
+	{  37,  31,  63 }, {  41,  31,  63 }, {  45,  31,  63 },
+	{  49,  31,  63 }, {  53,  31,  63 }, {  57,  31,  63 },
+	{  61,  31,  63 }, {  65,  63,  95 }, {  69,  63,  95 },
+	{  73,  63,  95 }, {  77,  63,  95 }, {  81,  63,  95 },
+	{  85,  63,  95 }, {  89,  63,  95 }, {  93,  63,  95 },
+	{  97,  95, 127 }, { 101,  95, 127 }, { 105,  95, 127 },
+	{ 109,  95, 127 }, { 113,  95, 127 }, { 117,  95, 127 },
+	{ 121,  95, 127 }, { 125,  95, 127 }, { 129, 127, 159 },
+	{ 133, 127, 159 }, { 137, 127, 159 }, { 141, 127, 159 },
+	{ 145, 127, 159 }, { 149, 127, 159 }, { 153, 127, 159 },
+	{ 157, 127, 159 }, { 161, 159, 191 }, { 165, 159, 191 },
+	{ 169, 159, 191 }, { 173, 159, 191 }, { 177, 159, 191 },
+	{ 181, 159, 191 }, { 185, 159, 191 }, { 189, 159, 191 },
+	{ 193, 191,   0 }, { 197, 191,   0 }, { 201, 191,   0 },
+	{ 205, 191,   0 }, { 209, 191,   0 }, { 213, 191,   0 },
+	{ 217, 191,   0 }, { 221, 191,   0 },
+};
+
+static u16
+ath12k_vendor_center_from_table(u16 chan,
+				const struct ath12k_vendor_chan_center_map *table,
+				size_t num_entries)
+{
+	size_t i;
+
+	for (i = 0; i < num_entries; i++) {
+		if (table[i].chan == chan)
+			return table[i].center;
+	}
+
+	return 0;
+}
+
+static const struct ath12k_vendor_chan_320_center_map *
+ath12k_vendor_320_centers_from_table(u16 chan)
+{
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(ath12k_vendor_6g_bw320_center_map); i++) {
+		if (ath12k_vendor_6g_bw320_center_map[i].chan == chan)
+			return &ath12k_vendor_6g_bw320_center_map[i];
+	}
+
+	return NULL;
+}
+
 static void ath12k_vendor_5g_center_freq_idx(u16 chan, u16 bw, u16 *center)
 {
-	static const u8 bw80_starts[] = {36, 52, 100, 116, 132, 149};
-	static const u8 bw160_starts[] = {36, 100, 149};
-	const u8 *starts;
-	int num_starts;
-	u8 span;
-	u16 center_offset;
-	int i;
-
 	if (!center)
 		return;
 
 	*center = 0;
 
 	if (bw == ATH12K_VENDOR_BW_80_MHZ) {
-		starts = bw80_starts;
-		num_starts = ARRAY_SIZE(bw80_starts);
-		span = ATH12K_VENDOR_5G_BW80_SPAN;
-		center_offset = ATH12K_VENDOR_5G_BW80_CENTER_OFFSET;
+		*center = ath12k_vendor_center_from_table(
+				chan,
+				ath12k_vendor_5g_bw80_center_map,
+				ARRAY_SIZE(ath12k_vendor_5g_bw80_center_map));
 	} else if (bw == ATH12K_VENDOR_BW_160_MHZ) {
-		starts = bw160_starts;
-		num_starts = ARRAY_SIZE(bw160_starts);
-		span = ATH12K_VENDOR_5G_BW160_SPAN;
-		center_offset = ATH12K_VENDOR_5G_BW160_CENTER_OFFSET;
-	} else {
-		return;
+		*center = ath12k_vendor_center_from_table(
+				chan,
+				ath12k_vendor_5g_bw160_center_map,
+				ARRAY_SIZE(ath12k_vendor_5g_bw160_center_map));
 	}
-
-	for (i = 0; i < num_starts; i++) {
-		u16 start = starts[i];
-
-		if (chan < start || chan > start + span)
-			continue;
-
-		if ((chan - start) % ATH12K_VENDOR_CHAN_STEP)
-			continue;
-
-		*center = start + center_offset;
-		return;
-	}
-
-	return;
 }
 
 static void ath12k_vendor_6g_center_freq_idx(u16 chan, u16 bw, u16 *center)
 {
-	u16 start_chan;
-	u16 center_chan;
-
 	if (!center)
 		return;
 
 	*center = 0;
 
-	if (chan == 2 || chan < ATH12K_VENDOR_6G_MIN_CHAN ||
-	    chan > ATH12K_VENDOR_6G_MAX_CHAN ||
-	    ((chan - ATH12K_VENDOR_6G_MIN_CHAN) % ATH12K_VENDOR_CHAN_STEP))
+	if (chan < ATH12K_VENDOR_6G_MIN_CHAN || chan > ATH12K_VENDOR_6G_MAX_CHAN)
 		return;
 
 	if (bw == ATH12K_VENDOR_BW_80_MHZ) {
-		start_chan = ATH12K_VENDOR_6G_MIN_CHAN +
-			     (((chan - ATH12K_VENDOR_6G_MIN_CHAN) /
-			      ATH12K_VENDOR_6G_BW80_BLOCK_SIZE) *
-			      ATH12K_VENDOR_6G_BW80_BLOCK_SIZE);
-		if (start_chan > ATH12K_VENDOR_6G_BW80_MAX_START_CHAN ||
-		    chan > start_chan + ATH12K_VENDOR_5G_BW80_SPAN)
-			return;
-		center_chan = start_chan + ATH12K_VENDOR_5G_BW80_CENTER_OFFSET;
+		*center = ath12k_vendor_center_from_table(
+				chan,
+				ath12k_vendor_6g_bw80_center_map,
+				ARRAY_SIZE(ath12k_vendor_6g_bw80_center_map));
 	} else if (bw == ATH12K_VENDOR_BW_160_MHZ) {
-		start_chan = ATH12K_VENDOR_6G_MIN_CHAN +
-			     (((chan - ATH12K_VENDOR_6G_MIN_CHAN) /
-			      ATH12K_VENDOR_6G_BW160_BLOCK_SIZE) *
-			      ATH12K_VENDOR_6G_BW160_BLOCK_SIZE);
-		if (start_chan > ATH12K_VENDOR_6G_BW160_MAX_START_CHAN ||
-		    chan > start_chan + ATH12K_VENDOR_5G_BW160_SPAN)
-			return;
-		center_chan = start_chan + ATH12K_VENDOR_5G_BW160_CENTER_OFFSET;
-	} else {
-		return;
+		*center = ath12k_vendor_center_from_table(
+				chan,
+				ath12k_vendor_6g_bw160_center_map,
+				ARRAY_SIZE(ath12k_vendor_6g_bw160_center_map));
 	}
-
-	*center = center_chan;
-	return;
 }
 
 static void ath12k_vendor_6g_320_centers(u16 chan, u16 *center1, u16 *center2)
 {
-	u16 start_chan;
-	u16 count = 0;
+	const struct ath12k_vendor_chan_320_center_map *centers;
 
 	if (!center1 || !center2)
 		return;
@@ -11507,29 +11593,15 @@ static void ath12k_vendor_6g_320_centers(u16 chan, u16 *center1, u16 *center2)
 	*center1 = 0;
 	*center2 = 0;
 
-	if (chan == 2 || chan < ATH12K_VENDOR_6G_MIN_CHAN ||
-	    chan > ATH12K_VENDOR_6G_MAX_CHAN ||
-	    ((chan - ATH12K_VENDOR_6G_MIN_CHAN) % ATH12K_VENDOR_CHAN_STEP))
+	if (chan < ATH12K_VENDOR_6G_MIN_CHAN || chan > ATH12K_VENDOR_6G_MAX_CHAN)
 		return;
 
-	for (start_chan = ATH12K_VENDOR_6G_MIN_CHAN;
-	     start_chan <= ATH12K_VENDOR_6G_BW320_MAX_START_CHAN;
-	     start_chan += ATH12K_VENDOR_6G_BW320_BLOCK_SIZE) {
-		if (chan < start_chan ||
-		    chan > start_chan + ATH12K_VENDOR_6G_BW320_SPAN)
-			continue;
+	centers = ath12k_vendor_320_centers_from_table(chan);
+	if (!centers)
+		return;
 
-		if (count == 0)
-			*center1 = start_chan + ATH12K_VENDOR_6G_BW320_CENTER_OFFSET;
-		else if (count == 1)
-			*center2 = start_chan + ATH12K_VENDOR_6G_BW320_CENTER_OFFSET;
-
-		count++;
-		if (count >= 2)
-			break;
-	}
-
-	return;
+	*center1 = centers->center1;
+	*center2 = centers->center2;
 }
 
 static void ath12k_vendor_center_freq_idx(enum nl80211_band band,

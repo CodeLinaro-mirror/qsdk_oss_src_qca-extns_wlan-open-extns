@@ -51,7 +51,7 @@ u32 ath12k_dp_ipa_arch_op_rx_default_routing(struct ath12k_base *ab, u32 reo_des
 	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
 
 	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->dp_rx_default_routing)
-		return ipa_ctx->arch_ops->dp_rx_default_routing(reo_dest);
+		return ipa_ctx->arch_ops->dp_rx_default_routing(reo_dest, ab);
 
 	return reo_dest;
 }
@@ -222,8 +222,8 @@ void ath12k_dp_ipa_setup_ix_reg(struct ath12k_base *ab)
 {
 	if (!dp_ipa_enable())
 		return;
-
-	ath12k_hal_reo_hw_setup_ipa(ab);
+	if(!ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_SFE_ENABLE))
+		ath12k_hal_reo_hw_setup_ipa(ab);
 	return;
 }
 

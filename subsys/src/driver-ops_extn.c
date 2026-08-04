@@ -528,7 +528,8 @@ static int ieee80211_mesh_peer_copy_bss_cap(struct ieee80211_bss_conf *bss_conf,
  */
 static int ieee80211_mesh_peer_ht_vht_mcsnssmap_update(struct ieee80211_ht_cap *ht_cap,
 						       struct ieee80211_vht_cap *vht_cap,
-						       u8 nss, u8 mode)
+						       u8 nss, u8 mode,
+						       enum nl80211_band band)
 {
 	int iter;
 
@@ -542,8 +543,15 @@ static int ieee80211_mesh_peer_ht_vht_mcsnssmap_update(struct ieee80211_ht_cap *
 	if (mode < MESH_PREAMBLE_VHT)
 	    return 0;
 
-	if (!vht_cap)
-	    return -EINVAL;
+	/* VHT is optional on 2.4 GHz and not supported on 6 GHz; skip VHT
+	 * MCS/NSS update for these bands. HE/EHT caps are updated separately
+	 * by the caller.
+	 */
+	if (!vht_cap) {
+		if (band == NL80211_BAND_2GHZ || band == NL80211_BAND_6GHZ)
+			return 0;
+		return -EINVAL;
+	}
 
 	for (iter = 0; iter < 8; iter++) {
 		if (iter < nss) {
@@ -782,10 +790,10 @@ static int ieee80211_mesh_peer_update_cap(struct station_parameters *params,
 	}
 
 	/* Update the MCS and NSS capabilities based on the MCS NSS configured */
-	if ((band != NL80211_BAND_6GHZ) && (mode >= MESH_PREAMBLE_HT)) {
+	if (mode >= MESH_PREAMBLE_HT) {
 		ret = ieee80211_mesh_peer_ht_vht_mcsnssmap_update(mesh_ht_cap,
 								  mesh_vht_cap, nss,
-								  mode);
+								  mode, band);
 
 		if (ret < 0)
 			return ret;

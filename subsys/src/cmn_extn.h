@@ -597,9 +597,6 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 void
 ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
 
-void
-ieee80211_mesh_peer_key_install_work(struct wiphy *wiphy, struct wiphy_work *work);
-
 int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
 				    int link_id,
 				    const u8 *peer_mac,

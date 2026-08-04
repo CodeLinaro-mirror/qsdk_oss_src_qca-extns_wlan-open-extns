@@ -274,7 +274,7 @@ void ieee80211_free_mesh_vap_caps(struct ieee80211_bss_conf *link_conf)
 {
 	struct mesh_bss_conf *mesh_conf;
 
-	if (!link_conf->bss_conf_extn)
+	if (!link_conf || !link_conf->bss_conf_extn)
 		return;
 
 	mesh_conf = &link_conf->bss_conf_extn->mesh_bss_caps;
@@ -339,8 +339,8 @@ void ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 			       struct ieee80211_sub_if_data *sdata,
 			       struct ieee80211_bss_conf *link_conf)
 {
-	if (!wdev || wdev->vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
-		pr_debug("managed_mesh_dbg ap_cleanup: skipped (vap_submode=%u)\n", wdev->vap_submode);
+	if (!wdev) {
+		pr_debug("managed_mesh_dbg ap_cleanup: skipped (wdev is NULL)\n");
 		return;
 	}
 
@@ -349,11 +349,9 @@ void ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 		return;
 	}
 
-	pr_info_ratelimited("managed_mesh_dbg ap_cleanup: called for %s bss_conf_extn=%p\n",
-			    sdata->name, link_conf->bss_conf_extn);
-
 	ieee80211_free_mesh_vap_caps(link_conf);
-	del_timer_sync(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
+	if (sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled)
+		del_timer_sync(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
 }
 EXPORT_SYMBOL(ieee80211_mesh_ap_cleanup);
 

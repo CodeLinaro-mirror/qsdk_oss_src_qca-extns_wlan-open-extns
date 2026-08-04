@@ -12115,42 +12115,87 @@ static bool ath12k_super_chan_mode_supported(u32 channel_flags, u8 power_mode)
 
 static void ath12k_super_chan_dump(struct ath12k *ar,
 				   const struct ieee80211_channel *channel,
-				   u32 channel_flags,
-				   u8 channel_state,
-				   u16 min_bw,
-				   u16 max_bw,
-				   bool psd_flag,
-				   bool afc_not_done,
 				   u16 power_types,
 				   u8 best_power_mode)
 {
 	u8 power_mode;
+	const struct ieee80211_supported_band *sband_6g = NULL;
+	struct wiphy *wiphy = NULL;
 
 	ath12k_info(ar->ab,
 		    "Freq = %d\tPower types = 0x%x\tBest power mode = %s\n",
 		    channel->center_freq, power_types,
 		    ath12k_super_chan_power_mode_to_str(best_power_mode));
 
+	if (ar && ar->ah && ar->ah->hw)
+		wiphy = ar->ah->hw->wiphy;
+
+	if (wiphy)
+		sband_6g = wiphy->bands[NL80211_BAND_6GHZ];
+
 	for (power_mode = ATH12K_SUPER_CHAN_POWER_MODE_LPI;
 	     power_mode <= ATH12K_SUPER_CHAN_POWER_MODE_VLP;
 	     power_mode++) {
+		const struct ieee80211_channel *mode_chan = NULL;
+		enum nl80211_regulatory_power_modes nl_mode = NL80211_REG_NUM_POWER_MODES;
+		u32 mode_flags = IEEE80211_CHAN_DISABLED;
+		u8 mode_state = ATH12K_SUPER_CHAN_STATE_DISABLED;
+		u16 mode_min_bw = 0;
+		u16 mode_max_bw = 0;
+		bool mode_psd_flag = false;
+		bool mode_afc_not_done = false;
+		int mode_psd_power = 0;
+		int mode_eirp_power = 0;
 		bool mode_supported;
 
-		mode_supported = ath12k_super_chan_mode_supported(channel_flags,
-							 power_mode);
+		switch (power_mode) {
+		case ATH12K_SUPER_CHAN_POWER_MODE_LPI:
+			nl_mode = NL80211_REG_AP_LPI;
+			break;
+		case ATH12K_SUPER_CHAN_POWER_MODE_STANDARD:
+			nl_mode = NL80211_REG_AP_SP;
+			break;
+		case ATH12K_SUPER_CHAN_POWER_MODE_VLP:
+			nl_mode = NL80211_REG_AP_VLP;
+			break;
+		default:
+			break;
+		}
+
+		if (sband_6g &&
+		    nl_mode < NL80211_REG_NUM_POWER_MODES &&
+		    sband_6g->chan_6g[nl_mode]) {
+			mode_chan = ieee80211_get_6g_channel_khz(wiphy,
+								 ieee80211_channel_to_khz(channel),
+								 nl_mode);
+		}
+
+		if (mode_chan) {
+			mode_flags = mode_chan->flags;
+			mode_state = ath12k_super_chan_state(mode_flags);
+			mode_min_bw = ath12k_super_chan_min_bw(mode_flags);
+			mode_max_bw = ath12k_super_chan_max_bw(mode_flags);
+			mode_psd_flag = !!(mode_flags & IEEE80211_CHAN_PSD);
+			mode_psd_power = mode_psd_flag ? mode_chan->psd : 0;
+			mode_eirp_power = mode_chan->max_reg_power;
+			mode_afc_not_done = !!(mode_flags & IEEE80211_CHAN_NO_6GHZ_AFC_CLIENT);
+		}
+
+		mode_supported = ath12k_super_chan_mode_supported(mode_flags,
+								   power_mode);
 
 		ath12k_info(ar->ab,
 		   "Power mode = %s\tPSD flag = %d\tPSD power = %d\tEIRP power = %d\tChan flags = 0x%x\tChannel state = %d\tMin bw = %d\tMax bw = %d\tAFC_NOT_DONE = %d\n",
 		   ath12k_super_chan_power_mode_to_str(power_mode),
-		   mode_supported ? psd_flag : 0,
-		   mode_supported ? channel->psd : 0,
-		   mode_supported ? channel->max_reg_power : 0,
-		   mode_supported ? channel_flags : IEEE80211_CHAN_DISABLED,
-		   mode_supported ? channel_state : ATH12K_SUPER_CHAN_STATE_DISABLED,
-		   mode_supported ? min_bw : 0,
-		   mode_supported ? max_bw : 0,
+		   mode_supported ? mode_psd_flag : 0,
+		   mode_supported ? mode_psd_power : 0,
+		   mode_supported ? mode_eirp_power : 0,
+		   mode_supported ? mode_flags : IEEE80211_CHAN_DISABLED,
+		   mode_supported ? mode_state : ATH12K_SUPER_CHAN_STATE_DISABLED,
+		   mode_supported ? mode_min_bw : 0,
+		   mode_supported ? mode_max_bw : 0,
 		   (power_mode == ATH12K_SUPER_CHAN_POWER_MODE_STANDARD) ?
-		   afc_not_done : 0);
+		   mode_afc_not_done : 0);
 	}
 }
 
@@ -12377,27 +12422,15 @@ static int ath12k_vendor_display_super_chan_list(struct ath12k *ar, u32 *value)
 	for (i = 0; i < band_6g->n_channels; i++) {
 		const struct ieee80211_channel *channel;
 		u32 channel_flags;
-		u8 channel_state;
-		u16 min_bw;
-		u16 max_bw;
-		bool psd_flag;
-		bool afc_not_done;
 		u16 power_types;
 		u8 best_power_mode;
 
 		channel = &band_6g->channels[i];
 		channel_flags = channel->flags;
-		psd_flag = !!(channel_flags & IEEE80211_CHAN_PSD);
-		afc_not_done = !!(channel_flags & IEEE80211_CHAN_NO_6GHZ_AFC_CLIENT);
-		channel_state = ath12k_super_chan_state(channel_flags);
-		min_bw = ath12k_super_chan_min_bw(channel_flags);
-		max_bw = ath12k_super_chan_max_bw(channel_flags);
 		ath12k_super_chan_power_caps(channel_flags, &power_types,
 					     &best_power_mode);
 
-		ath12k_super_chan_dump(ar, channel, channel_flags, channel_state,
-				       min_bw, max_bw, psd_flag, afc_not_done,
-				       power_types, best_power_mode);
+		ath12k_super_chan_dump(ar, channel, power_types, best_power_mode);
 	}
 
 	*value = 0;

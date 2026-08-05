@@ -51,12 +51,14 @@ int ath12k_me_snoop_event_notify(struct notifier_block *nb, unsigned long action
 	return 0;
 }
 
-void  ath12k_core_me_notifier_register_extn(struct ath12k_base *ab)
+int ath12k_core_me_notifier_register_extn(struct ath12k_base *ab)
 {
+	return 0;
 }
 
-void ath12k_core_me_notifier_unregister_extn(struct ath12k_base *ab)
+int ath12k_core_me_notifier_unregister_extn(struct ath12k_base *ab)
 {
+	return 0;
 }
 
 int ath12k_me_snoop_print_extn(struct ath12k_base *ab, struct ath12k_me_db *db)
@@ -88,8 +90,8 @@ int ath12k_me_snoop_print_extn(struct ath12k_base *ab, struct ath12k_me_db *db);
 
 int ath12k_me_snoop_event_notify(struct notifier_block *nb, unsigned long action, void *data);
 
-void  ath12k_core_me_notifier_register_extn(struct ath12k_base *ab);
-void ath12k_core_me_notifier_unregister_extn(struct ath12k_base *ab);
+int  ath12k_core_me_notifier_register_extn(struct ath12k_base *ab);
+int  ath12k_core_me_notifier_unregister_extn(struct ath12k_base *ab);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* CONFIG_BRIDGE_MCAST_OFFLOAD */

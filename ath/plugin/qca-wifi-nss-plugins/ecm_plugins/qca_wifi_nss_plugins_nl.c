@@ -16,7 +16,7 @@
 #include <qca_wifi_nss_plugins.h>
 #include <qca_wifi_nss_plugins_ecm.h>
 #include <ecm_interface_nl.h>
-#include <mac80211/ath/vendor.h>
+#include <mac80211/ath/qca-vendor.h>
 
 #define QCA_WIFI_NSS_PLUGINS_NL_NL80211_MC_GROUP_INVALID_ID       -1
 #define QCA_WIFI_NSS_PLUGINS_NL_GENEL_MESSAGE_SIZE                4096

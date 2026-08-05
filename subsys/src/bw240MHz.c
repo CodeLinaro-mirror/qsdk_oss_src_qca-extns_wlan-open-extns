@@ -171,9 +171,29 @@ int ieee802_11_parse_elems_vendor_qcn_extn(const u8 *pos, u8 elen,
 	pos += 4;
 
 	while ((rem_elen > 2) && (pos < end)) {
+		if (pos[1] + 2 > rem_elen || pos + 2 + pos[1] > end)
+			break;
+
 		switch (pos[0]) {
+			case WLAN_OUI_QCN_ATTR_VHT_MCS10_11_SUPP:
+				if (pos[1] < 1)
+					break;
+				elems->elems_extn.vht_mcs10_11_supp = (pos[2] == 1);
+				break;
+			case WLAN_OUI_QCN_ATTR_HE_400NS_SGI_SUPP:
+				/* 3-byte payload: byte[0]=1xLTF, byte[1]=2xLTF, byte[2]=4xLTF */
+				if (pos[1] < 3)
+					break;
+				elems->elems_extn.he_400ns_sgi_supp =
+					(pos[2] & 0x1) | ((pos[3] & 0x1) << 1);
+				break;
+			case WLAN_OUI_QCN_ATTR_HE_2XLTF_160_80P80_SUPP:
+				if (pos[1] < 1)
+					break;
+				elems->elems_extn.he_2xltf_160_80p80_supp = pos[2];
+				break;
 			case WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP:
-				if (rem_elen < 11)
+				if (pos[1] < 9)
 					break;
 				elems->elems_extn.params_240MHz.eht_240mhz_cap
 					= (struct
@@ -313,6 +333,13 @@ void ieee80211_inform_bss_extn(struct cfg80211_bss *cbss,
 			elems->elems_extn.params_240MHz.eht_240mhz_cap;
 
 	}
+
+	/* Store VHT MCS10/11 support flag from QCN IE for later use
+	 * during association capability intersection.
+	 */
+	bss->bss_extn.vht_mcs10_11_supp = elems->elems_extn.vht_mcs10_11_supp;
+	bss->bss_extn.he_400ns_sgi_supp = elems->elems_extn.he_400ns_sgi_supp;
+	bss->bss_extn.he_2xltf_160_80p80_supp = elems->elems_extn.he_2xltf_160_80p80_supp;
 }
 
 size_t

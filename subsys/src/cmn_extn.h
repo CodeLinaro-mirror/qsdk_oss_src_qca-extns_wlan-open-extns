@@ -284,10 +284,29 @@ struct link_station_parameters_extn {
 
 struct ieee802_11_elems_extn {
 	struct bw240MHz_parameters_extn params_240MHz;
+	/* VHT MCS 10/11 support advertised by the peer in the QCN IE (attr 0x02).
+	 * true if the peer set the attribute value to 1.
+	 */
+	bool vht_mcs10_11_supp;
+	/* HE 400ns SGI support from QCN IE attr 0x03.
+	 * bit 0: peer supports RX 1xLTF + 0.4us GI
+	 * bit 1: peer supports RX 2xLTF + 0.4us GI
+	 */
+	u8 he_400ns_sgi_supp;
+	/* HE 2xLTF in 160/80+80 MHz support from QCN IE attr 0x04.
+	 * Non-zero if peer supports 2xLTF in 160/80+80 MHz HE PPDUs.
+	 */
+	u8 he_2xltf_160_80p80_supp;
 };
 
 struct ieee80211_bss_extn {
 	struct bw240MHz_parameters_extn params_240MHz;
+	/* VHT MCS 10/11 support advertised by the AP in its QCN IE. */
+	bool vht_mcs10_11_supp;
+	/* HE 400ns SGI support advertised by the AP in its QCN IE. */
+	u8 he_400ns_sgi_supp;
+	/* HE 2xLTF in 160/80+80 MHz support advertised by the AP. */
+	u8 he_2xltf_160_80p80_supp;
 };
 
 struct ieee80211_bss_conf_extn {

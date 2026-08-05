@@ -641,6 +641,10 @@ ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 	return;
 }
 
+static inline void ath12k_mac_hw_register_extn(struct ath12k_hw *ah)
+{
+}
+
 static inline void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab)
 {
 	return;
@@ -1124,6 +1128,17 @@ struct ath12k_base_extn {
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 			  const struct ieee80211_ops_extn *ops_extn);
+
+/**
+ * ath12k_mac_hw_register_extn - Extension hook for ath12k_mac_hw_register
+ * @ah: ath12k_hw instance
+ *
+ * Conditionally sets WIPHY_FLAG_SUPPORTS_PARALLEL_HW_SCAN on the wiphy based
+ * on the "parallel_hw_scan" INI key.  Must be called from
+ * ath12k_mac_hw_register() after the wiphy has been allocated and the INI
+ * context is available.
+ */
+void ath12k_mac_hw_register_extn(struct ath12k_hw *ah);
 
 void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
 

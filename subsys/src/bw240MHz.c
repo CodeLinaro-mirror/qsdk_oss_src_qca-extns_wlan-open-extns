@@ -25,7 +25,8 @@ struct ieee80211_qcn_5g_320mhz_csa_oper {
 static const struct ieee80211_qcn_5g_320mhz_csa_oper *
 ieee80211_qcn_find_5g_320mhz_csa_extn(const u8 *ies, size_t len)
 {
-	const struct ieee80211_qcn_5g_320mhz_csa_oper *fallback = NULL;
+	const struct ieee80211_qcn_5g_320mhz_csa_oper *csa_target = NULL;
+	bool has_240mhz_supp = false;
 	const struct element *elem;
 
 	for_each_element_id(elem, WLAN_EID_VENDOR_SPECIFIC, ies, len) {
@@ -48,22 +49,20 @@ ieee80211_qcn_find_5g_320mhz_csa_extn(const u8 *ies, size_t len)
 			if (attr_len > rem)
 				break;
 
-			if ((attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA ||
-			     attr_id == WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP) &&
-			    attr_len == sizeof(struct ieee80211_qcn_5g_320mhz_csa_oper)) {
-				if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA)
-					return (const void *)pos;
-
-				if (!fallback)
-					fallback = (const void *)pos;
-			}
+			if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP &&
+			    attr_len == sizeof(struct ieee80211_240mhz_vendor_oper_extn))
+				has_240mhz_supp = true;
+			else if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA &&
+				 attr_len == sizeof(struct ieee80211_qcn_5g_320mhz_csa_oper) &&
+				 !csa_target)
+				csa_target = (const void *)pos;
 
 			pos += attr_len;
 			rem -= attr_len;
 		}
 	}
 
-	return fallback;
+	return has_240mhz_supp ? csa_target : NULL;
 }
 
 void

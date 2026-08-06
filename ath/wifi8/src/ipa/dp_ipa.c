@@ -576,6 +576,9 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 	struct ieee80211_rx_status *status;
 	struct ath12k_link_vif *cumac_arvif;
 	struct ath12k_dp_hw_group *dp_hw_grp;
+	struct ieee80211_vif *vif;
+	struct wireless_dev *wdev;
+	struct net_device *dev;
 	int i;
 	u16 peer_id;
 	u8 vdev_id, hw_link_id;
@@ -623,6 +626,30 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 		goto drop;
 	}
 
+	if (eth->h_proto == cpu_to_be16(ETH_P_PAE)) {
+		ipa_ctx->stats.rx_eapol++;
+		vif = ath12k_dp_peer_get_vif(dp_peer);
+		if (!vif) {
+			ath12k_ipa_err(cumac_ab, "IPA_W2I EAPOL: vif NULL peer_id=%u", peer_id);
+			rcu_read_unlock();
+			goto drop;
+		}
+		wdev = ieee80211_vif_to_wdev(vif);
+		if (!wdev || !wdev->netdev) {
+			ath12k_ipa_err(cumac_ab, "IPA_W2I EAPOL: wdev/netdev NULL peer_id=%u", peer_id);
+			rcu_read_unlock();
+			goto drop;
+		}
+		dev = wdev->netdev;
+		skb->protocol = eth_type_trans(skb, dev);
+		cfg80211_rx_control_port(dev, skb, false, -1);
+		pr_err_ratelimited("ath12k IPA_W2I: EAPOL delivered via ctrl port peer_id=%u proto=0x%x dev=%s\n",
+				   peer_id, be16_to_cpu(eth->h_proto), dev->name);
+		rcu_read_unlock();
+		return;
+	}
+
+/*
 	if (!dp_peer->is_authorized) {
 		ath12k_ipa_err(cumac_ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
 			       peer_id, eth->h_source, eth->h_dest,
@@ -630,7 +657,7 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 		rcu_read_unlock();
 		goto drop;
 	}
-
+*/
 	hw = dp_pdev->hw;
 	ar = dp_pdev->ar;
 	skb->protocol = eth->h_proto;
@@ -655,11 +682,19 @@ drop:
 	return;
 }
 
+static u32 ath12k_wifi8_dp_ipa_rx_default_routing(u32 reo_dest)
+{
+	if (dp_ipa_enable())
+		return ATH12K_DP_WIFI8_REO2SW5_RDI;
+
+	return reo_dest;
+}
+
 static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.dp_srng_cleanup = ath12k_wifi8_dp_ipa_srng_cleanup,
 	.dp_srng_setup = ath12k_wifi8_dp_ipa_srng_setup,
 	.dp_srng_get_rsrc = ath12k_wifi8_dp_ipa_srng_get_rsrc,
-	.dp_rx_default_routing = NULL,
+	.dp_rx_default_routing = ath12k_wifi8_dp_ipa_rx_default_routing,
 	.dp_rxdma_buf_setup = NULL,
 	.dp_get_tx_bank_id = NULL,
 	.dp_rx_buf_smmu_map_unmap = ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap,

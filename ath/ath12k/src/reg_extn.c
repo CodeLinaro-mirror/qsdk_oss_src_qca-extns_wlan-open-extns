@@ -1772,6 +1772,7 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
 	struct ath12k_link_vif *arvif;
 	struct ath12k *ar = NULL;
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
 	u16 bw, center_freq;
 	bool found = false;
 	int i;
@@ -1780,6 +1781,9 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 
 	if (!chandef || !chandef->chan ||
 	    chandef->chan->band != NL80211_BAND_6GHZ)
+		return 0;
+
+	if (wdev_is_scan_radio(&sdata->wdev))
 		return 0;
 
 	arvif = NULL;

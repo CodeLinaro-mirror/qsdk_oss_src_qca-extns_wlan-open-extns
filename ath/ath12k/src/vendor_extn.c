@@ -744,6 +744,7 @@ struct rx_flow_blob {
 	u8     ring_id;        /* [91]     target REO destination ring      */
 } __packed;
 
+#define ATH12K_RX_FLOW_TAG_DUMP_BUF_SIZE (PAGE_SIZE * 4)
 #define ATH12K_HWBL_NL_CHAN_WIDTH_INVALID ((u32)-1)
 
 static struct ath12k_hw_blocklist_state *
@@ -6438,13 +6439,6 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		ip_ver  = blob->ip_ver;
 		proto   = blob->proto;
 
-		/* Validate ip_ver: blob uses IP_VERSION_4, IP_VERSION_6 */
-		if (ip_ver != IP_VERSION_4 && ip_ver != IP_VERSION_6) {
-			ath12k_err(ab, "rx_flow_tag_op: invalid ip_ver %u (must be %d or %d)\n",
-				   ip_ver, IP_VERSION_4, IP_VERSION_6);
-			return -EINVAL;
-		}
-
 		memcpy(src_ip_str, blob->src_ip_str, sizeof(blob->src_ip_str));
 		src_ip_str[sizeof(blob->src_ip_str)] = '\0';
 		memcpy(dst_ip_str, blob->dst_ip_str, sizeof(blob->dst_ip_str));
@@ -6474,12 +6468,6 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		flow_info.fse_metadata = le16_to_cpu(blob->tag);
 		flow_info.drop   = blob->drop_flow ? 1 : 0;
 		flow_info.ring_id = blob->ring_id;
-
-		if (flow_info.ring_id < ATH12K_REO2SW0_RING || flow_info.ring_id > ATH12K_REO_RELEASE_RING) {
-			ath12k_err(ab, "rx_flow_tag_op: invalid ring_id %u\n",
-				   flow_info.ring_id);
-			return -EINVAL;
-		}
 
 		if (ip_ver == IP_VERSION_4) {
 			flow_info.is_addr_ipv4 = 1;
@@ -6512,32 +6500,34 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 				ath12k_err(ab, "rx_flow_tag: delete failed ret=%d\n", ret);
 		} else if (op_code == RX_FLOW_TAG_DUMP) {
 			struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
-			char *dump_buf;
+			char *dump_buf, *line, *cursor;
 			ssize_t dump_len;
 
 			if (dp && dp->dp_hw_grp && dp->dp_hw_grp->fst)
 				ath12k_dp_arch_rx_flow_dump_entry(dp, &flow_info);
 
-			dump_buf = kzalloc(PAGE_SIZE * 4, GFP_KERNEL);
+			dump_buf = kzalloc(ATH12K_RX_FLOW_TAG_DUMP_BUF_SIZE, GFP_KERNEL);
 			if (!dump_buf) {
 				ath12k_err(ab, "rx_flow_tag_op: failed to allocate dump buffer\n");
 				ret = -ENOMEM;
 				break;
 			}
-			dump_len = ath12k_dp_dump_fst_table(ab, dump_buf, PAGE_SIZE * 4);
-			if (dump_len > 0)
-				ath12k_info(ab,
-					    "rx_flow_tag_op: fst_dump_table:\n%s",
-					    dump_buf);
-			else
+			dump_len = ath12k_dp_dump_fst_table(ab, dump_buf,
+							    ATH12K_RX_FLOW_TAG_DUMP_BUF_SIZE);
+			if (dump_len > 0) {
+				ath12k_info(ab, "rx_flow_tag_op: fst_dump_table:\n");
+				cursor = dump_buf;
+				while ((line = strsep(&cursor, "\n")) != NULL) {
+					if (*line)
+						ath12k_info(ab, "%s\n", line);
+				}
+			} else {
 				ath12k_warn(ab,
 					    "rx_flow_tag_op: fst_dump_table empty or failed len=%zd\n",
 					    dump_len);
+			}
 			kfree(dump_buf);
 			ret = 0;
-		} else {
-			ath12k_err(ab, "rx_flow_tag_op: unknown op_code %u\n", op_code);
-			ret = -EINVAL;
 		}
 		break;
 	}

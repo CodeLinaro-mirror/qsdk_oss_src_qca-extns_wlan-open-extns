@@ -1046,9 +1046,12 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 			 ppdu->preamble_type, 0) & SA_MASK_RCODE);
 	rx.npackets = ppdu->tcp_msdu_count +
 			ppdu->udp_msdu_count + ppdu->other_msdu_count;
-	for (i = 0; i < SA_MAX_RSSI_CHAINS; i++)
+	for (i = 0; i < SA_MAX_RSSI_CHAINS; i++) {
 		for (j = 0; j < SA_MAX_BW; j++)
 			rx.rx_rssi[i][j] = ppdu->rssi_chain[i][j];
+		if (!rx.rx_rssi[i][0])
+			rx.rx_rssi[i][0] = ppdu->rssi_chain_pri20[i];
+	}
 	rx.rx_rate_index = ppdu->bw;
 	rx_ctx.rx = &rx;
 

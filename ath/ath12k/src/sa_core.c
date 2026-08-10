@@ -1027,6 +1027,8 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 		return -1;
 
 	ppdu = &rx_info->ppdu_info;
+	if (ppdu->peer_id == HAL_INVALID_PEERID)
+		return 0;
 	if (ppdu->num_users > 1)
 		return 0;
 

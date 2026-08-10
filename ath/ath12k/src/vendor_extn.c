@@ -11980,7 +11980,7 @@ static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
 								      cap, cap_len);
 		cap_len = ath12k_vendor_display_320mhz_caps(band, &chan_caps, has_eht,
 							    cap, cap_len);
-		ath12k_info(ar->ab,
+		ath12k_info(NULL,
 			    "Channel %3u : %4u MHz  %3d dBm  %s%s  %s\n",
 			    chan_caps.chan_num,
 			    chan->center_freq,

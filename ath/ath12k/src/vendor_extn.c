@@ -152,7 +152,8 @@ static u32 ath12k_vendor_get_radio_band_info(struct ath12k *ar)
 	return ath12k_vendor_classify_radio_band(low_freq, high_freq);
 }
 
-#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 1023
+#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE 255
+#define ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE_BE 1023
 #define ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE 7
 #define ATH12K_CONFIG_MAX_BA_BUFSIZE 6
 #define ATH12K_CONFIG_MAX_TX_ENCAP_TYPE 2
@@ -1830,6 +1831,18 @@ static int ath12k_vendor_event_iface_reload(struct wiphy *wiphy, u8 radio_idx)
 	return 0;
 }
 
+static bool ath12k_vendor_is_be_vap(struct ath12k_link_vif *arvif)
+{
+	struct ieee80211_bss_conf *bss_conf;
+
+	if (!arvif)
+		return false;
+
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+
+	return bss_conf && bss_conf->eht_support;
+}
+
 static int ath12k_set_ampdu_aggr_size_arvif(struct ath12k_link_vif *arvif, u32 value)
 {
 	struct ath12k *ar;
@@ -3469,19 +3482,33 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMPDU:
-		if (value > (ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE+1) || (value < 0)) {
-			ath12k_err(NULL, "Valid AMPDU Aggregation Size is in the range 0-1024");
-			return -EINVAL;
-		} else {
-			ret = ath12k_set_ampdu_aggr_size_arvif(arvif, value);
-			if (!ret) {
-				arvif->vap_cfg.ampdu_aggr_size = value;
-			} else {
-				ath12k_err(NULL,
-						"Failed to send WMI_VDEV_CUSTOM_AGGR_TYPE_AMPDU to firmware");
-			}
+	{
+		u32 ampdu_max_size;
+		bool is_be_vap;
+
+		is_be_vap = ath12k_vendor_is_be_vap(arvif);
+		ampdu_max_size = is_be_vap ?
+				 (ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE_BE + 1) :
+				 (ATH12K_CONFIG_AGGR_MAX_AMPDU_SIZE + 1);
+
+		if (value > ampdu_max_size) {
+			ath12k_err(NULL, "Valid AMPDU Aggregation Size for %s VAP is in the range 0-%u",
+				   is_be_vap ? "BE" : "non-BE", ampdu_max_size);
+			ret = -EINVAL;
+			break;
 		}
+
+		ret = ath12k_set_ampdu_aggr_size_arvif(arvif, value);
+		if (ret) {
+			ath12k_err(NULL,
+				   "Failed to send WMI_VDEV_CUSTOM_AGGR_TYPE_AMPDU to firmware");
+			break;
+		}
+
+		arvif->vap_cfg.ampdu_aggr_size = value;
+		*reload = true;
 		break;
+	}
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_AMSDU:
 		if (value > ATH12K_CONFIG_AGGR_MAX_AMSDU_SIZE) {

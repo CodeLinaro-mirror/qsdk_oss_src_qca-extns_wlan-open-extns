@@ -5130,18 +5130,18 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		ret = ath12k_set_chainmask(ar, value, false);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RTS_CTS_RATE:
-                if (value > 4) {
-                    ath12k_dbg(NULL, ATH12K_DBG_CFG, "Invalid value for setctsrate Disabling it in Firmware \n");
-                    value = WMI_FIXED_RATE_NONE;
-                }
-                ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_RTS_FIXED_RATE,
-                        value, ar->pdev->pdev_id);
-		if (!ret) {
-		    ar->radio_cfg.rts_cts_rate = value;
-		} else {
-		    ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_RTS_FIXED_RATE to firmware");
+		if (value > 4) {
+			ath12k_err(NULL, "Invalid setctsrate value %u (valid: 0-4)\n", value);
+			return -EINVAL;
 		}
-                break;
+		ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_RTS_FIXED_RATE,
+						value, ar->pdev->pdev_id);
+		if (!ret) {
+			ar->radio_cfg.rts_cts_rate = value;
+		} else {
+			ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_RTS_FIXED_RATE to firmware");
+		}
+		break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_PS_STATE_CHANGE:
                 ar->radio_cfg.ps_report = value;
                 ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PEER_STA_PS_STATECHG_ENABLE,

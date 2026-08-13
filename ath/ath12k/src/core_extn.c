@@ -1298,7 +1298,7 @@ void ath12k_core_nol_extn_auto_restore_radio_locked(struct ath12k *ar, u8 radio_
 	lockdep_assert_wiphy(wiphy);
 
 	ret = ath12k_vendor_nol_restore_from_file_extn(wiphy, radio_idx, NULL,
-							&updated);
+						       &updated);
 	if (!ret) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_BOOT,
 			   "NOL auto-restore radio_idx=%u updated=%u\n",
@@ -1336,6 +1336,29 @@ void ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab)
 		wiphy_unlock(wiphy);
 	}
 }
+
+/**
+ * ath12k_core_nol_extn_regdom_change_radio_locked() - Handle NOL on
+ * user-triggered country/regdomain change
+ * @ar: ath12k radio instance
+ *
+ * Called from ath12k_regd_update_work() on every regd update. On a
+ * user-triggered country/regdomain change (regdom_set_by_user == true),
+ * clears the in-memory NOL then attempts a CC-matched restore from the saved
+ * dump file. On a CC mismatch (new country differs from the dump) nothing is
+ * restored. On a CC match (e.g. change back to original country) the saved
+ * NOL is re-applied with the remaining NOP time back-dated correctly.
+ */
+void ath12k_core_nol_extn_regdom_change_radio_locked(struct ath12k *ar)
+{
+	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
+		return;
+
+	lockdep_assert_wiphy(ar->ah->hw->wiphy);
+
+	ath12k_core_nol_extn_auto_restore_radio_locked(ar, ar->radio_idx);
+}
+EXPORT_SYMBOL(ath12k_core_nol_extn_regdom_change_radio_locked);
 
 /**
  * ath12k_mac_dfs_violation_radar_bitmap_extn() - Build radar bitmap

@@ -8018,11 +8018,14 @@ static u32 ath12k_vendor_count_nol_entries_extn(struct wiphy *wiphy,
  * @hdr: Header buffer to initialize
  * @nop_ms: NOP timeout recorded in the dump
  * @entry_count: Number of NOL entries stored after the header
+ * @alpha2: Two-character country code to embed in the header, or NULL to
+ *	leave the alpha2 field zeroed
  *
  * Return: None.
  */
 static void ath12k_vendor_init_nol_bin_hdr_extn(
-	struct ath12k_vendor_nol_bin_hdr *hdr, u32 nop_ms, u32 entry_count)
+	struct ath12k_vendor_nol_bin_hdr *hdr, u32 nop_ms, u32 entry_count,
+	const u8 *alpha2)
 {
 	memset(hdr, 0, sizeof(*hdr));
 	memcpy(hdr->magic, ATH12K_VENDOR_NOL_BIN_MAGIC, sizeof(hdr->magic));
@@ -8031,6 +8034,8 @@ static void ath12k_vendor_init_nol_bin_hdr_extn(
 	hdr->nop_ms = cpu_to_le32(nop_ms);
 	hdr->dump_time_real_ns = cpu_to_le64(ktime_get_real_ns());
 	hdr->entry_count = cpu_to_le32(entry_count);
+	if (alpha2)
+		memcpy(hdr->alpha2, alpha2, sizeof(hdr->alpha2));
 }
 
 /**
@@ -8100,6 +8105,19 @@ static int ath12k_vendor_build_nol_chan_list_extn(struct wiphy *wiphy,
 	u32 entry_count;
 	u32 nop_ms = IEEE80211_DFS_MIN_NOP_TIME_MS;
 	u32 entry_idx;
+	struct ieee80211_hw *hw;
+	struct ath12k_hw *ah;
+	struct ath12k *ar;
+
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	if (!hw)
+		return -EINVAL;
+
+	ah = ath12k_hw_to_ah(hw);
+	if (!ah)
+		return -EINVAL;
+
+	ar = &ah->radio[radio_idx];
 
 	if (!out_buf || !out_len)
 		return -EINVAL;
@@ -8113,7 +8131,7 @@ static int ath12k_vendor_build_nol_chan_list_extn(struct wiphy *wiphy,
 	if (!buf)
 		return -ENOMEM;
 
-	ath12k_vendor_init_nol_bin_hdr_extn(&hdr, nop_ms, entry_count);
+	ath12k_vendor_init_nol_bin_hdr_extn(&hdr, nop_ms, entry_count, ar->alpha2);
 	memcpy(buf, &hdr, sizeof(hdr));
 	entries = (void *)(buf + sizeof(hdr));
 	entry_idx = ath12k_vendor_fill_nol_entries_extn(wiphy, radio_idx,
@@ -8461,6 +8479,7 @@ struct ath12k_vendor_nol_bin_info_extn {
 	u32 entry_count;
 	u32 nop_ms;
 	u64 delta_ms;
+	u8 alpha2[2];
 };
 
 /**
@@ -8495,6 +8514,7 @@ static int ath12k_vendor_parse_nol_bin_hdr_extn(
 	info->nop_ms = min_t(u32, info->nop_ms,
 			     (u32)IEEE80211_DFS_MIN_NOP_TIME_MS);
 	info->entry_count = le32_to_cpu(hdr->entry_count);
+	memcpy(info->alpha2, hdr->alpha2, sizeof(info->alpha2));
 	need_len = (size_t)hdr_len + (size_t)info->entry_count *
 		   sizeof(*info->entries);
 	if (need_len > len)
@@ -8524,15 +8544,34 @@ static int ath12k_vendor_apply_nol_from_bin_buf_extn(struct wiphy *wiphy,
 	u32 i;
 	int updated = 0;
 	int ret;
+	struct ieee80211_hw *hw;
+	struct ath12k_hw *ah;
+	struct ath12k *ar;
 
 	if (!wiphy || !buf)
 		return -EINVAL;
+
+	hw = wiphy_to_ieee80211_hw(wiphy);
+	ah = ath12k_hw_to_ah(hw);
+	ar = &ah->radio[radio_idx];
 
 	lockdep_assert_wiphy(wiphy);
 
 	ret = ath12k_vendor_parse_nol_bin_hdr_extn(buf, len, &info);
 	if (ret)
 		return ret;
+
+	/* If the dump was written under a different country code, do not apply
+	 * it. Restoring NOL from a different domain would incorrectly block
+	 * channels that are clean under the current regulatory domain.
+	 */
+	if (info.alpha2[0] &&
+	    memcmp(ar->alpha2, info.alpha2, 2)) {
+		wiphy_dbg(wiphy,
+			  "NOL auto-restore skipped: CC mismatch dump=%.2s current=%.2s radio_idx=%d\n",
+			  info.alpha2, ar->alpha2, radio_idx);
+		return 0;
+	}
 
 	for (i = 0; i < info.entry_count; i++) {
 		if (ath12k_vendor_apply_nol_freq_extn(
@@ -8874,10 +8913,38 @@ int ath12k_vendor_nol_dump_to_file_extn(struct wiphy *wiphy, u8 radio_idx,
 }
 
 int ath12k_vendor_nol_restore_from_file_extn(struct wiphy *wiphy, u8 radio_idx,
-					     const char *path, u32 *num_updated)
+					     const char *path,
+					     u32 *num_updated)
 {
-	return ath12k_vendor_set_nol_chan_list_extn(wiphy, radio_idx,
-						     path, num_updated);
+	char *resolved_path = NULL;
+	int updated;
+	int ret;
+
+	if (!wiphy)
+		return -EINVAL;
+
+	lockdep_assert_wiphy(wiphy);
+
+	ret = ath12k_vendor_validate_radio_idx(wiphy, radio_idx);
+	if (ret)
+		return ret;
+
+	ret = ath12k_vendor_resolve_nol_path_extn(path, radio_idx,
+						  &resolved_path);
+	if (ret)
+		return ret;
+
+	updated = ath12k_vendor_restore_nol_file_extn(wiphy, radio_idx,
+						      resolved_path);
+	kfree(resolved_path);
+
+	if (updated < 0)
+		return updated;
+
+	if (num_updated)
+		*num_updated = updated;
+
+	return 0;
 }
 
 /**

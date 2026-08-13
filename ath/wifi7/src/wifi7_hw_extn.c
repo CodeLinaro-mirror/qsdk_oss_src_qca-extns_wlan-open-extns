@@ -22,7 +22,23 @@
 #include "../../hw.h"
 #include "../../debug.h"
 #include "../../qcn_extns/ath12k_cmn_extn.h"
+#include "../../mac.h"
 
+static void ath12k_nol_regdom_change_locked_extn(struct ieee80211_hw *hw,
+						 struct ieee80211_channel *channel)
+{
+	struct ath12k *ar;
+
+	ar = ath12k_mac_get_ar_by_center_freq(hw, channel->center_freq);
+	if (!ar) {
+		wiphy_err(hw->wiphy, "nol_regdom: no ar found for freq %u MHz\n",
+			  channel->center_freq);
+
+		return;
+	}
+
+	ath12k_core_nol_extn_regdom_change_radio_locked(ar);
+}
 
 struct ieee80211_240mhz_vendor_oper_extn*
 ath12k_get_240_mhz_cap_extn(struct ieee80211_vif *vif,
@@ -118,6 +134,7 @@ out:
 static const struct ieee80211_ops_extn ath12k_ops_wifi7_extn = {
 	.get_240mhz_cap_extn = ath12k_get_240_mhz_cap_extn,
 	.validate_6ghz_chandef_extn = ath12k_validate_6ghz_chandef_extn,
+	.nol_regdom_change_locked_extn = ath12k_nol_regdom_change_locked_extn,
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	.mesh_peer_update_caps_extn = ath12k_mac_op_mesh_peer_update_caps_extn,
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

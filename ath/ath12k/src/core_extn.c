@@ -1523,7 +1523,7 @@ void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 	 *
 	 * Save calculated phymode and nss for peer lookup.
 	 */
-	if (ahvif && ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+	if (ahvif && QCA_WLAN_VENDOR_VAP_IS_MESH_MODE(ahvif->vap_submode)) {
 		arg->need_ptk_4_way = false;
 		arg->need_gtk_2_way = false;
 		if (link_sta->sta) {

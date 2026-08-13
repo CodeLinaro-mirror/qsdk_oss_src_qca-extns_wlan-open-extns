@@ -345,7 +345,7 @@ void ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
 			     struct cfg80211_ap_settings *params,
 			     struct ieee80211_bss_conf *link_conf)
 {
-	if (!wdev || wdev->vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+	if (!wdev || !IEEE80211_EXTN_VAP_IS_MESH_MODE(wdev->vap_submode)) {
 		pr_debug_ratelimited("managed_mesh_dbg ap_setup: skipped (vap_submode=%u)\n",
 				     wdev ? wdev->vap_submode : 0xff);
 		return;
@@ -1372,7 +1372,7 @@ int ieee80211_vendor_mesh_set_peer_timeout_cnt(struct wiphy *wiphy,
 	if (!sdata)
 		return -EINVAL;
 
-	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode)) {
 		wiphy_err(wiphy, "ieee80211_vendor_mesh_set_peer_timeout_cnt: not a mesh VAP\n");
 		return -EINVAL;
 	}
@@ -2321,7 +2321,7 @@ ieee80211_process_mesh_peer_deauth_disassoc(struct ieee80211_rx_data *rx)
 	struct ieee80211_sta *sta;
 	u16 reason;
 
-	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH)
+	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode))
 		return RX_CONTINUE;
 
 	if (!ieee80211_is_deauth(mgmt->frame_control) &&
@@ -2406,7 +2406,7 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 	ieee80211_rx_result result = RX_CONTINUE;
 
 	if (rx->sdata->vif.type != NL80211_IFTYPE_AP ||
-	    rx->sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH)
+	    !IEEE80211_EXTN_VAP_IS_MESH_MODE(rx->sdata->wdev.vap_submode))
 		return RX_CONTINUE;
 
 	/* Beacons are allowed to be processed further.
@@ -2492,7 +2492,7 @@ bool ieee80211_skip_pn_check(struct ieee80211_rx_data *rx)
 	struct ieee80211_sub_if_data *sdata = rx->sdata;
 	struct ieee80211_mgmt *mgmt = (void *)rx->skb->data;
 
-	if ((sdata->wdev.vap_submode == IEEE80211_EXTN_VAP_SUBMODE_MESH) &&
+	if (IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode) &&
 	    ieee80211_is_beacon(mgmt->frame_control))
 		return true;
 
@@ -2506,7 +2506,7 @@ void ieee80211_mesh_init_peer_work(struct ieee80211_sub_if_data *sdata,
 	if (!sdata || !sta_info)
 		return;
 
-	if (sdata->wdev.vap_submode == IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+	if (IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode)) {
 		wiphy_work_init(&sta_info->sta.sta_extn.update_cap_wk,
 				ieee80211_update_mesh_peer_caps_work);
 		wiphy_work_init(&sta_info->sta.sta_extn.timeout_wk,
@@ -2550,7 +2550,7 @@ void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 		from_timer(sdata, t, u.ap.if_ap_extn.mesh_peer_cleanup_timer);
 	unsigned long now;
 
-	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH)
+	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode))
 		return;
 
 	if (!ieee80211_sdata_running(sdata))
@@ -2610,7 +2610,7 @@ int ieee80211_vendor_mesh_peer_timeout_en(struct wiphy *wiphy,
 	if (!sdata)
 		return -EINVAL;
 
-	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode)) {
 		printk(KERN_ERR "mesh_peer_cleanup_timer_config: not a mesh VAP\n");
 		return -EINVAL;
 	}

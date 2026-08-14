@@ -267,7 +267,10 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 
 	rx_info->rs_snr = link_peer->peer_stats.dp_mon_stats.avg_snr;
 
-	if (rx_desc->tlv_info.is_decrypted) {
+	if (rx_desc->tlv_info.is_decrypted &&
+	    rx_desc->tlv_info.encrypt_info_valid &&
+	    rx_desc->tlv_info.mpdu_frame_control_valid &&
+	    rx_desc->tlv_info.encrypted) {
 		rx_info->rs_flags |= MESH_RX_DECRYPTED;
 		rx_info->rs_keyix = rx_desc->key_id_octate;
 		pairwise = !rx_desc->rx_msdu_info.da_is_mcbc;
@@ -287,7 +290,6 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 		else
 			DP_PEER_MISC_STATS_INC(peer, mmesh_stat,
 					       rxkey_lookp_up_succ, 0, 1);
-
 	}
 
 	rx_info->rs_rssi = rx_info->rs_snr + ATH12K_DEFAULT_NOISE_FLOOR;

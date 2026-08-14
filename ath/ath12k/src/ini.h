@@ -361,6 +361,7 @@
 	ATH12K_CFG(ATH12K_CFG_SCAN_RADIO_TX_ON_DFS) \
 	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
 	ATH12K_CFG(ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY) \
+	ATH12K_CFG(ATH12K_CFG_PARALLEL_HW_SCAN) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -1016,6 +1017,22 @@
 #define ATH12K_CFG_SCAN_RADIO_TX_ON_DFS \
 	ATH12K_CFG_INI_BOOL("scan_radio_tx_on_dfs_channels", false, \
 	"Enable TX on DFS channels for scan radio")
+
+/**
+ * ATH12K_CFG_PARALLEL_HW_SCAN - Enable parallel hardware scan on multi-radio platforms
+ *
+ * false (0) = Parallel hardware scan disabled (default); scans are serialised
+ *             across radios as in the legacy behaviour.
+ * true  (1) = Parallel hardware scan enabled; concurrent scans run on
+ *             different radios simultaneously, reducing total scan time from
+ *             N * T_scan to approximately max(T_scan_per_radio).
+ *
+ * Requires the driver to set WIPHY_FLAG_SUPPORTS_PARALLEL_HW_SCAN on the
+ * wiphy.  Only meaningful on multi-band (2.4/5/6 GHz) ath12k platforms.
+ */
+#define ATH12K_CFG_PARALLEL_HW_SCAN \
+	ATH12K_CFG_INI_BOOL("parallel_hw_scan", false, \
+	"Enable parallel hardware scan on multi-radio platforms")
 
 #define ATH12K_INI_DP_UMAC_RESET_TIMEOUT \
 	ATH12K_CFG_INI_UINT("dp_umac_reset_timeout_ms", \

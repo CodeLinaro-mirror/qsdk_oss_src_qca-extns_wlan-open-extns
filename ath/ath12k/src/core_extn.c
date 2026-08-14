@@ -1037,6 +1037,38 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 	return 0;
 }
 
+/**
+ * ath12k_mac_hw_register_extn - Extension hook for ath12k_mac_hw_register
+ * @ah: ath12k_hw instance
+ *
+ * Conditionally sets WIPHY_FLAG_SUPPORTS_PARALLEL_HW_SCAN on the wiphy based
+ * on the "parallel_hw_scan" INI key read from global.ini.  The flag is set
+ * only when the INI is enabled (true); it is cleared otherwise, overriding
+ * any unconditional assignment made by the core driver.
+ *
+ * Must be called from ath12k_mac_hw_register() after the wiphy has been
+ * allocated and the INI context is available.
+ */
+void ath12k_mac_hw_register_extn(struct ath12k_hw *ah)
+{
+	struct ath12k *ar;
+	struct wiphy *wiphy;
+
+	if (!ah || !ah->hw || !ah->num_radio)
+		return;
+
+	ar = &ah->radio[0];
+	wiphy = ah->hw->wiphy;
+
+	if (ath12k_cfg_get(ar->ab, ATH12K_CFG_PARALLEL_HW_SCAN)) {
+		wiphy->flags |= WIPHY_FLAG_SUPPORTS_PARALLEL_HW_SCAN;
+		wiphy_ext_feature_set(wiphy,
+				      NL80211_EXT_FEATURE_PARALLEL_HW_SCAN);
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "parallel hw scan enabled via INI\n");
+	}
+}
+
 void ath12k_mac_setup_extn(struct ath12k *ar)
 {
 	ath12k_esp_init_extn(ar);

@@ -46,6 +46,7 @@ struct ath12k_vif_sysfs_entry {
 };
 
 static int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
+					      struct ath12k_vif *ahvif,
 					      struct ath12k_sta *ahsta,
 					      unsigned long valid_links,
 					      int *psoc_id);
@@ -252,12 +253,14 @@ static int ath12k_get_total_stations_ab(struct ath12k_base *ab)
 }
 
 int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
+				       struct ath12k_vif *ahvif,
 				       struct ath12k_sta *ahsta,
 				       unsigned long valid_links,
 				       int *psoc_id)
 {
 	u32 target_type;
 	struct ath12k *ar;
+	struct ath12k_link_vif *arvif;
 	struct ieee80211_sta *sta = ath12k_ahsta_to_sta(ahsta);
 	bool found_qca5332 = false;
 	bool found_qcn6432 = false;
@@ -265,21 +268,19 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 	bool found_qca5424 = false;
 	u8 forced_psoc_id = 0;
 	int num_links;
-	int i = 0;
+	u8 link_id;
 
 	num_links = hweight32(valid_links);
 	ath12k_dbg_level(NULL, ATH12K_DBG_MAC, ATH12K_DBG_L2,
 			 "mlo primary selection: forced check sta %pM valid_links 0x%lx links %d\n",
 			 sta->addr, valid_links, num_links);
 
-	/* loop through all ab in ah*/
-	for (i = 0; i < ah->num_radio; i++) {
-		ar = &ah->radio[i];
-		if (!ar) {
-			ath12k_err(NULL, "ar is NULL\n");
-			return -1;
-		}
+	for_each_set_bit(link_id, &valid_links, IEEE80211_MLD_MAX_NUM_LINKS) {
+		arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
+		if (!arvif || !arvif->ar)
+			continue;
 
+		ar = arvif->ar;
 		target_type = ar->ab->hw_rev;
 		switch (target_type) {
 		case ATH12K_HW_IPQ5332_HW10:
@@ -306,9 +307,9 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 			break;
 
 		default:
-		ath12k_err(NULL,
-			   "Target not valid for pumac tgt_type %d",
-			   target_type);
+			ath12k_err(NULL,
+				   "Target not valid for pumac tgt_type %d",
+				   target_type);
 			return -EINVAL;
 		}
 	}
@@ -527,7 +528,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 			 "mlo primary selection: sta %pM avg_link_rssi %d valid_links 0x%lx\n",
 			 sta->addr, ahsta->ahsta_extn.avg_link_rssi, valid_links);
 
-	if (ath12k_mlo_set_3_link_forced_primary_umac(ah, ahsta, valid_links,
+	if (ath12k_mlo_set_3_link_forced_primary_umac(ah, ahvif, ahsta, valid_links,
 				&primary_psoc) == 0) {
 		goto exit_pri_link_selection;
 	}

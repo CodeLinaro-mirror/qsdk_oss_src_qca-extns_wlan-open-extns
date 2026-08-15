@@ -1018,7 +1018,7 @@ ath12k_wifi6_hal_mon_rx_parse_status_tlv(struct ath12k_hal *hal,
 			HAL_RX_OFFSET(UNIFIED_PHYRX_RSSI_LEGACY_19,
 				      RECEIVE_RSSI_INFO_PREAMBLE_RSSI_INFO_DETAILS);
 
-		ppdu_info->rssi_comb = HAL_RX_GET(tlv_data,
+		ppdu_info->rssi_db_comb_chain_pri20 = HAL_RX_GET(tlv_data,
 						  PHYRX_RSSI_LEGACY_35, RSSI_COMB);
 		ppdu_info->bw = HAL_RX_GET(tlv_data, PHYRX_RSSI_LEGACY_0,
 					   RECEIVE_BANDWIDTH);

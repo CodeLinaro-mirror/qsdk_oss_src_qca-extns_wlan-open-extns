@@ -70,28 +70,28 @@ enum hal_rx_mpdu_info_sw_frame_group_id_type {
 #define HAL_RX_UPDATE_RSSI_PER_CHAIN_BW(chain, word_1, word_2, \
 					ppdu_info, rssi_info_tlv) \
 	{						\
-	ppdu_info->rssi_chain[chain][0] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][0] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
 				   RSSI_PRI20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][1] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][1] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
 				   RSSI_EXT20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][2] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][2] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
 				   RSSI_EXT40_LOW20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][3] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][3] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_1,\
 				   RSSI_EXT40_HIGH20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][4] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][4] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
 				   RSSI_EXT80_LOW20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][5] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][5] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
 				   RSSI_EXT80_LOW_HIGH20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][6] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][6] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
 				   RSSI_EXT80_HIGH_LOW20_CHAIN##chain); \
-	ppdu_info->rssi_chain[chain][7] = \
+	ppdu_info->rssi_db_per_chain_per_subband[chain][7] = \
 			HAL_RX_GET(rssi_info_tlv, RECEIVE_RSSI_INFO_##word_2,\
 				   RSSI_EXT80_HIGH20_CHAIN##chain); \
 	}						\

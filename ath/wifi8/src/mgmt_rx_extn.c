@@ -135,6 +135,9 @@ int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt,
 	if (pkt_type != ATH12K_MGMT_SRNG_PKT_TYPE_EXTN_RX_HIGHPRI)
 		return -EINVAL;
 
+	if (mmpdu->len < sizeof(struct ieee80211_hdr))
+		return -EINVAL;
+
 	hdr = (struct ieee80211_hdr *)mmpdu->data;
 	fc = le16_to_cpu(hdr->frame_control);
 	frm_stype = FIELD_GET(IEEE80211_FCTL_STYPE, fc);
@@ -142,6 +145,9 @@ int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt,
 	partner_mgmt = partner_ar->ab->mgmt ? partner_ar->ab->mgmt : mgmt;
 
 	stats_extn = &partner_mgmt->srng_stats.stats_extn;
+	if (unlikely(frm_stype >= ARRAY_SIZE(stats_extn->rx_highpri_pkts)))
+		return -EINVAL;
+
 	stats_extn->rx_highpri_pkts[frm_stype]++;
 
 	return 0;

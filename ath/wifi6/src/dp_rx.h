@@ -68,7 +68,7 @@ void *ath12k_wifi6_dp_get_rx_desc(struct ath12k_dp *dp, u32 cookie)
 	else
 		rx_desc_pool = &dp_wifi6->rx_desc_buf;
 
-	if (unlikely(index > rx_desc_pool->pool_size))
+	if (unlikely(index >= rx_desc_pool->pool_size))
 		return NULL;
 
 	return &rx_desc_pool->mon_desc_pool[index];

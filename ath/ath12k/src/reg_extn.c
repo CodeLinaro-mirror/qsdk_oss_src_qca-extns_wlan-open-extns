@@ -563,8 +563,11 @@ ath12k_wmi_parse_hw_blocklist_chan_data_extn(struct ath12k_base *ab,
 	punc_info = le32_to_cpu(hw->puncture_pattern_bitmap_info);
 	punc = FIELD_GET(ATH12K_HWBL_PUNC_BITMAP, punc_info);
 
+	if (upd->num_chans >= upd->total_num_chan)
+		return -EINVAL;
+
 	idx = upd->num_chans;
-	new = krealloc(upd->chans, (idx + 1) * sizeof(*upd->chans), GFP_ATOMIC);
+	new = krealloc_array(upd->chans, idx + 1, sizeof(*upd->chans), GFP_ATOMIC);
 	if (!new) {
 		kfree(upd->chans);
 		upd->chans = NULL;

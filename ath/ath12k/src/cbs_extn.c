@@ -384,6 +384,9 @@ bool ath12k_cbs_skip_scan_event_and_send_scan_complete(
 
 	cbs = &ar->ar_extn.cbs;
 
+	if (!scan_ev)
+		return false;
+
 	event_type = le32_to_cpu(scan_ev->event_type);
 	reason = le32_to_cpu(scan_ev->reason);
 	scan_req_id = le32_to_cpu(scan_ev->scan_req_id);
@@ -517,8 +520,10 @@ int ath12k_cbs_start(struct ath12k *ar)
 		return 0;
 	}
 
-	if (ath12k_cbs_init_dwell_params(cbs))
+	if (ath12k_cbs_init_dwell_params(cbs)) {
+		spin_unlock_bh(&cbs->lock);
 		return -EINVAL;
+	}
 
 	spin_unlock_bh(&cbs->lock);
 

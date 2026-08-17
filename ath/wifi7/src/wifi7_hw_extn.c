@@ -34,8 +34,13 @@ ath12k_get_240_mhz_cap_extn(struct ieee80211_vif *vif,
 	spin_lock_bh(&ahvif->ath12k_vif_extn.data_lock);
 	list_for_each_entry(sta, &ahvif->ath12k_vif_extn.peer_240mhz_list_extn, list) {
 		if (sta && !memcmp(sta->mac_addr, link_sta->addr, ETH_ALEN)) {
+			struct ieee80211_240mhz_vendor_oper_extn *cap;
+
+			cap = kmemdup(&sta->params_240MHz_extn,
+				      sizeof(sta->params_240MHz_extn),
+				      GFP_ATOMIC);
 			spin_unlock_bh(&ahvif->ath12k_vif_extn.data_lock);
-			return &sta->params_240MHz_extn;
+			return cap;
 		}
 	}
 

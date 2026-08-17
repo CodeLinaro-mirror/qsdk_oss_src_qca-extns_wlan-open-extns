@@ -43,6 +43,13 @@ struct cfg80211_scan_radio_pwr_nla {
 	u8 mode;
 };
 
+#define BAND6G_FREQ_START 5925
+#define BAND6G_FREQ_END 7125
+static inline bool is_freq_6g_band(u32 freq)
+{
+	return (freq >= BAND6G_FREQ_START && freq <= BAND6G_FREQ_END);
+}
+
 /**
  * cfg80211_scan_radio_inject_power_mode - select and inject 6 GHz power mode
  *   for a scan radio channel-change command

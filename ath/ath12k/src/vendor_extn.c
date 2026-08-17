@@ -15662,7 +15662,8 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 		peer_entry->intersection_done   = (u8)peer_info->intersection_done;
 		peer_entry->intersect_attempts  = peer_info->intersect_attempts;
 		peer_entry->intersect_successes = peer_info->intersect_successes;
-		peer_entry->intersect_failures  = peer_info->intersect_failures;
+		peer_entry->cap_update_failures  = peer_info->cap_update_failures;
+		peer_entry->rsn_parse_failures   = peer_info->rsn_parse_failures;
 
 		if (peer_mld_mac)
 			break;

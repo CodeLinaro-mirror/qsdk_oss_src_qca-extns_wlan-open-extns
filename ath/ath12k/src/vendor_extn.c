@@ -5333,47 +5333,6 @@ static inline bool ath12k_is_rule_in_radio(struct ath12k *ar,
 	       rule_low < ar->chan_info.high_freq;
 }
 
-static struct ath12k *ath12k_get_block_dfs_regd_update_ar(struct ath12k *ar)
-{
-	struct ath12k_hw *ah = ar->ah;
-	struct ath12k *ar_tmp;
-	int i;
-
-	if (!ah->use_6ghz_regd || ar->supports_6ghz)
-		return ar;
-
-	for_each_ar(ah, ar_tmp, i) {
-		if (ar_tmp->supports_6ghz)
-			return ar_tmp;
-	}
-
-	return ar;
-}
-
-/**
- * ath12k_queue_block_dfs_regd_update - Queue blockdfslist regulatory rebuild
- * @ar: pointer to ath12k structure
- *
- * Marks the wiphy regulatory state stale and queues the existing ath12k
- * regulatory update worker. The worker rebuilds the cfg80211 regdomain from
- * the stored firmware regdomain and applies blockdfslist overrides before
- * notifying userspace.
- */
-static void ath12k_queue_block_dfs_regd_update(struct ath12k *ar)
-{
-	struct ath12k_base *ab = ar->ab;
-	struct ath12k_hw *ah = ar->ah;
-	struct ath12k *update_ar;
-
-	update_ar = ath12k_get_block_dfs_regd_update_ar(ar);
-
-	ah->regd_updated = false;
-	queue_work(update_ar->ab->workqueue, &update_ar->regd_update_work);
-
-	ath12k_info(ab,
-		    "blockdfslist: queued regd update requested pdev %u update pdev %u use_6ghz_regd %u\n",
-		    ar->pdev_idx, update_ar->pdev_idx, ah->use_6ghz_regd);
-}
 
 /**
  * ath12k_apply_cac_timeout_override - Apply CAC timeout to active cfg80211 data
@@ -5440,12 +5399,14 @@ ath12k_should_remove_dfs_reg_rule(struct ath12k *ar,
  * @ar: pointer to ath12k structure
  * @regd: regulatory domain copy to update
  *
+ * Return true if rules are removed, false otherwise
+ *
  * Compacts @regd in place by dropping DFS rules selected by
  * ath12k_should_remove_dfs_reg_rule(). The stored firmware regdomain is not
  * modified, so unblocking can restore DFS operation by rebuilding from a fresh
  * firmware regdomain copy.
  */
-static void
+static bool
 ath12k_remove_dfs_reg_rules(struct ath12k *ar, struct ieee80211_regdomain *regd)
 {
 	unsigned int num_rules = 0;
@@ -5475,6 +5436,8 @@ ath12k_remove_dfs_reg_rules(struct ath12k *ar, struct ieee80211_regdomain *regd)
 	ath12k_info(ar->ab,
 		    "blockdfslist: pdev %u removed %u DFS rules, remaining %u rules\n",
 		    ar->pdev_idx, removed_rules, regd->n_reg_rules);
+
+	return removed_rules > 0;
 }
 
 /**
@@ -5499,11 +5462,224 @@ void ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
 		    ar->chan_info.low_freq, ar->chan_info.high_freq,
 		    regd->n_reg_rules);
 
-	ath12k_remove_dfs_reg_rules(ar, regd);
+	if (!ath12k_remove_dfs_reg_rules(ar, regd))
+		return;
+
+	ath12k_info(ar->ab,
+		    "blockdfslist: dfs_rules_removed set for pdev %u regd %p\n",
+		    ar->pdev_idx, regd);
 }
 
-/* Set radio level parameters
- * set 'reload' to true to send reload event to userspace */
+/**
+ * ath12k_blockdfs_apply_channels - Apply blockdfslist state to DFS channels
+ * @ar: pointer to ath12k structure
+ *
+ * Applies or removes the blockdfslist restriction for DFS channels within
+ * this pdev's frequency range. Only channels belonging to the current radio
+ * are updated; sibling radios sharing the same wiphy are left unchanged.
+ *
+ * When blockdfslist is enabled, DFS channels that are not already disabled
+ * are marked with IEEE80211_CHAN_DISABLED and tracked in
+ * @ar->ar_extn.blockdfs_disabled_chans. Channels that were previously
+ * disabled by regulatory processing or any other mechanism are left
+ * untouched.
+ *
+ * When blockdfslist is disabled, only channels recorded in
+ * @ar->ar_extn.blockdfs_disabled_chans are restored. This distinction is
+ * required because a channel may be disabled either by blockdfslist or by
+ * regulatory rules. The bitmap allows the driver to identify and re-enable
+ * only those channels that were disabled by blockdfslist, while preserving
+ * existing regulatory restrictions.
+ *
+ * DFS state is reset only for channels affected by blockdfslist.
+ */
+static void ath12k_blockdfs_apply_channels(struct ath12k *ar)
+{
+	struct wiphy *wiphy = ath12k_ar_to_hw(ar)->wiphy;
+	struct ieee80211_supported_band *sband;
+	u32 lo = ar->chan_info.low_freq;
+	u32 hi = ar->chan_info.high_freq;
+	int i;
+
+	sband = wiphy->bands[NL80211_BAND_5GHZ];
+	if (!sband)
+		return;
+
+	for (i = 0; i < sband->n_channels; i++) {
+		struct ieee80211_channel *chan = &sband->channels[i];
+
+		if (chan->center_freq < lo || chan->center_freq > hi)
+			continue;
+
+		if (!(chan->flags & IEEE80211_CHAN_RADAR))
+			continue;
+
+		if (ar->ar_extn.block_dfs_channels) {
+			if (chan->flags & IEEE80211_CHAN_DISABLED)
+				continue;
+			chan->flags |= IEEE80211_CHAN_DISABLED;
+			set_bit(i, ar->ar_extn.blockdfs_disabled_chans);
+			chan->dfs_state = NL80211_DFS_USABLE;
+			chan->dfs_state_entered = jiffies;
+			chan->beacon_found = false;
+			ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+				   "blockdfslist: disabled %u MHz pdev %u\n",
+				   chan->center_freq, ar->pdev_idx);
+		} else {
+		    if (!test_and_clear_bit(i, ar->ar_extn.blockdfs_disabled_chans)) {
+			ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+				   "blockdfslist: channel %u MHz was not disabled by blockdfs\n",
+				   chan->center_freq);
+			continue;
+		    }
+
+		    if (!(chan->flags & IEEE80211_CHAN_DISABLED)) {
+			ath12k_warn(ar->ab,
+				    "blockdfslist: inconsistent state for %u MHz pdev %u, channel tracked as blockdfs-disabled but IEEE80211_CHAN_DISABLED is not set\n",
+				    chan->center_freq, ar->pdev_idx);
+			continue;
+		    }
+
+		    chan->flags &= ~IEEE80211_CHAN_DISABLED;
+
+		    ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			       "blockdfslist: restored %u MHz pdev %u\n",
+			       chan->center_freq, ar->pdev_idx);
+		}
+	}
+}
+
+/**
+ * ath12k_blockdfs_copy_regd - Duplicate a regdomain for blockdfslist mutation
+ * @src:    source regdomain (caller holds the appropriate lock/rcu)
+ * @flags:  GFP flags for the allocation
+ *
+ * Returns a kmemdup'd copy of @src, or NULL on allocation failure.
+ */
+static struct ieee80211_regdomain *
+ath12k_blockdfs_copy_regd(const struct ieee80211_regdomain *src, gfp_t flags)
+{
+	int regd_len = sizeof(*src) +
+		       src->n_reg_rules * sizeof(struct ieee80211_reg_rule);
+
+	return kmemdup(src, regd_len, flags);
+}
+
+/**
+* ath12k_block_dfs_channels - Block DFS channels for a pdev
+* @ar: pointer to ath12k structure
+*
+* The primary purpose of this function is to disable DFS channels for the
+* specified radio. It obtains a valid source regdomain, preserving any DFS
+* restrictions already applied by sibling pdevs, removes DFS regulatory
+* rules covering this radio's channel range, and updates the corresponding
+* sband channels to the disabled state.
+*
+* The modified regdomain is then installed on the wiphy and a regulatory
+* change notification is sent to userspace to trigger channel-list refresh.
+*/
+static int ath12k_block_dfs_channels(struct ath12k *ar)
+{
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	struct wiphy *wiphy = hw->wiphy;
+	const struct ieee80211_regdomain *src_regd;
+	struct ieee80211_regdomain *regd_copy;
+
+	/* Seed from wiphy->regd so that DFS rules already removed for sibling
+	 * pdevs are not restored by this operation. */
+	rcu_read_lock();
+	src_regd = get_wiphy_regdom(wiphy);
+	if (!src_regd) {
+		rcu_read_unlock();
+		spin_lock_bh(&ar->ab->base_lock);
+		src_regd = ath12k_reg_get_fallback_regd(ar->ab, ar->pdev_idx);
+		if (!src_regd) {
+			spin_unlock_bh(&ar->ab->base_lock);
+			return -EINVAL;
+		}
+		regd_copy = ath12k_blockdfs_copy_regd(src_regd, GFP_ATOMIC);
+		spin_unlock_bh(&ar->ab->base_lock);
+	} else {
+		regd_copy = ath12k_blockdfs_copy_regd(src_regd, GFP_ATOMIC);
+		rcu_read_unlock();
+	}
+
+	if (!regd_copy)
+		return -ENOMEM;
+
+	ath12k_update_regd_block_dfs_ext(ar, regd_copy);
+	ath12k_blockdfs_apply_channels(ar);
+	regulatory_update_wiphy_regd(wiphy, regd_copy);
+	regulatory_notify_wiphy_change(wiphy);
+	return 0;
+}
+
+/**
+ * ath12k_unblock_dfs_channels - Restore DFS channels for a pdev
+ * @ar: pointer to ath12k structure
+ *
+ * Starts from the original firmware regd (so DFS rules for this pdev are
+ * present), re-applies blocking for every other pdev still in blocked state,
+ * updates per-channel flags, installs the new regdomain, and notifies
+ * userspace.
+ */
+static int ath12k_unblock_dfs_channels(struct ath12k *ar)
+{
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	struct ath12k_hw *ah = ar->ah;
+	struct wiphy *wiphy = hw->wiphy;
+	const struct ieee80211_regdomain *src_regd;
+	struct ieee80211_regdomain *regd_copy;
+	struct ath12k *ar_tmp;
+	int i;
+
+	spin_lock_bh(&ar->ab->base_lock);
+	src_regd = ath12k_reg_get_fallback_regd(ar->ab, ar->pdev_idx);
+	if (!src_regd) {
+		spin_unlock_bh(&ar->ab->base_lock);
+		return -EINVAL;
+	}
+	regd_copy = ath12k_blockdfs_copy_regd(src_regd, GFP_ATOMIC);
+	spin_unlock_bh(&ar->ab->base_lock);
+
+	if (!regd_copy)
+		return -ENOMEM;
+
+	/* Re-apply blocking for every pdev still in blocked state.
+	 * ar->ar_extn.block_dfs_channels was already cleared for the current
+	 * ar by the caller, so it is skipped automatically here. */
+	for_each_ar(ah, ar_tmp, i)
+		ath12k_update_regd_block_dfs_ext(ar_tmp, regd_copy);
+
+	ath12k_blockdfs_apply_channels(ar);
+	regulatory_update_wiphy_regd(wiphy, regd_copy);
+	regulatory_notify_wiphy_change(wiphy);
+	return 0;
+}
+
+/**
+ * ath12k_set_block_dfs_channels - Handle blockdfslist vendor command
+ * @ar: pointer to ath12k structure
+ * @value: 1 to block DFS channels, 0 to restore them
+ *
+ * Return 0 on success and -ve value on failure
+ *
+ * Thin dispatcher: updates the block state flag then delegates to
+ * ath12k_block_dfs_channels() or ath12k_unblock_dfs_channels().
+ */
+static int ath12k_set_block_dfs_channels(struct ath12k *ar, u32 value)
+{
+	ar->ar_extn.block_dfs_channels = value ? 1 : 0;
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "%s DFS channels for pdev %u\n",
+		   value ? "Blocking" : "Unblocking", ar->pdev_idx);
+
+	if (value)
+		return ath12k_block_dfs_channels(ar);
+	else
+		return ath12k_unblock_dfs_channels(ar);
+}
+
 static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 					  struct ath12k *ar,
 					  u32 param, u32 value,
@@ -6903,14 +7079,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		break;
 	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_BLOCK_DFS_LIST:
-		ar->ar_extn.block_dfs_channels = value ? 1 : 0;
-
-		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
-			   "%s DFS channels for pdev %u\n",
-			   value ? "Blocking" : "Unblocking", ar->pdev_idx);
-		ath12k_queue_block_dfs_regd_update(ar);
-
-		ret = 0;
+		ret = ath12k_set_block_dfs_channels(ar, value);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_STATS_TIMER:
 		ar->pdev_stats_timer_interval = value;

@@ -404,6 +404,9 @@ struct wlan_intf_extn {
  * @vifs_kobj:     Pointer to vifs kernel object.
  * @block_dfs_channels: 1:DFS channels disabled by blockdfslist command,
  *   0: DFS channel are not disabled by blockdfslist command
+ * @blockdfs_disabled_chans: bitmap of sband->channels[] indices that were
+ *   disabled by the blockdfslist logic; used to avoid clearing DISABLED on
+ *   channels that were disabled by regulatory rather than by this feature
  * @cac_timeout_override_ms: Custom CAC timeout override in ms.
  *	NO_CAC_OVERRIDE = no override set (use regulatory domain CAC timeout).
  *	Any positive value = override in ms.
@@ -429,6 +432,7 @@ struct ath12k_extn {
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
 	bool block_dfs_channels;
+	DECLARE_BITMAP(blockdfs_disabled_chans, 64);
 	s32 cac_timeout_override_ms;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;

@@ -6541,6 +6541,21 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_STATS_TIMER:
+		ar->pdev_stats_timer_interval = value;
+		if (value) {
+			wiphy_delayed_work_queue(ath12k_ar_to_hw(ar)->wiphy,
+						 &ar->pdev_stats_timer,
+						 msecs_to_jiffies(value));
+		} else {
+			wiphy_delayed_work_cancel(ath12k_ar_to_hw(ar)->wiphy,
+						  &ar->pdev_stats_timer);
+		}
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "pdev stats timer interval set to %u ms for pdev %u\n",
+			   value, ar->pdev_idx);
+		ret = 0;
+		break;
         default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -12876,6 +12891,13 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 			ath12k_warn(ar->ab,
 				    "failed to get chan util: %d\n", ret);
 		return ret;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_STATS_TIMER:
+		*value = ar->pdev_stats_timer_interval;
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "pdev stats timer interval for pdev %u: %u ms\n",
+			   ar->pdev_idx, *value);
+		ret = 0;
+		break;
 	default:
                 ath12k_dbg(NULL, ATH12K_DBG_CFG,
                            "Un-supported param: %d\n", param);
@@ -13630,66 +13652,141 @@ int ath12k_vendor_set_wiphy_hwaddr_extn(struct wiphy *wiphy,
  */
 
 /**
- * ath12k_vendor_get_chan_util - Fetch pdev stats and compute channel
- * utilization.
+ * ath12k_vendor_get_chan_util - Return cached channel utilization.
  * @ar: Pointer to the ath12k radio context
  * @value: Output pointer to store the computed channel utilization (0-100).
  *
- * Fetches firmware pdev stats synchronously, computes channel utilization as
- * (rx_clear_count * 100) / cycle_count.
+ * Reads the pdev counters cached by the periodic pdev_stats_timer work
+ * (ath12k_pdev_stats_timer_work).  When the timer is active the counters
+ * are refreshed every pdev_stats_timer_interval ms, so no blocking WMI
+ * round-trip is needed here.
+ *
+ * If the timer is disabled (interval == 0) or the counters have not yet
+ * been populated, falls back to a synchronous WMI request.
  *
  * Return: 0 on success or a negative error code on failure.
  */
 int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value)
 {
-	struct ath12k_fw_stats_req_params params = {};
-	struct ath12k_fw_stats_pdev *pdev;
 	u32 rx_clear_count;
-	u32 cycle_count = 0;
-	int ret;
+	u32 cycle_count;
+	u32 prev_rx_clear_count;
+	u32 prev_cycle_count;
+	u32 delta_rx_clear;
+	u32 delta_cycle;
 
 	if (!ar || !value)
 		return -EINVAL;
 
-	params.pdev_id = ar->pdev->pdev_id;
-	params.stats_id = WMI_REQUEST_PDEV_STAT;
-
-	ret = ath12k_mac_get_fw_stats(ar, &params);
-	if (ret) {
-		ath12k_warn(ar->ab,
-			    "failed to fetch pdev stats for chan util: %d\n",
-			    ret);
-		return ret;
-	}
-
 	spin_lock_bh(&ar->data_lock);
-	pdev = list_first_entry_or_null(&ar->fw_stats.pdevs,
-					struct ath12k_fw_stats_pdev, list);
-	if (!pdev) {
-		spin_unlock_bh(&ar->data_lock);
-		ath12k_warn(ar->ab, "no pdev stats available for chan util\n");
-		return -ENODATA;
-	}
-
-	rx_clear_count = pdev->rx_clear_count;
-	cycle_count = pdev->cycle_count;
+	rx_clear_count = ar->pdev_rx_clear_count;
+	cycle_count    = ar->pdev_cycle_count;
+	prev_rx_clear_count = ar->pdev_prev_rx_clear_count;
+	prev_cycle_count    = ar->pdev_prev_cycle_count;
 	spin_unlock_bh(&ar->data_lock);
 
+	/* Fall back to a synchronous WMI request if the periodic timer has
+	 * not yet populated the cache (both counters are still zero).
+	 */
 	if (!cycle_count) {
-		ath12k_warn(ar->ab, "cycle_count is zero, cannot compute chan util\n");
-		return -ENODATA;
+		struct ath12k_fw_stats_req_params params = {};
+		struct ath12k_fw_stats_pdev *pdev;
+		int ret;
+
+		params.pdev_id  = ar->pdev->pdev_id;
+		params.stats_id = WMI_REQUEST_PDEV_STAT;
+
+		ret = ath12k_mac_get_fw_stats(ar, &params);
+		if (ret) {
+			ath12k_warn(ar->ab,
+				    "failed to fetch pdev stats for chan util: %d\n",
+				    ret);
+			return ret;
+		}
+
+		spin_lock_bh(&ar->data_lock);
+		pdev = list_first_entry_or_null(&ar->fw_stats.pdevs,
+						struct ath12k_fw_stats_pdev, list);
+		if (!pdev) {
+			spin_unlock_bh(&ar->data_lock);
+			ath12k_warn(ar->ab, "no pdev stats available for chan util\n");
+			return -ENODATA;
+		}
+		rx_clear_count = pdev->rx_clear_count;
+		cycle_count    = pdev->cycle_count;
+		spin_unlock_bh(&ar->data_lock);
 	}
 
-	*value = (u32)div_u64((u64)rx_clear_count * 100, cycle_count);
-	if (*value > 100) {
-		ath12k_warn(ar->ab,
-			    "chan util value %u exceeds 100, clamping to 100\n",
-			    *value);
-		*value = 100;
+	if (!cycle_count) {
+		struct ath12k_fw_stats_req_params params = {};
+		struct ath12k_fw_stats_pdev *pdev;
+		int ret;
+
+		params.pdev_id  = ar->pdev->pdev_id;
+		params.stats_id = WMI_REQUEST_PDEV_STAT;
+
+		ret = ath12k_mac_get_fw_stats(ar, &params);
+		if (ret) {
+			ath12k_warn(ar->ab,
+				    "failed to fetch pdev stats for chan util: %d\n",
+				    ret);
+			return ret;
+		}
+
+		spin_lock_bh(&ar->data_lock);
+		pdev = list_first_entry_or_null(&ar->fw_stats.pdevs,
+						struct ath12k_fw_stats_pdev, list);
+		if (!pdev) {
+			spin_unlock_bh(&ar->data_lock);
+			ath12k_warn(ar->ab, "no pdev stats available for chan util\n");
+			return -ENODATA;
+		}
+		rx_clear_count = pdev->rx_clear_count;
+		cycle_count    = pdev->cycle_count;
+		spin_unlock_bh(&ar->data_lock);
+		/* Synchronous fallback: no previous snapshot available, so
+		 * we cannot compute a meaningful delta.  Use the absolute
+		 * ratio as a best-effort one-shot estimate for the cold-cache
+		 * case only.
+		 */
+		if (!cycle_count) {
+			ath12k_warn(ar->ab, "cycle_count is zero, cannot compute chan util\n");
+			return -ENODATA;
+		}
+		*value = (u32)div_u64((u64)rx_clear_count * 100, cycle_count);
+		if (*value > 100)
+			*value = 100;
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "chan util (fallback): hw_link_id=%u rx_clear_count=%u cycle_count=%u chan_util=%u%%\n",
+			   ar->hw_link_id, rx_clear_count, cycle_count, *value);
+		return 0;
 	}
+
+	/* Timer-driven path: compute utilization over the last interval using
+	 * the delta between the two most recent counter snapshots.
+	 * Both counters are free-running 32-bit HW registers; unsigned
+	 * subtraction handles wrap-around correctly.
+	 */
+	delta_cycle    = cycle_count - prev_cycle_count;
+	delta_rx_clear = rx_clear_count - prev_rx_clear_count;
+
+	/* Guard: delta_cycle zero means the timer fired before firmware
+	 * delivered a new snapshot (e.g. first interval or counter reset).
+	 * Return -EAGAIN so the caller can retry or use a stale value.
+	 */
+	if (!delta_cycle) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "chan util: delta_cycle is zero, skipping update\n");
+		return -EAGAIN;
+	}
+
+	*value = (u32)div_u64((u64)delta_rx_clear * 100, delta_cycle);
+	if (*value > 100)
+		*value = 100;
+
 	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
-		   "chan util: hw_link_id=%u rx_clear_count=%u cycle_count=%u chan_util=%u%%\n",
-		   ar->hw_link_id, rx_clear_count, cycle_count, *value);
+		   "chan util: hw_link_id=%u delta_rx_clear=%u delta_cycle=%u chan_util=%u%%\n",
+		   ar->hw_link_id, delta_rx_clear, delta_cycle, *value);
 	return 0;
 }
 

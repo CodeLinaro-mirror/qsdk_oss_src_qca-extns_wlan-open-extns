@@ -37,6 +37,7 @@
 #include "rropinfo.h"
 #include "qcn_extns/if_meta_hdr.h"
 #include "vendor_extn.h"
+#include "ranging_extn.h"
 
 struct ath12k_vif_sysfs_entry {
 	struct kobject kobj;
@@ -1031,6 +1032,9 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 	case WMI_PEER_RATECODE_LIST_EVENTID:
 		ath12k_wmi_peer_ratecode_list_event_handler(ab, skb);
 		break;
+	case WMI_OEM_RESPONSE_EVENTID:
+		ath12k_wmi_lowi_oem_response_event_extn(ab, skb);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -1087,6 +1091,8 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 	       sizeof(ar->ar_extn.wlan_intf.prev_stats));
 	memset(&ar->ar_extn.wlan_intf.curr_stats, 0,
 	       sizeof(ar->ar_extn.wlan_intf.curr_stats));
+
+	init_completion(&ar->ar_extn.lowi_oem_done);
 }
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)

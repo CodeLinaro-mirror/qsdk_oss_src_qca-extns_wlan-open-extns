@@ -78,8 +78,16 @@ static void mac_hash_clear(struct mac_db *db, const struct mac_hash_key *k,
 	write_seqcount_end(&db->hash_seq);
 }
 
+void mac_hash_v6_keygen(struct sk_buff *skb, struct mac_hash_key *k, bool dest)
+{
+	struct ipv6hdr *ip6h = ipv6_hdr(skb);
+
+	k->is_v6 = true;
+	k->ip.v6 = dest ? ip6h->daddr : ip6h->saddr;
+}
+
 /**
- * mac_hash_key_gen() - Generate a hash key from skb
+ * mac_hash_v4_keygen() - Generate a hash key from skb
  * @skb: Socket buffer to extract IP and MAC from
  * @k: Pointer to hash key structure to fill
  * @use_dest: If true, use destination addresses; if false, use source addresses
@@ -88,41 +96,12 @@ static void mac_hash_clear(struct mac_db *db, const struct mac_hash_key *k,
  *
  * Return: 0 on success, -EINVAL if packet version is unsupported
  */
-int mac_hash_key_gen(struct sk_buff *skb, struct mac_hash_key *k, bool use_dest)
+void mac_hash_v4_keygen(struct sk_buff *skb, struct mac_hash_key *k, bool dest)
 {
-	switch (ip_hdr(skb)->version) {
-	case 4:
-		k->is_v6 = false;
+	struct iphdr *iph = ip_hdr(skb);
 
-		/* Key generated using destination addresses */
-		if (use_dest) {
-			k->ip.v4.s_addr = ip_hdr(skb)->daddr;
-			ether_addr_copy(k->mac_addr, eth_hdr(skb)->h_dest);
-			return 0;
-		}
-
-		k->ip.v4.s_addr = ip_hdr(skb)->saddr;
-		ether_addr_copy(k->mac_addr, eth_hdr(skb)->h_source);
-		break;
-	case 6:
-		k->is_v6 = true;
-
-		/* Key generated using destination addresses */
-		if (use_dest) {
-			memcpy(&k->ip.v6, &ipv6_hdr(skb)->daddr, sizeof(k->ip.v6));
-			ether_addr_copy(k->mac_addr, eth_hdr(skb)->h_dest);
-			return 0;
-		}
-
-		memcpy(&k->ip.v6, &ipv6_hdr(skb)->saddr, sizeof(k->ip.v6));
-		ether_addr_copy(k->mac_addr, eth_hdr(skb)->h_source);
-		break;
-
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
+	k->is_v6 = false;
+	k->ip.v4.s_addr = dest ? iph->daddr : iph->saddr;
 }
 
 /**
@@ -190,7 +169,6 @@ void mac_db_entry_free(struct kref *ref)
 
 	memset(&me->key, 0, sizeof(me->key));
 	memset(me->mac_addr, 0, sizeof(me->mac_addr));
-	me->hits = 0;
 
 	/* Clear the bitmap to indicate the entry is now free */
 	clear_bit(me->bmap_idx, db->data_bmap);
@@ -237,8 +215,10 @@ struct mac_db_entry *mac_db_entry_get(struct mac_db *db, struct mac_hash_key *k)
 			if (!me)
 				continue;
 
-			if (__key_compare(&me->key, k))
+			if (__key_compare(&me->key, k)) {
+				atomic64_inc(&db->stats.matched);
 				break;
+			}
 
 			me = mac_db_entry_deref(me);
 		}
@@ -246,6 +226,7 @@ struct mac_db_entry *mac_db_entry_get(struct mac_db *db, struct mac_hash_key *k)
 	} while (read_seqcount_retry(&db->hash_seq, seq));
 
 	return me;
+
 }
 
 /**
@@ -307,6 +288,7 @@ void mac_db_entry_del(struct mac_db *db, u8 mac_addr[])
 		if (ether_addr_equal(me->mac_addr, mac_addr)) {
 			mac_hash_clear(db, &me->key, (u16)bit);
 			mac_db_entry_deref(me); /* Drop reference from; entry_add */
+			atomic64_inc(&db->stats.deleted);
 		}
 
 		mac_db_entry_deref(me); /* Drop reference taken at the beginning */
@@ -351,6 +333,7 @@ int mac_db_entry_add(struct mac_db *db, u8 mac_addr[], struct mac_hash_key *k)
 	bit = find_first_zero_bit(db->data_bmap, db->max_entries);
 	if (bit >= db->max_entries) {
 		err = -ENOMEM;
+		atomic64_inc(&db->stats.failed);
 		goto done;
 	}
 
@@ -367,6 +350,7 @@ int mac_db_entry_add(struct mac_db *db, u8 mac_addr[], struct mac_hash_key *k)
 	set_bit(bit, db->data_bmap);
 	mac_hash_set(db, k, (u16)bit);
 
+	atomic64_inc(&db->stats.created);
 done:
 	spin_unlock_bh(&db->lock);
 	return err;

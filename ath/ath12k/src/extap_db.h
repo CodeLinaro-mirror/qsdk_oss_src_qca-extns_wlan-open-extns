@@ -10,6 +10,7 @@
 #include <linux/etherdevice.h>
 #include <linux/in.h>
 #include <linux/kref.h>
+#include <linux/rcupdate.h>
 #include <linux/seqlock.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
@@ -20,6 +21,7 @@
 #define MAC_DB_HASHES_MASK	(MAC_DB_HASHES - 1)
 
 struct mac_db;
+struct extap_extn;
 
 /**
  * struct mac_hash - IP to MAC hash entry
@@ -67,7 +69,20 @@ struct mac_db_entry {
 
 	struct mac_db *db;
 	u16 bmap_idx;
-	u32 hits;
+};
+
+/**
+ * struct mac_db_stats - MAC database statistics
+ * @created: IP→MAC entries learned
+ * @deleted: entries evicted by bridge FDB age-out
+ * @matched: inbound frames with a table match
+ * @failed: add attempts when table was at capacity
+ */
+struct mac_db_stats {
+	atomic64_t created;	/* IP→MAC entries learned */
+	atomic64_t deleted;	/* entries evicted by bridge FDB age-out */
+	atomic64_t matched;	/* inbound frames with a table match */
+	atomic64_t failed;	/* add attempts when table was at capacity */
 };
 
 /**
@@ -79,6 +94,7 @@ struct mac_db_entry {
  * @data: Array of MAC database entries
  * @hash_seq: Sequence lock for hash table updates
  * @hash: Hash table for fast lookup using key
+ * @stats: Database statistics
  *
  * Main database structure for storing IP-to-MAC mappings. Uses hash table
  * for O(1) lookup and reference counting for safe memory management.
@@ -92,9 +108,11 @@ struct mac_db {
 
 	seqcount_t hash_seq;
 	struct mac_hash hash[MAC_DB_HASHES];
+	struct mac_db_stats stats;
 };
 
-int mac_hash_key_gen(struct sk_buff *skb, struct mac_hash_key *k, bool use_dest);
+void mac_hash_v4_keygen(struct sk_buff *skb, struct mac_hash_key *k, bool dest);
+void mac_hash_v6_keygen(struct sk_buff *skb, struct mac_hash_key *k, bool dest);
 struct mac_db *mac_db_alloc_ref(u16 num_entries);
 void mac_db_free(struct kref *ref);
 

@@ -277,4 +277,35 @@ int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 }
 EXPORT_SYMBOL(ath12k_extap_init);
 
+/**
+ * ath12k_extap_stats_dump() - print aggregate ExtAP counters to dmesg
+ * @ahvif: ath12k VIF context
+ */
+void ath12k_extap_stats_dump(struct ath12k_vif *ahvif)
+{
+	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+	struct extap_stats *s = &ee->stats;
+	struct mac_db *db;
+
+	pr_info("EXTAP Stats: %pM\n", ahvif->vif->addr);
+	pr_info("TX Packets Converted : %lld\n",
+		atomic64_read(&s->tx_conv));
+	pr_info("RX Packets Converted : %lld\n",
+		atomic64_read(&s->rx_conv));
+
+	db = extap_get_db(ee);
+	if (db) {
+		pr_info("TX Learns :            %lld\n",
+			atomic64_read(&db->stats.created));
+		pr_info("RX Hits :              %lld\n",
+			atomic64_read(&db->stats.matched));
+		pr_info("FDB Deletes :          %lld\n",
+			atomic64_read(&db->stats.deleted));
+		pr_info("Add Failures :         %lld\n",
+			atomic64_read(&db->stats.failed));
+		mac_db_deref(db);
+	}
+}
+EXPORT_SYMBOL(ath12k_extap_stats_dump);
+
 #endif /* CPTCFG_QCN_EXTN */

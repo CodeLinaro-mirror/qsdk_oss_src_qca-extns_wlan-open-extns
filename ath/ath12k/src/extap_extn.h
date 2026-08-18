@@ -108,6 +108,8 @@ int extap_learn(struct extap_extn *ee, struct mac_hash_key *k);
 
 #ifndef CPTCFG_QCN_EXTN
 
+static inline void ath12k_extap_stats_dump(struct ath12k_vif *ahvif) {}
+
 static inline void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb) {}
 
 static inline void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb) {}
@@ -120,6 +122,8 @@ static inline int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 }
 
 #else /* CPTCFG_QCN_EXTN */
+
+void ath12k_extap_stats_dump(struct ath12k_vif *ahvif);
 
 void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb);
 void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb);

@@ -182,6 +182,9 @@ ath12k_vendor_split_scan_params_policy[QCA_WLAN_VENDOR_ATTR_SPLIT_SCAN_MAX + 1];
 extern const struct nla_policy
 ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
 
+extern const struct nla_policy
+ath12k_vendor_extap_setup_policy[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX + 1];
+
 #if LINUX_VERSION_IS_LESS(6,6,116)
 #define MAX(x,y) (x > y ? x : y)
 #endif
@@ -596,6 +599,15 @@ static inline int ath12k_vendor_mapc_peer_params_extn(struct wiphy *wiphy,
 	return -EOPNOTSUPP;
 }
 
+static inline int
+ath12k_vendor_extap_setup_handler(struct wiphy *wiphy,
+				  struct wireless_dev *wdev,
+				  const void *data,
+				  int data_len)
+{
+	return -EOPNOTSUPP;
+}
+
 static inline int ath12k_vendor_mapc_cotdma_txop_policy_extn(struct wiphy *wiphy,
 							     struct wireless_dev *wdev,
 							     const void *data,
@@ -619,6 +631,7 @@ static inline int ath12k_vendor_cotdma_e2e_config_extn(struct wiphy *wiphy,
 {
 	return -EOPNOTSUPP;
 }
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -740,6 +753,11 @@ int ath12k_vendor_reg_params_handler(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     const void *data,
 				     int data_len);
+
+int ath12k_vendor_extap_setup_handler(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data,
+				      int data_len);
 
 int ath12k_vendor_enable_sounding_extn(struct wiphy *wiphy,
                   struct wireless_dev *wdev,

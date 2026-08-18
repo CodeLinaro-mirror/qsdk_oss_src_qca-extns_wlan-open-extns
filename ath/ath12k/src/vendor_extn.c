@@ -17601,6 +17601,10 @@ int ath12k_vendor_extap_info_handler(struct wiphy *wiphy,
 		/* TODO: Enable during EXTAP Hook enablement */
 		//ath12k_extap_stats_dump(ahvif);
 		break;
+	case QCA_WLAN_EXTAP_INFO_DUMP:
+		/* TODO: Enable during EXTAP Hook enablement */
+		//ath12k_extap_info_dump(ahvif);
+		break;
 	default:
 		return -EINVAL;
 	}

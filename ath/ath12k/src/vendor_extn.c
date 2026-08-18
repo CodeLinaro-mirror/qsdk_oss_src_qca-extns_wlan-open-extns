@@ -686,6 +686,15 @@ ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1] = {
 };
 
 const struct nla_policy
+ath12k_rtt_blob_policy[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_MAX + 1] = {
+       [QCA_WLAN_VENDOR_ATTR_RTT_BLOB_BAND]      = { .type = NLA_U32 },
+       [QCA_WLAN_VENDOR_ATTR_RTT_BLOB_RADIO_IDX] = { .type = NLA_U32 },
+       [QCA_WLAN_VENDOR_ATTR_RTT_BLOB_LENGTH]    = { .type = NLA_U32 },
+       [QCA_WLAN_VENDOR_ATTR_RTT_BLOB_DATA]      = { .type = NLA_BINARY,
+                                                    .len = QCA_WLAN_MAX_RTT_BLOB_SIZE },
+};
+
+const struct nla_policy
 ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_DCS_LINK_ID] = {.type = NLA_U8},
 	[QCA_WLAN_VENDOR_ATTR_DCS_CMD_TYPE] = {.type = NLA_U8},
@@ -14207,6 +14216,100 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 	}
 
 	return 0;
+}
+
+/*
+ * ath12k_vendor_rtt_blob - Download RTT blob fragment to firmware.
+ * Receives the blob in fragments; header is prepended by userspace tool.
+ * @wiphy: Pointer to wiphy
+ * @wdev: wireless wdev
+ * @data: vendor data
+ * @data_len: length of data
+ * Returns 0 on success, negative errno on failure.
+ */
+int ath12k_vendor_rtt_blob(struct wiphy *wiphy,
+                          struct wireless_dev *wdev,
+                          const void *data,
+                          int data_len)
+{
+       struct ath12k_wmi_pdev *wmi;
+       struct ath12k *ar;
+       struct wmi_tlv *tlv;
+       struct wmi_pdev_download_rtt_blob_cmd_fixed_param *cmd;
+       struct sk_buff *skb;
+       struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_MAX + 1];
+       u32 rtt_data_len, rtt_cmd_len, rtt_tlv_len, len;
+       u32 *rtt_array;
+       const u8 *rtt_data;
+       void *ptr;
+       int ret;
+
+       if (nla_parse(tb, QCA_WLAN_VENDOR_ATTR_RTT_BLOB_MAX,
+                     data, data_len, ath12k_rtt_blob_policy, NULL)) {
+               ath12k_err(NULL, "Failed to parse RTT blob vendor attributes");
+               return -EINVAL;
+       }
+
+       if (!tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_RADIO_IDX] ||
+           !tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_LENGTH] ||
+           !tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_BAND] ||
+           !tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_DATA]) {
+               ath12k_err(NULL, "Missing RTT blob attributes");
+               return -EINVAL;
+       }
+
+       ar = ath12k_get_radio_by_index(wiphy, tb);
+       if (!ar) {
+               ath12k_err(NULL, "%s: ar is NULL", __func__);
+               return -ENODATA;
+       }
+
+       rtt_data_len = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_LENGTH]);
+       if (!rtt_data_len || rtt_data_len > QCA_WLAN_MAX_RTT_BLOB_SIZE ||
+           rtt_data_len > nla_len(tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_DATA])) {
+               ath12k_err(NULL, "Invalid RTT blob length %u", rtt_data_len);
+               return -EINVAL;
+       }
+
+       /* rtt_cmd_len = data + one leading u32 for band, rounded to word */
+       rtt_cmd_len = rtt_data_len + sizeof(u32);
+       rtt_tlv_len = TLV_HDR_SIZE + roundup(rtt_cmd_len, sizeof(u32));
+       len = sizeof(*cmd) + rtt_tlv_len;
+
+       wmi = ar->wmi;
+       skb = ath12k_wmi_alloc_skb(wmi->wmi_ab, len);
+       if (!skb)
+               return -ENOMEM;
+
+       cmd = (struct wmi_pdev_download_rtt_blob_cmd_fixed_param *)skb->data;
+	cmd->tlv_header =
+		ath12k_wmi_tlv_cmd_hdr(WMI_TAG_PDEV_DOWNLOAD_RTT_BLOB_CMD,
+				       sizeof(*cmd));
+       cmd->pdev_id  = cpu_to_le32(ar->pdev->pdev_id);
+       cmd->rtt_len  = cpu_to_le32(rtt_cmd_len);
+
+       ptr = skb->data + sizeof(*cmd);
+       tlv = ptr;
+       tlv->header = ath12k_wmi_tlv_hdr(WMI_TAG_ARRAY_UINT32, rtt_cmd_len);
+       ptr += TLV_HDR_SIZE;
+       rtt_array = (u32 *)ptr;
+       rtt_array[0] = cpu_to_le32(nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_BAND]));
+       rtt_data = nla_data(tb[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_DATA]);
+       memcpy(&rtt_array[1], rtt_data, rtt_data_len);
+
+       ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+                  "WMI RTT BLOB: pdev %d rtt_len %d\n",
+                  ar->pdev->pdev_id, rtt_cmd_len);
+
+       ret = ath12k_wmi_cmd_send(wmi, skb, WMI_PDEV_DOWNLOAD_RTT_BLOB_CMDID);
+       if (ret) {
+               ath12k_warn(ar->ab,
+                           "Failed to send WMI_PDEV_DOWNLOAD_RTT_BLOB_CMDID\n");
+               dev_kfree_skb(skb);
+               return ret;
+       }
+
+       return 0;
 }
 
 #define WMI_STA_MAX_LIMIT 40

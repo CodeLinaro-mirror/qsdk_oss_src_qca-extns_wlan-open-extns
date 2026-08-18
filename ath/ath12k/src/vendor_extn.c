@@ -39,6 +39,7 @@
 #include "dp_stats_extn.h"
 #include "reg_extn.h"
 #include "dp_mon_extn.h"
+#include "extap_extn.h"
 #include "../dp_mon.h"
 #include "../net/mac80211/ieee80211_i.h"
 
@@ -733,6 +734,16 @@ ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_DISABLE] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_OPCLASS] = { .type = NLA_U8 },
 	[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_CHAN_LIST] = { .type = NLA_NESTED },
+};
+
+const struct nla_policy
+ath12k_vendor_extap_setup_policy[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_EXTAP_WIFI_IFACE]   = { .type = NLA_STRING,
+						       .len  = IFNAMSIZ - 1 },
+	[QCA_WLAN_VENDOR_ATTR_EXTAP_BRIDGE_IFACE] = { .type = NLA_STRING,
+						       .len  = IFNAMSIZ - 1 },
+	[QCA_WLAN_VENDOR_ATTR_EXTAP_TEARDOWN]     = { .type = NLA_FLAG },
+	[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX_CLIENTS]  = { .type = NLA_U32 },
 };
 
 enum rx_flow_tag_op {
@@ -17771,3 +17782,54 @@ ath12k_vendor_mapc_peer_get_params_extn(struct wiphy *wiphy,
 	return cfg80211_vendor_cmd_reply(reply_skb);
 }
 EXPORT_SYMBOL(ath12k_vendor_mapc_peer_get_params_extn);
+
+/**
+ * ath12k_vendor_extap_setup_handler - vendor command handler for
+ * %QCA_NL80211_VENDOR_SUBCMD_EXTAP_SETUP
+ *
+ * Attaches or detaches the TX egress hook and RX static-branch that implement
+ * ExtAP MAC address translation on the STA VAP uplink to the root AP.
+ * An optional TEARDOWN flag triggers detach.
+ */
+int ath12k_vendor_extap_setup_handler(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data,
+				      int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX + 1];
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+	u32 max_clients = 0;
+	int ret;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_EXTAP_MAX,
+			data, data_len,
+			ath12k_vendor_extap_setup_policy, NULL);
+	if (ret)
+		return ret;
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif)
+		return -EINVAL;
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+
+	/* TODO: Enable with EXTAP Hook Patch */
+	if (tb[QCA_WLAN_VENDOR_ATTR_EXTAP_TEARDOWN]) {
+		//ath12k_extap_deinit(ahvif);
+		return 0;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX_CLIENTS])
+		max_clients = nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX_CLIENTS]);
+
+	/*
+	 * Clear IFF_DONT_BRIDGE so the VAP can be added to a bridge.
+	 */
+	if (wdev->netdev)
+		wdev->netdev->priv_flags &= ~IFF_DONT_BRIDGE;
+
+	/* TODO: Enable with EXTAP Hook Patch */
+	return 0;
+	//return ath12k_extap_init(ahvif, max_clients);
+}

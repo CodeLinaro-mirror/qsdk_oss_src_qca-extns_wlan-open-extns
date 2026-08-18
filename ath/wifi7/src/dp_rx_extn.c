@@ -10,6 +10,7 @@
 #include "../dp_rx.h"
 #include "../../fse.h"
 #include "../../qcn_extns/mesh_util.h"
+#include "../../qcn_extns/ath12k_cmn_extn.h"
 
 int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 					struct hal_rx_spd_data *rx_spd,
@@ -100,6 +101,10 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			if ((rx_mpdu_info->flow_info.flow_metadata &
 			    ATH12K_RX_FSE_FLOW_MATCH_USE_PPE)) {
 				dp->device_stats.fast_rx[ring_id][device_id]++;
+				if (static_branch_unlikely(&extap_enabled)) {
+					if (ath12k_vif_has_extap(ath12k_vif_to_ahvif(peer->vif)))
+						ath12k_extap_rx(ath12k_vif_to_ahvif(peer->vif), msdu);
+				}
 				if (offload_ops && offload_ops->recv &&
 				    !offload_ops->recv(peer->dev, msdu)) {
 					dev_kfree_skb_any(msdu);
@@ -133,6 +138,11 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	    likely(peer->is_authorized)) {
 		stats->sent_to_stack_ucast_fast++;
 		stats->sent_to_stack_ucast_fast_bytes += msdu->len;
+
+		if (static_branch_unlikely(&extap_enabled)) {
+			if (ath12k_vif_has_extap(ath12k_vif_to_ahvif(peer->vif)))
+				ath12k_extap_rx(ath12k_vif_to_ahvif(peer->vif), msdu);
+		}
 
 		msdu->protocol = eth_type_trans(msdu, peer->dev);
 		dp->device_stats.fast_rx[ring_id][device_id]++;
@@ -185,6 +195,12 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		}
 
 		msdu->priority = rx_mpdu_info->tid;
+
+		if (static_branch_unlikely(&extap_enabled)) {
+			if (ath12k_vif_has_extap(ath12k_vif_to_ahvif(peer->vif)))
+				ath12k_extap_rx(ath12k_vif_to_ahvif(peer->vif), msdu);
+		}
+
 		/* Convert 802.3 frame to 802.11 so mac80211 can handle it correctly.
 		 * For 4addr frames, this is needed to support APVLAN interface creation.
 		 * For TKIP peers, fast-rx is not set in mac80211, so RX_FLAG_8023 must
@@ -219,6 +235,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			stats->sent_to_stack_ucast_bytes += msdu->len;
 			dp->device_stats.non_fast_unicast_rx[ring_id][device_id]++;
 		}
+
 		ieee80211_rx_napi(ath12k_dp_pdev_to_hw(dp_pdev), pubsta, msdu,
 				  napi);
 	}

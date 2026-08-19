@@ -3608,7 +3608,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 					WMI_VDEV_PARAM_TX_ENCAP_TYPE,
 					value);
 			if (!ret) {
-				arvif->vap_cfg.tx_encap_type = value;
+				arvif->ahvif->dp_vif.tx_encap_type = value;
 			} else {
 				ath12k_err(NULL,
 						"Failed to send WMI_VDEV_PARAM_TX_ENCAP_TYPE to firmware\n");
@@ -3625,7 +3625,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 					WMI_VDEV_PARAM_RX_DECAP_TYPE,
 					value);
 			if (!ret) {
-				arvif->vap_cfg.rx_decap_type = value;
+				arvif->ahvif->dp_vif.rx_decap_type = value;
 			} else {
 				ath12k_err(NULL,
 						"Failed to send WMI_VDEV_PARAM_RX_DECAP_TYPE to firmware\n");
@@ -10943,12 +10943,12 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_ENCAP_TYPE:
-		*value = arvif->vap_cfg.tx_encap_type;
+		*value = arvif->ahvif->dp_vif.tx_encap_type;
 		ret = 0;
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_DECAP_TYPE:
-		*value = arvif->vap_cfg.rx_decap_type;
+		*value = arvif->ahvif->dp_vif.rx_decap_type;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_PROTECTION_MODE:

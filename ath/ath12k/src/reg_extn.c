@@ -2263,3 +2263,98 @@ ath12k_get_best_6ghz_power_extn(struct ieee80211_hw *hw,
 	return best_mode;
 }
 EXPORT_SYMBOL(ath12k_get_best_6ghz_power_extn);
+
+static struct wireless_dev *ath12k_find_scan_vap_wdev(struct ath12k *ar)
+{
+	struct ath12k_link_vif *arvif;
+	struct wireless_dev *wdev = NULL;
+
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		struct ath12k_vif *ahvif = arvif->ahvif;
+
+		if (!ahvif)
+			continue;
+		wdev = ieee80211_vif_to_wdev(ahvif->vif);
+		if (wdev && wdev_is_scan_radio(wdev))
+			break;
+		wdev = NULL;
+	}
+
+	return wdev;
+}
+
+void ath12k_change_scan_vap_pwr_mode_work(struct wiphy *wiphy,
+					  struct wiphy_work *work)
+{
+	struct ath12k_extn *ar_extn = container_of(work, struct ath12k_extn,
+						   change_scan_vap_pwr_mode_work);
+	struct ath12k *ar = container_of(ar_extn, struct ath12k, ar_extn);
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+	struct ath12k_vif *ahvif;
+	struct ieee80211_vif *vif;
+	struct wireless_dev *wdev;
+	const struct cfg80211_chan_def *chandef;
+	enum nl80211_regulatory_power_modes best_mode;
+	u32 freq, center_freq;
+	int bw;
+	u8 link_id;
+
+	spin_lock_bh(&ar->data_lock);
+	wdev = ath12k_find_scan_vap_wdev(ar);
+	spin_unlock_bh(&ar->data_lock);
+	if (!wdev)
+		return;
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	ahvif = ath12k_vif_to_ahvif(vif);
+	link_id = ath12k_mac_find_link_id_by_ar(ahvif, ar);
+	if (link_id >= ATH12K_NUM_MAX_LINKS)
+		return;
+
+	chandef = &wdev->links[link_id].ap.chandef;
+	if (!chandef->chan || chandef->chan->band != NL80211_BAND_6GHZ)
+		return;
+
+	freq = chandef->chan->center_freq;
+	center_freq = chandef->center_freq1;
+	bw = nl80211_chan_width_to_mhz(chandef->width);
+	if (bw < 20)
+		return;
+
+	best_mode = ath12k_get_best_6ghz_power_extn(hw, vif, freq, center_freq, bw);
+	if (best_mode == NL80211_REG_NUM_POWER_MODES)
+		return;
+
+	if (ieee80211_6ghz_power_mode_change(hw->wiphy, wdev,
+					     best_mode, link_id, true))
+		ath12k_warn(ar->ab,
+			    "scan VAP 6 GHz pwr mode change failed pdev %u link %u\n",
+			    ar->pdev->pdev_id, link_id);
+	else
+		ath12k_dbg(ar->ab, ATH12K_DBG_AFC,
+			   "scan VAP pwr mode %d pdev %u link %u\n",
+			   best_mode, ar->pdev->pdev_id, link_id);
+}
+EXPORT_SYMBOL(ath12k_change_scan_vap_pwr_mode_work);
+
+void ath12k_afc_scan_radio_update_extn(struct ath12k *ar, bool retail_mode_only)
+{
+	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+
+	if (!ath12k_scan_radio_supported(ar->pdev))
+		return;
+
+	if (retail_mode_only &&
+	    !wiphy_ext_feature_isset(hw->wiphy,
+				     NL80211_EXT_FEATURE_RETAIL_AFC_SUPPORT))
+		return;
+
+	if (!ath12k_find_scan_vap_wdev(ar))
+		return;
+
+	ar->ar_extn.afc_pwr_scan_radio_update_pending = true;
+	ath12k_dbg(ar->ab, ATH12K_DBG_AFC,
+		   "scan VAP pwr mode update pending pdev %u retail_only %d\n",
+		   ar->pdev->pdev_id, retail_mode_only);
+}
+EXPORT_SYMBOL(ath12k_afc_scan_radio_update_extn);

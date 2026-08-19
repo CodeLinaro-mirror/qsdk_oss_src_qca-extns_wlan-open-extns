@@ -1845,7 +1845,7 @@ void ath12k_peer_assoc_h_he_cap_internal_extn(struct ath12k *ar,
 void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
 					   struct wmi_vdev_ratemask_arg *arg)
 {
-	u8 higher_mcs = arvif->ar->pdev->cap.vht_higher_mcs_supp;
+	u8 higher_mcs = 0;
 	u64 mcs1011_lower64 = 0, mcs1011_higher64 = 0;
 	u8 nss;
 
@@ -1856,6 +1856,7 @@ void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
 	    !arvif->ar->pdev->cap.vht_higher_mcs_supp)
 		return;
 
+	higher_mcs = arvif->ar->pdev->cap.vht_higher_mcs_supp;
 	for (nss = 0; nss < NL80211_VHT_NSS_MAX; nss++) {
 		if (!(higher_mcs & BIT(nss)))
 			continue;

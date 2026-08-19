@@ -43,6 +43,7 @@ struct ath12k_wmi_resource_config_arg;
 struct wmi_scan_event;
 struct sk_buff;
 struct wmi_scan_blanking_params_info;
+struct wmi_vdev_ratemask_arg;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -118,6 +119,13 @@ struct ath12k_link_vif_extn {
 	struct work_struct gpr_work;
 	/* debugfs entry for the gpr_timer enable/disable knob */
 	struct dentry *debugfs_gpr_timer;
+	/* VHT MCS 10/11 (1024-QAM) support flags.
+	 * vht_mcs10_11_supp: overall enable for this VAP (default: true on HE targets).
+	 * vht_mcs10_11_nq2q_peer_supp: enable for peers that did not advertise
+	 *   MCS10/11 support via QCN IE (non-QCA peers). Default: false.
+	 */
+	bool vht_mcs10_11_supp;
+	bool vht_mcs10_11_nq2q_peer_supp;
 };
 
 struct sta_240mhz_info {
@@ -283,10 +291,21 @@ struct ath12k_sta_extn {
  * @rssi_assoc: RSSI captured during association for this link; used as the base
  *		RSSI when deriving per-link averages and primary link selection.
  * @sa_sta: Smart Antenna extention for STA
+ * @higher_vhtmcs_supp: Per-SS bitmap of negotiated VHT MCS 10/11 support for this peer.
+ *                      Populated from the QCN IE VHT MCS10/11 attribute (0x02) during association.
+ *                      Bit N set means NSS (N+1) supports MCS 10 and 11. Zero if the
+ *                      peer did not advertise MCS10/11 via QCN IE.
+ * @he_cap_info_internal: QCA-internal HE capability bitmap negotiated via QCN IE attrs 0x03/0x04.
+ *                        bit 0: RX 1xLTF + 0.4us GI (attr 0x03 byte 0)
+ *                        bit 1: RX 2xLTF + 0.4us GI (attr 0x03 byte 1)
+ *                        bit 2: 2xLTF in 160/80+80 MHz (attr 0x04)
+ *                        Zero if the peer did not advertise support via QCN IE.
  */
 struct ath12k_link_sta_extn {
 	s8 rssi_assoc;
 	struct sa_sta_extn sa_sta;
+	u8 higher_vhtmcs_supp;
+	u32 he_cap_info_internal;
 };
 
 struct wmi_dcs_wlan_interference_stats {
@@ -1784,6 +1803,44 @@ int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, 
 bool ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
 						     struct ath12k_link_vif *arvif,
 						     struct ieee80211_bss_conf *link_conf);
+
+/**
+ * ath12k_peer_assoc_h_vht_mcs10_11_extn - Encode VHT MCS 10/11 into tx_mcs_set
+ * @ar:     ath12k radio instance
+ * @arvif:  link vif
+ * @arsta:  link sta (carries higher_vhtmcs_supp from QCN IE negotiation)
+ * @arg:    peer_assoc WMI argument being built
+ *
+ * Returns: None
+ */
+void ath12k_peer_assoc_h_vht_mcs10_11_extn(struct ath12k *ar,
+					   struct ath12k_link_vif *arvif,
+					   struct ath12k_link_sta *arsta,
+					   struct ath12k_wmi_peer_assoc_arg *arg);
+
+/**
+ * ath12k_peer_assoc_h_he_cap_internal_extn - Encode HE 400ns SGI / 2x LTF
+ * 160/80+80 MHz internal bitmap into peer_assoc arg
+ * @ar:   ath12k radio instance
+ * @arsta: link sta (carries he_cap_info_internal from QCN IE negotiation)
+ * @arg:  peer_assoc WMI argument being built
+ * @band: nl80211_band used to select the local HW band capability
+ *
+ * Returns: None
+ */
+void ath12k_peer_assoc_h_he_cap_internal_extn(struct ath12k *ar,
+					      struct ath12k_link_sta *arsta,
+					      struct ath12k_wmi_peer_assoc_arg *arg,
+					      enum nl80211_band band);
+
+/**
+ * ath12k_mac_vht_mcs10_11_ratemask_extn - Extend per-NSS VHT ratemask with
+ * MCS10/11 (1024-QAM) bits for VAPs with QCN IE negotiated MCS10/11 support.
+ * @arvif: link vif whose ratemask is being built
+ * @arg:   ratemask WMI arg already populated with standard MCS 0-9 bits
+ */
+void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
+					   struct wmi_vdev_ratemask_arg *arg);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

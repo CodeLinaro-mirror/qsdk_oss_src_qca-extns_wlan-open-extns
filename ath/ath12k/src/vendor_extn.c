@@ -4262,6 +4262,39 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		ret = 0;
 		break;
 	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_MCS_10_11_SUPP:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "VHT MCS10/11 support should be 0 or 1\n");
+			return -EINVAL;
+		}
+		if (!!value == arvif->arvif_extn.vht_mcs10_11_supp) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "VHT MCS10/11 support already set to %d\n", value);
+			return 0;
+		}
+		if (value && !ar->pdev->cap.vht_higher_mcs_supp) {
+			ath12k_err(NULL, "VHT MCS10/11 not supported by hardware\n");
+			return -EOPNOTSUPP;
+		}
+		arvif->arvif_extn.vht_mcs10_11_supp = !!value;
+		/* Note: existing connected peers are not retroactively updated.
+		 * The new setting takes effect for subsequent associations.
+		 */
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_MCS_10_11_NQ2Q_PEER_SUPP:
+		if (value < 0 || value > 1) {
+			ath12k_err(NULL, "VHT MCS10/11 nq2q peer support should be 0 or 1\n");
+			return -EINVAL;
+		}
+		if (!!value == arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "VHT MCS10/11 nq2q peer support already set to %d\n", value);
+			return 0;
+		}
+		arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp = !!value;
+		ret = 0;
+		break;
 	/* PHY_ERR_MASK carries a 64-bit value: lo in data, hi in flags.
 	 */
 	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_PHY_ERR_MASK: {
@@ -4309,7 +4342,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 	}
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
-				"Un-supported param: %d\n", param);
+			   "Un-supported param: %d\n", param);
 		break;
 	}
 
@@ -11211,6 +11244,14 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		*value = ath12k_get_monitor_version(ar->ab);
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_MCS_10_11_SUPP:
+		*value = arvif->arvif_extn.vht_mcs10_11_supp ? 1 : 0;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_MCS_10_11_NQ2Q_PEER_SUPP:
+		*value = arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp ? 1 : 0;
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_METADATA_CAPTURE: {
 		struct ath12k_pdev_dp *dp_pdev;
 		struct ath12k_pdev_mon_dp_extn *mon_extn = NULL;
@@ -13322,7 +13363,12 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	struct ieee80211_vif *vif;
 	struct ath12k_vif *ahvif;
 	u8 allow_3addr_mc;
-
+	unsigned long links_map;
+	u8 link_id;
+	u8 peer_addr[ETH_ALEN];
+	struct ieee80211_sta *sta;
+	struct ath12k_link_sta *arsta;
+	struct ath12k_sta *ahsta = NULL;
 	int ret;
 
 	ret = ath12k_vendor_set_esp_params_extn(wiphy, tb, wdev);
@@ -13331,17 +13377,75 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 		return ret;
 	}
 
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif) {
+		ath12k_err(NULL, "wdev_to_ieee80211_vif returned NULL\n");
+		return -EINVAL;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_PEER_MAC]) {
+		nla_memcpy(peer_addr, tb[QCA_WLAN_VENDOR_ATTR_CONFIG_PEER_MAC], ETH_ALEN);
+
+		rcu_read_lock();
+		sta = ieee80211_find_sta(vif, peer_addr);
+		if (!sta) {
+			ath12k_err(NULL, "ieee80211_find_sta failed for %pM\n",
+				   peer_addr);
+			rcu_read_unlock();
+			return -ENOENT;
+		}
+		ahsta = ath12k_sta_to_ahsta(sta);
+	} else if (vif->type == NL80211_IFTYPE_STATION) {
+		/* STA mode: hostapd does not send PEER_MAC — use the AP
+		 * BSSID from the VIF's BSS config to find the single peer.
+		 */
+		rcu_read_lock();
+		sta = ieee80211_find_sta(vif, vif->bss_conf.bssid);
+		if (sta)
+			ahsta = ath12k_sta_to_ahsta(sta);
+		else
+			rcu_read_unlock();
+	}
+
+	if (ahsta && tb[QCA_WLAN_VENDOR_ATTR_CONFIG_VHT_MCS_10_11_PEER_SUPP]) {
+		u8 supp;
+
+		links_map = ahsta->links_map;
+		supp = nla_get_u8(
+				tb[QCA_WLAN_VENDOR_ATTR_CONFIG_VHT_MCS_10_11_PEER_SUPP]);
+		/* Update higher_vhtmcs_supp on all active links for this peer.
+		 * This handles both non-MLO (deflink only) and MLO stations.
+		 */
+		for_each_set_bit(link_id, &links_map,
+				 IEEE80211_MLD_MAX_NUM_LINKS) {
+			arsta = ahsta->link[link_id];
+			if (arsta)
+				arsta->arsta_extn.higher_vhtmcs_supp = supp ? 0xff : 0;
+		}
+	}
+
+	if (ahsta && tb[QCA_WLAN_VENDOR_ATTR_CONFIG_HE_CAP_INFO_INTERNAL]) {
+		u32 he_cap;
+
+		links_map = ahsta->links_map;
+		he_cap = nla_get_u32(
+				tb[QCA_WLAN_VENDOR_ATTR_CONFIG_HE_CAP_INFO_INTERNAL]);
+
+		for_each_set_bit(link_id, &links_map,
+				 IEEE80211_MLD_MAX_NUM_LINKS) {
+			arsta = ahsta->link[link_id];
+			if (arsta)
+				arsta->arsta_extn.he_cap_info_internal = he_cap;
+		}
+	}
+	if (ahsta)
+		rcu_read_unlock();
+
 	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]) {
 		allow_3addr_mc = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]);
 
 		if (allow_3addr_mc > 1) {
 			ath12k_err(NULL, "Invalid allow_3addr_mc value: %u\n", allow_3addr_mc);
-			return -EINVAL;
-		}
-
-		vif = wdev_to_ieee80211_vif(wdev);
-		if (!vif) {
-			ath12k_err(NULL, "vif is NULL\n");
 			return -EINVAL;
 		}
 

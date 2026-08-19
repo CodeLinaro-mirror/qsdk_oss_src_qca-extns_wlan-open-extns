@@ -1749,3 +1749,129 @@ u32 ath12k_get_monitor_version(struct ath12k_base *ab)
 		return 0;
 	}
 }
+
+/**
+ * ath12k_peer_assoc_h_vht_mcs10_11_extn - Encode VHT MCS 10/11 (1024-QAM)
+ * into the peer_assoc tx_mcs_set.
+ *
+ * VHT MCS 10/11 is an extension to 802.11ac negotiated via QCN vendor IE
+ * attribute 0x02.  When the VAP has MCS10/11 enabled and the hardware
+ * supports it, the per-SS bitmap is encoded into bits [23:16] of tx_mcs_set
+ * with the validity flag in bit 24.  If neither the peer QCN IE nor the
+ * nq2q fallback is active the extended bits are stripped so firmware sees a
+ * standard MCS 0-9 peer.
+ */
+void ath12k_peer_assoc_h_vht_mcs10_11_extn(struct ath12k *ar,
+					   struct ath12k_link_vif *arvif,
+					   struct ath12k_link_sta *arsta,
+					   struct ath12k_wmi_peer_assoc_arg *arg)
+{
+	u8 peer_higher_mcs;
+
+	if (!arvif || !ar || !ar->pdev)
+		return;
+
+	if (!arvif->arvif_extn.vht_mcs10_11_supp || !ar->pdev->cap.vht_higher_mcs_supp)
+		return;
+
+	if (arsta->arsta_extn.higher_vhtmcs_supp) {
+		/* Peer advertised MCS10/11 support via QCN IE:
+		 * use the negotiated per-SS intersection bitmap.
+		 */
+		peer_higher_mcs = arsta->arsta_extn.higher_vhtmcs_supp;
+	} else if (arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp) {
+		/* Non-QCA peer fallback: apply self capability to all
+		 * supported NSS chains.
+		 */
+		peer_higher_mcs = ar->pdev->cap.vht_higher_mcs_supp;
+	} else {
+		peer_higher_mcs = 0;
+	}
+
+	if (peer_higher_mcs) {
+		/* Mask to peer's actual NSS capability: a peer with
+		 * N spatial streams can only use MCS10/11 on NSS 1..N.
+		 * arg->peer_nss is already clamped to the negotiated NSS.
+		 */
+		if (arg->peer_nss < 8)
+			peer_higher_mcs &= (u8)((1 << arg->peer_nss) - 1);
+		peer_higher_mcs &= ar->pdev->cap.vht_higher_mcs_supp;
+		/* Set validity flag (bit 24) and per-SS bitmap [23:16] */
+		arg->tx_mcs_set |= IEEE80211_DISABLE_VHT_MCS_SUPPORT_0_11;
+		arg->tx_mcs_set |= ((u32)peer_higher_mcs << 16) &
+				   IEEE80211_VHT_MCS_SUPPORT_0_11_MASK;
+		ath12k_info(ar->ab,
+			    "VHT MCS10/11: peer %pM tx_mcs_set 0x%08x higher_vhtmcs_supp 0x%02x\n",
+			    arsta->addr, arg->tx_mcs_set,
+			    arsta->arsta_extn.higher_vhtmcs_supp);
+	} else {
+		arg->tx_mcs_set |= IEEE80211_DISABLE_VHT_MCS_SUPPORT_0_11;
+	}
+}
+
+/**
+ * ath12k_peer_assoc_h_he_cap_internal_extn - Encode HE 400ns SGI and 2x LTF
+ * 160/80+80 MHz internal capability into the peer_assoc arg.
+ *
+ * The QCA-internal HE capability bitmap is negotiated via QCN vendor IE
+ * attributes 0x03 (400ns SGI, bits [1:0]) and 0x04 (2x LTF 160/80+80, bit 2).
+ * Intersect with the local HW band capability so we never advertise a feature
+ * the local radio does not support.
+ */
+void ath12k_peer_assoc_h_he_cap_internal_extn(struct ath12k *ar,
+					      struct ath12k_link_sta *arsta,
+					      struct ath12k_wmi_peer_assoc_arg *arg,
+					      enum nl80211_band band)
+{
+	if (!arsta || !ar || !ar->pdev)
+		return;
+
+	arg->peer_he_cap_macinfo_internal = arsta->arsta_extn.he_cap_info_internal &
+					ar->pdev->cap.band[band].he_cap_info_internal;
+}
+
+/**
+ * ath12k_mac_vht_mcs10_11_ratemask_extn - Extend the per-NSS VHT ratemask
+ * to include MCS10 and MCS11 (1024-QAM) bits.
+ *
+ * When VHT MCS10/11 is enabled for this VAP and the radio supports it,
+ * extend each NSS chain's 12-bit ratemask entry to set bits 10 and 11,
+ * enabling MCS10 and MCS11 in the WMI_VDEV_RATEMASK_CMDID payload.
+ *
+ * @arvif: link vif whose ratemask is being built
+ * @arg:   ratemask WMI arg already populated with the standard MCS 0-9 bits;
+ *         MCS10/11 bits are OR'd in for supported NSS chains
+ */
+void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
+					   struct wmi_vdev_ratemask_arg *arg)
+{
+	u8 higher_mcs = arvif->ar->pdev->cap.vht_higher_mcs_supp;
+	u64 mcs1011_lower64 = 0, mcs1011_higher64 = 0;
+	u8 nss;
+
+	if (!arvif || !arvif->ar || !arvif->ar->pdev)
+		return;
+
+	if (!arvif->arvif_extn.vht_mcs10_11_supp ||
+	    !arvif->ar->pdev->cap.vht_higher_mcs_supp)
+		return;
+
+	for (nss = 0; nss < NL80211_VHT_NSS_MAX; nss++) {
+		if (!(higher_mcs & BIT(nss)))
+			continue;
+		/* Add MCS10 (bit 10) and MCS11 (bit 11) for this NSS */
+		if (nss < 5) {
+			mcs1011_lower64 |= (u64)(BIT(10) | BIT(11)) << (nss * 12);
+		} else if (nss == 5) {
+			mcs1011_lower64 |=
+				((u64)((BIT(10) | BIT(11)) & 0xf)) << 60;
+			mcs1011_higher64 |= (u64)((BIT(10) | BIT(11)) >> 4);
+		} else {
+			mcs1011_higher64 |= (u64)(BIT(10) | BIT(11)) <<
+						(((nss - 6) * 12) + 8);
+		}
+	}
+	arg->mask_lower32  |= lower_32_bits(mcs1011_lower64);
+	arg->mask_higher32 |= upper_32_bits(mcs1011_lower64);
+	arg->mask_lower32_2 |= lower_32_bits(mcs1011_higher64);
+}

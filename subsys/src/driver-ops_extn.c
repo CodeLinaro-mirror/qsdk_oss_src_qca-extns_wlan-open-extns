@@ -643,8 +643,16 @@ void ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
 
 	timer_setup(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
 		    ieee80211_mesh_peer_timeout_check, 0);
-	/* Timer is enabled by default */
-	sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled = true;
+
+	/* For non-beaconing BSS, peer lifecycle is managed externally
+	 * via wlanconfig addlocalpeer/dellocalpeer. Disable the inactivity
+	 * timer so peers are not auto-deleted due to missing beacons. For
+	 * other BSS, enable peer cleanup timer by default.
+	 */
+	if (wdev->non_beacon_bss)
+		sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled = false;
+	else
+		sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled = true;
 }
 EXPORT_SYMBOL(ieee80211_mesh_ap_setup);
 

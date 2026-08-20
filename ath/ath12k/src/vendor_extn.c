@@ -4653,6 +4653,17 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		ret = ath12k_wmi_send_pdev_frame_inject_cmd(ar, &arg);
 		break;
 	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HLOS_TID_OVERRIDE:
+		if (value)
+			arvif->ahvif->dp_vif.dp_features |= DP_FEATURE_HLOS;
+		else
+			arvif->ahvif->dp_vif.dp_features &= ~DP_FEATURE_HLOS;
+		ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+			   "hlos_tidoverride: vdev %d dp_features=0x%x (HLOS=%d)\n",
+			   arvif->vdev_id, arvif->ahvif->dp_vif.dp_features,
+			   !!(arvif->ahvif->dp_vif.dp_features & DP_FEATURE_HLOS));
+		ret = 0;
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);
@@ -11649,6 +11660,13 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		ret = 0;
 		break;
 	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_HLOS_TID_OVERRIDE:
+		*value = !!(arvif->ahvif->dp_vif.dp_features & DP_FEATURE_HLOS);
+		ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
+			   "g_hlos_tidoverride: vdev %d hlos_override=%llu\n",
+			   arvif->vdev_id, *value);
+		ret = 0;
+		break;
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);

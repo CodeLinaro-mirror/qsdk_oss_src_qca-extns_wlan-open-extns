@@ -202,6 +202,14 @@ int ieee802_11_parse_elems_vendor_qcn_extn(const u8 *pos, u8 elen,
 				elems->elems_extn.params_240MHz.eht_240mhz_len
 					= pos[1];
 				break;
+			case WLAN_OUI_QCN_ATTR_HE_MCS_12_13_SUPP:
+				if (rem_elen < 4 || pos[1] != 2)
+					break;
+				elems->elems_extn.he_mcs_12_13_peer_cap
+					= ((u16)pos[3] << 8) | pos[2];
+				elems->elems_extn.he_mcs_12_13_peer_cap_present
+					= true;
+				break;
 			default:
 				break;
 		}

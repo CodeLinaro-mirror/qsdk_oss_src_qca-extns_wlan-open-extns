@@ -199,7 +199,8 @@ ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy, struct nlattr **
 
 static inline void
 ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
-				      struct ath12k_wmi_peer_assoc_arg *arg)
+				      struct ath12k_wmi_peer_assoc_arg *arg,
+				      struct ieee80211_link_sta *link_sta)
 {
 	return;
 }
@@ -780,12 +781,16 @@ int ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy, struct nlatt
  * peer capability to the WMI peer assoc argument.
  * @ar:  ath12k radio instance
  * @arg: WMI peer assoc argument being prepared
+ * @link_sta: mac80211 link station whose HE MCS 12/13 peer capability
+ *	      (parsed from the AP's QCN vendor IE) is intersected with
+ *	      this radio's own capability.
  *
  * Populates the peer capability for HE MCS 12/13, which is used during the
  * WMI PEER ASSOC command sent to the firmware.
  */
 void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
-					   struct ath12k_wmi_peer_assoc_arg *arg);
+					   struct ath12k_wmi_peer_assoc_arg *arg,
+					   struct ieee80211_link_sta *link_sta);
 
 /**
  * ath12k_vendor_get_wiphy_config_handler_extn - Wiphy configuration command handler

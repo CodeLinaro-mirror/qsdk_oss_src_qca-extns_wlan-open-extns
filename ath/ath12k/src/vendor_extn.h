@@ -1059,4 +1059,26 @@ enum srtype {
 
 const char *ath12k_phymode_str(enum wmi_phy_mode mode);
 
+/* Maximum allowed value for the duration field (usecs) */
+#define ATH12K_FRAME_INJECTOR_MAX_DUR  32000
+
+/**
+ * Payload for QCA_WLAN_VENDOR_VDEV_PARAM_FRAME_INJECTOR_EN.
+ *
+ * @frametype:      frame type (enum wmi_frame_inject_type)
+ * @enable:         1 = enable injection, 0 = disable
+ * @inject_period:  periodicity in milliseconds
+ * @dstmac:         destination MAC address
+ * @bandwidth:      channel bandwidth
+ * @frame_duration: duration field for CTS-to-self in usecs
+ */
+struct ath12k_frame_injector_params {
+	u32 frametype;
+	u32 enable;
+	u32 inject_period;
+	u8  dstmac[ETH_ALEN];
+	u32 bandwidth;
+	u32 frame_duration;
+};
+
 #endif /* VENDOR_EXTN_H */

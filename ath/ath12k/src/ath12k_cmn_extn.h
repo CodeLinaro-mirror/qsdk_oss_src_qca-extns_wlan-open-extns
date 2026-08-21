@@ -593,7 +593,7 @@ struct ath12k_pdev_mon_dp_extn {
 };
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);
-
+struct ath12k_vif *ath12k_get_ahvif_from_wdev(struct wireless_dev *wdev);
 struct ath12k *ath12k_get_radio_by_id(struct wiphy *wiphy, u8 radio_id);
 
 /*

@@ -189,6 +189,7 @@ void ath12k_cbs_stop_async(struct ath12k *ar);
 int ath12k_cbs_start(struct ath12k *ar);
 int ath12k_cbs_allow_mac80211_scan(struct ath12k *ar);
 void ath12k_cbs_resume_post_mac80211_scan(struct ath12k *ar);
+void ath12k_cbs_recovery_handler(struct ath12k *ar);
 
 /* Event handling */
 void ath12k_cbs_post_event(struct ath12k_cbs *cbs, enum ath12k_cbs_event event);

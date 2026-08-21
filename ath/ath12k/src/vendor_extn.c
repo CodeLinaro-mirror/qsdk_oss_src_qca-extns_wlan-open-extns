@@ -5416,6 +5416,18 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		     ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_SENSITIVITY_LEVEL to firmware");
 		 }
                  break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_WLAN_PROFILE_ID_ENABLE:
+		 ret = ath12k_wmi_send_wlan_profile_enable_cmd(ar, value, 1);
+
+		 if (ret)
+		     ath12k_err(NULL, "Failed to send WMI_WLAN_PROFILE_ENABLE_PROFILE_ID_CMDID\n");
+		 break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_WLAN_PROFILE_TRIGGER:
+		 ret = ath12k_wmi_send_wlan_profile_trigger_cmd(ar, value);
+
+		 if (ret)
+		     ath12k_err(NULL, "Failed to send WMI_WLAN_PROFILE_TRIGGER_CMDID\n");
+		 break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_DYN_GROUPING:
 		 value = !!value;
 		 if (ar->radio_cfg.dyngroup == value)

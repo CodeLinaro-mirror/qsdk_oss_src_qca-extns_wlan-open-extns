@@ -1180,13 +1180,22 @@ static void ieee80211_mesh_peer_del_work(struct wiphy *wiphy,
 	struct ieee80211_sta *sta;
 	int ret;
 
+	/* Bail out if VAP was torn down or driver unloaded since we were queued */
+	if (!ieee80211_sdata_running(sdata) ||
+	    !rdev || !rdev->ops || !rdev->ops->del_station) {
+		ieee80211_mesh_free_aid(sdata, ctx->sta_aid);
+		kfree(ctx);
+		return;
+	}
+
 	/* Peer may have been removed by another path (e.g. beacon timeout)
-	 * between the deauth send and now — skip deletion if it is gone.
+	 * between the deauth send and now — free AID to avoid leak.
 	 */
 	rcu_read_lock();
 	sta = ieee80211_find_sta(&sdata->vif, ctx->peer_addr);
 	rcu_read_unlock();
 	if (!sta) {
+		ieee80211_mesh_free_aid(sdata, ctx->sta_aid);
 		kfree(ctx);
 		return;
 	}
@@ -1200,8 +1209,8 @@ static void ieee80211_mesh_peer_del_work(struct wiphy *wiphy,
 
 	/* Call mac80211's del_station to remove the peer */
 	ret = rdev->ops->del_station(wiphy, sdata->dev, &params);
-	/* Free AID only on success — if deletion failed the station entry may
-	 * still exist with this AID, freeing it could cause an AID collision.
+	/* Free AID only on success — if deletion failed the station still exists
+	 * with this AID, freeing it could cause an AID collision.
 	 */
 	if (!ret)
 		ieee80211_mesh_free_aid(sdata, ctx->sta_aid);
@@ -2501,7 +2510,7 @@ void ieee80211_mesh_peer_cleanup(struct wiphy *wiphy,
 		wiphy_work_cancel(wiphy, &sta_info->sta.sta_extn.deauth_rx_wk);
 		sdata->u.ap.if_ap_extn.num_mesh_peers--;
 		if (!sdata->u.ap.if_ap_extn.num_mesh_peers) {
-			del_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
+			del_timer_sync(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
 		}
 	}
 }
@@ -2518,21 +2527,24 @@ void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 {
 	struct sta_info *sta = NULL;
 	struct ieee80211_sub_if_data *sdata =
-		from_timer(sdata, t, u.ap.if_ap_extn.mesh_peer_cleanup_timer);;
+		from_timer(sdata, t, u.ap.if_ap_extn.mesh_peer_cleanup_timer);
+	unsigned long now;
 
 	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH)
 		return;
 
-	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+	if (!ieee80211_sdata_running(sdata))
+		return;
 
-	list_for_each_entry(sta, &sdata->local->sta_list, list) {
+	rcu_read_lock();
+	list_for_each_entry_rcu(sta, &sdata->local->sta_list, list) {
 		if (sta->sdata != sdata)
 			continue;
 
 		if (!sta->sta.sta_extn.peer_info.is_mesh_peer)
 			continue;
 
-		unsigned long now = jiffies;
+		now = jiffies;
 
 		if (time_after(now, sta->sta.sta_extn.peer_info.last_beacon_time +
 			       msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD)))
@@ -2547,10 +2559,12 @@ void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 					 &sta->sta.sta_extn.timeout_wk);
 		}
 	}
+	rcu_read_unlock();
+
 	/* Re-arm the timer only if it is still enabled */
 	if (sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled)
-	    mod_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
-		      jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
+		mod_timer(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer,
+			  jiffies + msecs_to_jiffies(MESH_PEER_INACTIVITY_PERIOD));
 }
 EXPORT_SYMBOL(ieee80211_mesh_peer_timeout_check);
 

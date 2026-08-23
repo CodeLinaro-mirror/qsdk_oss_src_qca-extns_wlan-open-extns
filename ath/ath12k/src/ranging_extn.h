@@ -114,5 +114,12 @@ struct ath12k_link_vif *ath12k_arvif_from_peer_addr_extn(struct wireless_dev *wd
 int ath12k_wmi_send_ltf_key_seed_all_radios_extn(struct wireless_dev *wdev,
 						 struct ath12k_wmi_ltf_keyseed_arg *arg,
 						 const u8 *peer_addr);
+/* RTT vdev lifecycle — unassociated STA LOWI path */
+int ath12k_create_rtt_vdev_extn(struct ath12k *ar, const u8 *sta_mac);
+void ath12k_add_rtt_interface_extn(struct ieee80211_hw *hw,
+				    struct ieee80211_vif *vif);
+void ath12k_destroy_rtt_vdev_extn(struct ath12k *ar);
+struct ath12k_link_vif *
+ath12k_get_rtt_vif_by_vdev_id_extn(struct ath12k_base *ab, u32 vdev_id);
 
 #endif /* RANGING_EXTN_H */

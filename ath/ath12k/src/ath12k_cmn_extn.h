@@ -137,6 +137,7 @@ struct ath12k_link_vif_extn {
 	bool vht_mcs10_11_supp;
 	bool vht_mcs10_11_nq2q_peer_supp;
 	bool rtt_initiator_role;
+	bool is_rtt_vif;
 };
 
 struct sta_240mhz_info {
@@ -463,6 +464,11 @@ struct ath12k_extn {
 
 	/* serialises WMI OEM cmd -> response */
 	struct completion lowi_oem_done;
+
+	/* Dedicated RTT vdev for unassociated STA ranging (LOWI path).
+	 * Not registered with mac80211; kept off ar->arvifs list.
+	 */
+	struct ath12k_link_vif *rtt_vif;
 };
 
 /**
@@ -1251,6 +1257,12 @@ void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
 				struct ath12k_link_vif *arvif);
 void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif);
+void ath12k_mac_op_add_interface_extn(struct ieee80211_hw *hw,
+				      struct ieee80211_vif *vif);
+void ath12k_rtt_vdev_assoc_extn(struct ath12k *ar,
+			   struct ath12k_link_vif *arvif);
+void ath12k_mac_op_remove_interface_extn(struct ieee80211_hw *hw,
+					 struct ieee80211_vif *vif);
 void ath12k_gpr_arvif_init(struct ath12k_link_vif *arvif);
 void ath12k_gpr_arvif_deinit(struct ath12k_link_vif *arvif);
 void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,

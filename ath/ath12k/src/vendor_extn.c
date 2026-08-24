@@ -13869,35 +13869,6 @@ int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value)
 		rx_clear_count = pdev->rx_clear_count;
 		cycle_count    = pdev->cycle_count;
 		spin_unlock_bh(&ar->data_lock);
-	}
-
-	if (!cycle_count) {
-		struct ath12k_fw_stats_req_params params = {};
-		struct ath12k_fw_stats_pdev *pdev;
-		int ret;
-
-		params.pdev_id  = ar->pdev->pdev_id;
-		params.stats_id = WMI_REQUEST_PDEV_STAT;
-
-		ret = ath12k_mac_get_fw_stats(ar, &params);
-		if (ret) {
-			ath12k_warn(ar->ab,
-				    "failed to fetch pdev stats for chan util: %d\n",
-				    ret);
-			return ret;
-		}
-
-		spin_lock_bh(&ar->data_lock);
-		pdev = list_first_entry_or_null(&ar->fw_stats.pdevs,
-						struct ath12k_fw_stats_pdev, list);
-		if (!pdev) {
-			spin_unlock_bh(&ar->data_lock);
-			ath12k_warn(ar->ab, "no pdev stats available for chan util\n");
-			return -ENODATA;
-		}
-		rx_clear_count = pdev->rx_clear_count;
-		cycle_count    = pdev->cycle_count;
-		spin_unlock_bh(&ar->data_lock);
 		/* Synchronous fallback: no previous snapshot available, so
 		 * we cannot compute a meaningful delta.  Use the absolute
 		 * ratio as a best-effort one-shot estimate for the cold-cache

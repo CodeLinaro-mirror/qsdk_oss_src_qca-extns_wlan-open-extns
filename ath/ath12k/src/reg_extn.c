@@ -1519,11 +1519,104 @@ static const struct file_operations fops_display_hw_blocklist_extn = {
 	.open = simple_open,
 };
 
+#define AFC_HW_BLOCKLIST_MIN_SUPP_PWR_SUBCMDID_EXTN 150
+
+/**
+ * enum ath12k_hw_blocklist_min_supp_pwr_args_extn - AFC unit test args used
+ * to override the HW blocklist minimum supported power
+ * @HW_BLOCKLIST_MIN_SUPP_PWR_SUBCMDID_EXTN: Subcmdid
+ * @HW_BLOCKLIST_MIN_SUPP_PWR_VALUE_EXTN: Min supported power override value
+ * @HW_BLOCKLIST_MIN_SUPP_PWR_MAX_ARGS_EXTN: Max test args
+ */
+enum ath12k_hw_blocklist_min_supp_pwr_args_extn {
+	HW_BLOCKLIST_MIN_SUPP_PWR_SUBCMDID_EXTN,
+	HW_BLOCKLIST_MIN_SUPP_PWR_VALUE_EXTN,
+	HW_BLOCKLIST_MIN_SUPP_PWR_MAX_ARGS_EXTN,
+};
+
+/**
+ * ath12k_wmi_send_hw_blocklist_min_supp_power_extn() - Send the HW blocklist
+ * min supported power override value to FW.
+ * @ar: pointer to ath12k radio
+ * @value: user configured min supported power override value
+ *
+ * Reuses the AFC unit test module id/token (AFC_UNIT_TEST_MODULE_ID,
+ * AFC_UNIT_TEST_TOKEN) already defined in wmi.h for the AFC grace timer
+ * feature, and the shared ath12k_wmi_send_unit_test_cmd() infra used by
+ * every other unit test based debug command (grace timer, DFS, M3, AWGN).
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int
+ath12k_wmi_send_hw_blocklist_min_supp_power_extn(struct ath12k *ar, s32 value)
+{
+	u32 test_args[HW_BLOCKLIST_MIN_SUPP_PWR_MAX_ARGS_EXTN];
+	struct wmi_unit_test_cmd wmi_ut;
+
+	test_args[HW_BLOCKLIST_MIN_SUPP_PWR_SUBCMDID_EXTN] =
+		AFC_HW_BLOCKLIST_MIN_SUPP_PWR_SUBCMDID_EXTN;
+	test_args[HW_BLOCKLIST_MIN_SUPP_PWR_VALUE_EXTN] = (u32)value;
+
+	wmi_ut.vdev_id = cpu_to_le32(0);
+	wmi_ut.module_id = cpu_to_le32(AFC_UNIT_TEST_MODULE_ID);
+	wmi_ut.num_args = cpu_to_le32(HW_BLOCKLIST_MIN_SUPP_PWR_MAX_ARGS_EXTN);
+	wmi_ut.diag_token = cpu_to_le32(AFC_UNIT_TEST_TOKEN);
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "Sending HW blocklist min supported power override value %d to FW\n",
+		   value);
+
+	return ath12k_wmi_send_unit_test_cmd(ar, wmi_ut, test_args);
+}
+
+/**
+ * ath12k_write_hw_min_supp_power_override_extn() - debugfs write handler
+ * for the "hw_min_supp_power_override" debugfs file. Reads the user
+ * programmed min supported power override value and sends it to firmware.
+ * @file: file pointer
+ * @user_buf: user buffer
+ * @count: size of the buffer
+ * @ppos: file position
+ *
+ * Return: number of bytes consumed on success, negative error code on failure
+ */
+static ssize_t
+ath12k_write_hw_min_supp_power_override_extn(struct file *file,
+					     const char __user *user_buf,
+					     size_t count, loff_t *ppos)
+{
+	struct ath12k *ar = file->private_data;
+	int ret;
+	s32 value;
+
+	guard(wiphy)(ath12k_ar_to_hw(ar)->wiphy);
+
+	if (!test_bit(ATH12K_FLAG_REGISTERED, &ar->ab->dev_flags))
+		return -ENETDOWN;
+
+	if (kstrtos32_from_user(user_buf, count, 10, &value))
+		return -EINVAL;
+
+	ret = ath12k_wmi_send_hw_blocklist_min_supp_power_extn(ar, value);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static const struct file_operations fops_hw_min_supp_power_override_extn = {
+	.write = ath12k_write_hw_min_supp_power_override_extn,
+	.open = simple_open,
+};
+
 void ath12k_debugfs_register_hw_blocklist_extn(struct ath12k *ar)
 {
 	debugfs_create_file("display_hw_blocklist", 0400,
 			    ar->debug.debugfs_pdev, ar,
 			    &fops_display_hw_blocklist_extn);
+	debugfs_create_file("hw_min_supp_power_override", 0200,
+			    ar->debug.debugfs_pdev, ar,
+			    &fops_hw_min_supp_power_override_extn);
 }
 
 enum ath12k_6ghz_mode_validate_state {

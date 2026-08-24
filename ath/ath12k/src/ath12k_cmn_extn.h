@@ -38,6 +38,7 @@ struct ath12k_link_sta;
 struct ath12k_hw;
 struct ath12k_skb_cb;
 struct ath12k_sta;
+struct wmi_unit_test_cmd;
 struct ath12k_wmi_resource_config_params;
 struct ath12k_wmi_resource_config_arg;
 struct wmi_scan_event;
@@ -922,6 +923,14 @@ int ath12k_pcic_mgmt_interrupt_handler_extn(struct ath12k_mgmt_irq_grp *irq_grp)
 }
 
 static inline int
+ath12k_wmi_send_unit_test_cmd(struct ath12k *ar,
+			      struct wmi_unit_test_cmd ut_cmd,
+			      u32 *test_args)
+{
+	return -1;
+}
+
+static inline int
 ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 			    const void *ptr, void *data)
 {
@@ -1443,6 +1452,22 @@ int ath12k_wmi_tlv_iter(struct ath12k_base *ab, const void *ptr, size_t len,
 			int (*iter)(struct ath12k_base *ab, u16 tag, u16 len,
 				    const void *ptr, void *data),
 			void *data);
+
+/**
+ * ath12k_wmi_send_unit_test_cmd() - Build and send a WMI_UNIT_TEST_CMDID
+ * command to FW. Shared by all unit test based debug commands (AFC grace
+ * timer, DFS unit test, M3 unit test, AWGN unit test, and extn callers).
+ * @ar: pointer to ath12k radio
+ * @ut_cmd: unit test command header (vdev_id, module_id, num_args, diag_token)
+ * @test_args: array of num_args u32 test arguments
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int
+ath12k_wmi_send_unit_test_cmd(struct ath12k *ar,
+			      struct wmi_unit_test_cmd ut_cmd,
+			      u32 *test_args);
+
 int ath12k_wmi_dcs_event_parser(struct ath12k_base *ab, u16 tag, u16 len,
 				const void *ptr, void *data);
 void ath12k_wmi_dcs_obss_interference_event_extn(struct ath12k_base *ab,

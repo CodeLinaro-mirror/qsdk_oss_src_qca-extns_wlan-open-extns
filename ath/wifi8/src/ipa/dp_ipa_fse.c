@@ -119,33 +119,29 @@ ath12k_dp_rx_ipa_fse_get_ab(void)
 int
 ath12k_dp_rx_ipa_fse_add_flow_entry(struct ipa_fse_rule *rule)
 {
-
 	struct rx_flow_info flow_info = { 0 };
-	struct ath12k_base *ab = ath12k_dp_rx_ipa_fse_get_ab();
+	struct ath12k_base *ab;
 
-	if(ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_SFE_ENABLE)) {
-		if (!ath12k_fse_enable) {
-			ath12k_ipa_err(NULL, "fse is disabled");
-			return -EOPNOTSUPP;
-		}
-
-		if (!rule) {
-			ath12k_ipa_err(NULL, "rule is NULL");
-			return -EINVAL;
-		}
-
-		if (!ab) {
-			ath12k_ipa_err(NULL, "ab is NULL");
-			return -ENODEV;
-		}
-
-		ath12k_dp_rx_ipa_fse_fill_flow_info(ab, &flow_info, rule,
-							FSE_RULE_ADD);
-
-		return ath12k_dp_rx_flow_add_entry(ab, &flow_info);
-	} else {
-		return 0;
+	if (!ath12k_fse_enable) {
+		ath12k_ipa_err(NULL, "fse is disabled");
+		return -EOPNOTSUPP;
 	}
+
+	if (!rule) {
+		ath12k_ipa_err(NULL, "rule is NULL");
+		return -EINVAL;
+	}
+
+	ab = ath12k_dp_rx_ipa_fse_get_ab();
+	if (!ab) {
+		ath12k_ipa_err(NULL, "ab is NULL");
+		return -ENODEV;
+	}
+
+	ath12k_dp_rx_ipa_fse_fill_flow_info(ab, &flow_info, rule,
+					    FSE_RULE_ADD);
+
+	return ath12k_dp_rx_flow_add_entry(ab, &flow_info);
 }
 EXPORT_SYMBOL(ath12k_dp_rx_ipa_fse_add_flow_entry);
 
@@ -164,30 +160,27 @@ int
 ath12k_dp_rx_ipa_fse_del_flow_entry(struct ipa_fse_rule *rule)
 {
 	struct rx_flow_info flow_info = { 0 };
-	struct ath12k_base *ab = ath12k_dp_rx_ipa_fse_get_ab();
+	struct ath12k_base *ab;
 
-	if(ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_SFE_ENABLE)) {
-		if (!ath12k_fse_enable) {
-			ath12k_ipa_err(NULL, "fse is disabled");
-			return -EOPNOTSUPP;
-		}
-
-		if (!rule) {
-			ath12k_ipa_err(NULL, "rule is NULL");
-			return -EINVAL;
-		}
-
-		if (!ab) {
-			ath12k_ipa_err(NULL, "ab is NULL");
-			return -ENODEV;
-		}
-
-		ath12k_dp_rx_ipa_fse_fill_flow_info(ab, &flow_info, rule,
-						FSE_RULE_DELETE);
-
-		return ath12k_dp_rx_flow_delete_entry(ab, &flow_info);
-	} else {
-		return 0;
+	if (!ath12k_fse_enable) {
+		ath12k_ipa_err(NULL, "fse is disabled");
+		return -EOPNOTSUPP;
 	}
+
+	if (!rule) {
+		ath12k_ipa_err(NULL, "rule is NULL");
+		return -EINVAL;
+	}
+
+	ab = ath12k_dp_rx_ipa_fse_get_ab();
+	if (!ab) {
+		ath12k_ipa_err(NULL, "ab is NULL");
+		return -ENODEV;
+	}
+
+	ath12k_dp_rx_ipa_fse_fill_flow_info(ab, &flow_info, rule,
+					    FSE_RULE_DELETE);
+
+	return ath12k_dp_rx_flow_delete_entry(ab, &flow_info);
 }
 EXPORT_SYMBOL(ath12k_dp_rx_ipa_fse_del_flow_entry);

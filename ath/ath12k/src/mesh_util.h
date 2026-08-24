@@ -53,11 +53,12 @@ struct ieee80211_mesh_peer_dump_entry {
 	u8   intersection_done;
 	u32  intersect_attempts;
 	u32  intersect_successes;
-	u32  intersect_failures;
+	u32  cap_update_failures;
+	u32  rsn_parse_failures;
 } __packed;
 
 /* ABI size guard: keep in sync with the userspace definition. */
-static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 55,
+static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 59,
 	      "ieee80211_mesh_peer_dump_entry size mismatch");
 
 #define MESH_BYTE_MASK 0xFF

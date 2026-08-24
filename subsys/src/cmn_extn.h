@@ -131,10 +131,14 @@ enum mesh_peer_bw {
  * to gate peers based on their RSN IE. Fields are mode-agnostic (HT/VHT/HE/EHT).
  */
 struct mesh_rsn_conf {
-	u32 wpa_versions;  /* NL80211_WPA_VERSION_* bitmask; 0 = open */
-	u8 *rsn_ie;        /* copy of local AP's RSN IE (tag+len+body); NULL if open */
-	u16 rsn_ie_len;    /* total IE length: tag(1) + len(1) + body(up to 255) */
-	u16 rsn_caps;      /* RSN Capabilities field, pre-parsed at AP setup time */
+	u32 wpa_versions;      /* NL80211_WPA_VERSION_* bitmask; 0 = open */
+	u32 pairwise_ciphers[NL80211_MAX_NR_CIPHER_SUITES]; /* local ciphers in preference order */
+	u8  n_pairwise_ciphers;
+	u32 akm_suites[NL80211_MAX_NR_AKM_SUITES];          /* local AKMs in preference order */
+	u8  n_akm_suites;
+	u8 *rsn_ie;            /* copy of local AP's RSN IE (tag+len+body); NULL if open */
+	u16 rsn_ie_len;        /* total IE length: tag(1) + len(1) + body(up to 255) */
+	u16 rsn_caps;          /* RSN Capabilities field, pre-parsed at AP setup time */
 };
 
 struct mesh_bss_conf {
@@ -159,7 +163,10 @@ struct mesh_bss_conf {
  * @intersection_done: True if initial intersection completed successfully
  * @intersect_attempts: Total number of intersection attempts
  * @intersect_successes: Number of successful intersections
- * @intersect_failures: Number of failed intersections
+ * @cap_update_failures: Number of failed intersections (capability/driver level)
+ * @rsn_parse_failures: Number of RSN IE / security policy check failures;
+ *   incremented each time beacon intersection fails the RSN gate; peer stays
+ *   alive and intersection is retried on subsequent beacons
  * @parse_beacon_install_key: Runtime copy of the flag from ieee80211_mesh_config_params_extn;
  *   when set, beacon intersection installs the VAP key on this peer
  * @key_installed: True after per-peer key has been successfully installed
@@ -174,8 +181,6 @@ struct mesh_bss_conf {
  * @peer_ht_restricted: TKIP pairwise cipher detected with HT-capable peer;
  *   HT caps are suppressed at beacon intersection per 802.11-2020 §10.3.3
  *   to fall back to legacy rates; the peer is not rejected.
- * @peer_rejected: Set on first RSN mismatch to suppress repeated deauth frames
- *   and timeout_wk re-queues on subsequent beacons from the same peer.
  */
 struct mesh_peer_info {
 	bool is_mesh_peer;
@@ -188,7 +193,8 @@ struct mesh_peer_info {
 	/* Statistics */
 	u32 intersect_attempts;
 	u32 intersect_successes;
-	u32 intersect_failures;
+	u32 cap_update_failures;
+	u32 rsn_parse_failures;
 	/* Security fields — parse_beacon_install_key is copied from
 	 * ieee80211_mesh_config_params_extn at add_local_peer time.
 	 * Default: driver auto-installs the VAP key and authorizes
@@ -208,7 +214,6 @@ struct mesh_peer_info {
 	u16 peer_rsn_ie_len;  /* total stored length (0 if open) */
 	/* PHY mode cipher restrictions */
 	bool peer_ht_restricted;  /* TKIP+HT: HT caps suppressed, legacy rates only */
-	bool peer_rejected;       /* RSN mismatch: suppress repeated deauth on subsequent beacons */
 };
 
 struct ieee80211_mesh_peer_info {
@@ -279,10 +284,29 @@ struct link_station_parameters_extn {
 
 struct ieee802_11_elems_extn {
 	struct bw240MHz_parameters_extn params_240MHz;
+	/* VHT MCS 10/11 support advertised by the peer in the QCN IE (attr 0x02).
+	 * true if the peer set the attribute value to 1.
+	 */
+	bool vht_mcs10_11_supp;
+	/* HE 400ns SGI support from QCN IE attr 0x03.
+	 * bit 0: peer supports RX 1xLTF + 0.4us GI
+	 * bit 1: peer supports RX 2xLTF + 0.4us GI
+	 */
+	u8 he_400ns_sgi_supp;
+	/* HE 2xLTF in 160/80+80 MHz support from QCN IE attr 0x04.
+	 * Non-zero if peer supports 2xLTF in 160/80+80 MHz HE PPDUs.
+	 */
+	u8 he_2xltf_160_80p80_supp;
 };
 
 struct ieee80211_bss_extn {
 	struct bw240MHz_parameters_extn params_240MHz;
+	/* VHT MCS 10/11 support advertised by the AP in its QCN IE. */
+	bool vht_mcs10_11_supp;
+	/* HE 400ns SGI support advertised by the AP in its QCN IE. */
+	u8 he_400ns_sgi_supp;
+	/* HE 2xLTF in 160/80+80 MHz support advertised by the AP. */
+	u8 he_2xltf_160_80p80_supp;
 };
 
 struct ieee80211_bss_conf_extn {
@@ -596,9 +620,6 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 
 void
 ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work);
-
-void
-ieee80211_mesh_peer_key_install_work(struct wiphy *wiphy, struct wiphy_work *work);
 
 int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
 				    int link_id,

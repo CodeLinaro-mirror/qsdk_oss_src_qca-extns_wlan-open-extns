@@ -322,7 +322,7 @@ struct ath12k_ipa_arch_ops {
 	int (*dp_srng_cleanup)(struct ath12k_base *ab);
 	int (*dp_srng_setup)(struct ath12k_base *ab);
 	void (*dp_srng_get_rsrc)(struct ath12k_base *ab);
-	u32 (*dp_rx_default_routing)(u32 reo_dest);
+	u32 (*dp_rx_default_routing)(u32 reo_dest, struct ath12k_base *ab);
 	int (*dp_rxdma_buf_setup)(struct ath12k_base *ab);
 	int (*dp_get_tx_bank_id)(struct ath12k_base *ab, u8 *bank_id);
 	int (*dp_rx_buf_smmu_map_unmap)(struct ath12k_base *ab, bool create);
@@ -817,6 +817,7 @@ struct ath12k_ipa_config {
  *                         @vdev_to_iface[] to indicate a free/unassigned slot.
  *                         WiFi7: ATH12K_IPA_MAX_SESSION (7).
  *                         WiFi8: ATH12K_INVALID_AHVIF_ID (0).
+ * @session_link_mask:     Session bit mask for MLO links.
  * @curr_prod_bw:          Current producer (RX) bandwidth vote.
  * @curr_cons_bw:          Current consumer (TX) bandwidth vote.
  * @is_db_ddr_mapped:      True when doorbell registers are DDR-mapped.
@@ -879,6 +880,7 @@ struct ath12k_ipa {
 	bool *disable_intrabss_fwd;
 	u16 max_session_id;
 	u16 invalid_session_id;
+	u8 *session_link_mask;
 	u32 curr_prod_bw;
 	u32 curr_cons_bw;
 	bool is_db_ddr_mapped;

@@ -114,12 +114,64 @@ done:
 	return tot_work_done;
 }
 
+static int ath12k_wifi6_dp_rings_init(struct ath12k_dp *dp, u32 n_link_desc)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct hal_srng *srng;
+	int ret;
+
+	ret = ath12k_dp_srng_init(ab, &dp->wbm_idle_ring,
+				  HAL_WBM_IDLE_LINK, 0, 0);
+	if (ret) {
+		ath12k_warn(ab, "failed to init wbm_idle_ring: %d\n", ret);
+		goto fail_out;
+	}
+
+	srng = &ab->hal.srng_list[dp->wbm_idle_ring.ring_id];
+
+	ret = ath12k_dp_link_desc_init(ab, dp->link_desc_banks,
+				       HAL_WBM_IDLE_LINK, srng, n_link_desc);
+	if (ret) {
+		ath12k_warn(ab, "failed to init link desc: %d\n", ret);
+		goto fail_out;
+	}
+
+	ret = ath12k_dp_srng_init(ab, &dp->wbm_desc_rel_ring,
+				  HAL_SW2WBM_RELEASE, 0, 0);
+	if (ret) {
+		ath12k_warn(ab, "failed to init wbm2sw_release ring: %d\n", ret);
+		goto fail_out;
+	}
+
+	ret = ath12k_wifi6_dp_rx_ring_init(ab);
+	if (ret) {
+		ath12k_warn(ab, "rx ring init failed ret = %d\n", ret);
+		goto fail_dp_rx_buf_free;
+	}
+
+	ret = ath12k_dp_mon_rx_init(dp);
+	if (ret) {
+		ath12k_warn(ab, "failed to init rxdma rings ret = %d\n", ret);
+		goto fail_dp_mon_rx_deinit;
+	}
+
+	return 0;
+
+fail_dp_mon_rx_deinit:
+	ath12k_dp_mon_rx_deinit(dp);
+
+fail_dp_rx_buf_free:
+	ath12k_wifi6_dp_rx_buf_free(dp);
+
+fail_out:
+	return ret;
+}
+
 static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 {
-	int ret;
 	struct ath12k_base *ab = dp->ab;
-	struct hal_srng *srng = NULL;
-	u32 n_link_desc = 0;
+	u32 n_link_desc;
+	int ret;
 
 	ret = ath12k_hif_ext_irq_setup(dp->ab, ath12k_wifi6_dp_service_srng, dp);
 	if (ret)
@@ -136,76 +188,26 @@ static int ath12k_wifi6_dp_op_device_init(struct ath12k_dp *dp)
 		n_link_desc = HAL_RX_MON_DESC_RING_SIZE;
 	}
 
-	ret = ath12k_dp_srng_setup(ab, &dp->wbm_idle_ring,
-                                    HAL_WBM_IDLE_LINK, 0, 0, n_link_desc);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup wbm_idle_ring: %d\n", ret);
+	ret = ath12k_wifi6_dp_rings_init(dp, n_link_desc);
+	if (ret)
 		goto fail_irq_cleanup;
-	}
-
-	srng = &ab->hal.srng_list[dp->wbm_idle_ring.ring_id];
-
-	ret = ath12k_dp_link_desc_setup(ab, dp->link_desc_banks,
-					HAL_WBM_IDLE_LINK, srng, n_link_desc);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup link desc: %d\n", ret);
-		goto fail_irq_cleanup;
-	}
-
-	ret = ath12k_dp_srng_setup(ab, &dp->wbm_desc_rel_ring,
-				   HAL_SW2WBM_RELEASE, 0, 0,
-				   DP_WBM_RELEASE_RING_SIZE);
-	if (ret) {
-		ath12k_warn(ab, "failed to set up wbm2sw_release ring :%d\n",
-			    ret);
-		goto fail_link_desc_cleanup;
-	}
-
-	ret = ath12k_wifi6_dp_rx_ring_setup(ab);
-	if (ret) {
-		ath12k_warn(ab, "rx allod failed ret = %d\n", ret);
-		goto fail_dp_rx_free;
-	}
-
-	ret = ath12k_dp_mon_rx_alloc(dp);
-	if (ret) {
-		ath12k_warn(ab, "failed to setup rxdma rings ret = %d\n", ret);
-		goto fail_dp_mon_rx_free;
-	}
 
 	return 0;
 
-fail_dp_mon_rx_free:
-	ath12k_dp_mon_rx_free(dp);
-
-fail_dp_rx_free:
-	ath12k_wifi6_dp_rx_ring_free(ab);
-	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
-
-fail_link_desc_cleanup:
-	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
-				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
 fail_irq_cleanup:
 	ath12k_hif_ext_irq_cleanup(dp->ab);
 
 	return ret;
-
 }
 
 static void ath12k_wifi6_dp_op_device_deinit(struct ath12k_dp *dp)
 {
-	struct ath12k_base *ab = dp->ab;
-
 	if (!dp->ab)
 		return;
 
-	ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
-				    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
-	ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
-	ath12k_dp_mon_rx_free(dp);
-	ath12k_wifi6_dp_rx_ring_free(ab);
-
 	ath12k_hif_ext_irq_cleanup(dp->ab);
+	ath12k_dp_mon_rx_deinit(dp);
+	ath12k_wifi6_dp_rx_buf_free(dp);
 }
 
 static struct ath12k_dp_hw_group *ath12k_wifi6_dp_hw_group_alloc(void)
@@ -326,7 +328,8 @@ void ath12k_wifi6_dp_peer_delete(struct ath12k_dp *dp, struct ath12k_hw *ah, u8 
 }
 
 int ath12k_wifi6_dp_peer_assoc(struct ath12k_dp *dp, struct ath12k_dp_hw *dp_hw,
-			       struct ath12k_dp_vif *dp_vif, u8 *addr)
+			       struct ath12k_dp_vif *dp_vif, u8 *addr,
+			       struct ath12k_dp_peer_create_params *params)
 {
 	return 0;
 }
@@ -343,6 +346,57 @@ static struct ath12k_dp_arch_ops ath12k_wifi6_dp_arch_ops = {
 	.dp_peer_delete = ath12k_wifi6_dp_peer_delete,
 	.dp_peer_assoc = ath12k_wifi6_dp_peer_assoc,
 };
+
+static int ath12k_wifi6_dp_rings_alloc(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	int ret;
+
+	/* For QCN9074, monitor link desc ring will be used,
+	 * setting n_link_desc to minimum value */
+	ret = ath12k_dp_srng_alloc(ab, &dp->wbm_idle_ring,
+				   HAL_WBM_IDLE_LINK, 0, 0,
+				   ath12k_dp_mon_rxdma1_enable(dp) ?
+				   HAL_LINK_DESC_SIZE : HAL_RX_MON_DESC_RING_SIZE);
+	if (ret) {
+		ath12k_warn(dp, "failed to alloc wbm_idle_ring: %d\n", ret);
+		goto fail_out;
+	}
+
+	ret = ath12k_dp_link_desc_alloc(ab, dp->link_desc_banks,
+					HAL_WBM_IDLE_LINK, NULL,
+					ath12k_dp_mon_rxdma1_enable(dp) ?
+					HAL_LINK_DESC_SIZE : HAL_RX_MON_DESC_RING_SIZE);
+	if (ret) {
+		ath12k_warn(dp, "failed to alloc link desc: %d\n", ret);
+		goto fail_out;
+	}
+
+	ret = ath12k_dp_srng_alloc(ab, &dp->wbm_desc_rel_ring,
+				   HAL_SW2WBM_RELEASE, 0, 0,
+				   DP_WBM_RELEASE_RING_SIZE);
+	if (ret) {
+		ath12k_warn(dp, "failed to alloc wbm_desc_rel_ring: %d\n", ret);
+		goto fail_out;
+	}
+
+	ret = ath12k_wifi6_dp_rx_ring_alloc(ab);
+	if (ret) {
+		ath12k_warn(dp, "failed to alloc rx rings: %d\n", ret);
+		goto fail_out;
+	}
+
+	ret = ath12k_dp_mon_rx_alloc(dp);
+	if (ret) {
+		ath12k_warn(dp, "failed to alloc mon rx rings: %d\n", ret);
+		goto fail_out;
+	}
+
+	return 0;
+
+fail_out:
+	return ret;
+}
 
 /* TODO: remove export once this file is built with wifi6 ko */
 struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
@@ -366,6 +420,12 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 	dp->hal = &ab->hal;
 	dp->global_peer_id_supported = false;
 
+	/* Set ab->dp early so that ring alloc helpers that call
+	 * ath12k_ab_to_dp(ab) during probe-time allocation find a
+	 * valid pointer.  The caller overwrites ab->dp with our return
+	 * value; if we fail and return NULL it will be set to NULL. */
+	ab->dp = dp;
+
 	ret = ath12k_dp_mon_init(dp);
 	if (ret) {
 		ath12k_warn(dp, "dp_mon_init failed %d\n", ret);
@@ -373,6 +433,10 @@ struct ath12k_dp *ath12k_wifi6_dp_init(struct ath12k_base *ab)
 	}
 
 	ath12k_wifi6_dp_mon_ops_register(dp);
+
+	ret = ath12k_wifi6_dp_rings_alloc(dp);
+	if (ret)
+		goto dp_err;
 
 	return dp;
 dp_err:
@@ -382,6 +446,22 @@ dp_err:
 
 void ath12k_wifi6_dp_deinit(struct ath12k_dp *dp)
 {
+	struct ath12k_base *ab;
+
+	if (!dp)
+		return;
+
+	ab = dp->ab;
+
+	ath12k_dp_mon_rx_free(dp);
+
+	if (ab) {
+		ath12k_wifi6_dp_rx_ring_free(ab);
+		ath12k_dp_srng_cleanup(ab, &dp->wbm_desc_rel_ring);
+		ath12k_dp_link_desc_cleanup(ab, dp->link_desc_banks,
+					    HAL_WBM_IDLE_LINK, &dp->wbm_idle_ring);
+	}
+
 	ath12k_dp_mon_deinit(dp);
 	kfree(dp);
 }

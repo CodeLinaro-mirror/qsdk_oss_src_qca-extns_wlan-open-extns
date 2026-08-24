@@ -67,7 +67,20 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 	}
 
 	vp_num = get_vp_num_from_dev_name(in->netdev_name, ahvif);
-	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
+	if (vp_num == -EEXIST) {
+		/*
+		 * VP was already allocated on the first connect (e.g. DFS
+		 * restart reconnect).  Compute the VP number directly from
+		 * ahvif_id so we can still reprogram the hardware VP entry
+		 * for the new link_id without re-allocating.
+		 */
+		u8 ahvif_id = ahvif->dp_vif.ahvif_id;
+
+		if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
+		    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
+			return;
+		vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
+	} else if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
 		ath12k_ipa_err(NULL, "ipa vp_num setup: invalid vp_num=%d for netdev=%s\n",
 			    vp_num, in->netdev_name);
 		return;
@@ -88,6 +101,7 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 		goto err;
 	}
 
+	in->vpnum = vp_num;
 	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, dev, arvif);
 	dev_put(dev);
 
@@ -100,28 +114,48 @@ void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
 {
 	struct ath12k_vif *ahvif;
 	struct ath12k_link_vif *arvif;
+	struct ath12k_base *ab = NULL;
+	u8 ahvif_id;
 	int vp_num;
 
 	ahvif = get_ahvif_from_dev_name(dev_name);
 	if (!ahvif)
 		return;
 
-	vp_num = get_vp_num_from_dev_name(dev_name, ahvif);
-	if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num))
+	/*
+	 * Compute VP number directly from ahvif_id — do NOT call
+	 * alloc_vp_num here.  alloc_vp_num would fail with -EEXIST
+	 * (VP still allocated) and the early-return would skip both
+	 * dealloc_vp_num and the hardware VP entry clear.
+	 */
+	ahvif_id = ahvif->dp_vif.ahvif_id;
+	if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
+	    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
 		return;
+	vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
 
+	/*
+	 * Retrieve arvif under rcu_read_lock, save the ab pointer, then
+	 * drop the lock before calling dealloc_vp_num: dealloc calls
+	 * synchronize_rcu() which sleeps and must NOT run under
+	 * rcu_read_lock.
+	 */
 	rcu_read_lock();
 	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
-	ath12k_dp_ipa_dealloc_vp_num(ahvif);
-	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, NULL);
+	if (arvif)
+		ab = arvif->ar->ab;
 	rcu_read_unlock();
 
+	ath12k_dp_ipa_dealloc_vp_num(ahvif);
+
+	if (ab)
+		ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(ab, vp_num, NULL);
 }
 
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
 						  int intf_idx)
 {
-
+	in->intf_idx = intf_idx;
 }
 
 static u8 ath12k_wifi8_dp_ipa_get_wdi_version(void)
@@ -430,6 +464,11 @@ static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
 	memset(ipa_ctx->vdev_to_iface, ipa_ctx->max_iface,
 	       array_size(ipa_ctx->max_session_id, sizeof(*ipa_ctx->vdev_to_iface)));
 
+	ipa_ctx->session_link_mask = vzalloc(array_size(ipa_ctx->max_session_id,
+					     sizeof(*ipa_ctx->session_link_mask)));
+	if (!ipa_ctx->session_link_mask)
+		goto err_free_vdev_to_iface;
+
 	/* Initialize iface_context slots */
 	for (i = 0; i < ipa_ctx->max_iface; i++) {
 		iface_context = &ipa_ctx->iface_context[i];
@@ -448,6 +487,9 @@ static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
 			ipa_ctx->max_iface, ipa_ctx->wdi_version);
 	return 0;
 
+err_free_vdev_to_iface:
+	vfree(ipa_ctx->vdev_to_iface);
+	ipa_ctx->vdev_to_iface = NULL;
 err_free_iface:
 	vfree(ipa_ctx->iface_context);
 	ipa_ctx->iface_context = NULL;
@@ -459,6 +501,8 @@ err_free_iface:
  */
 static void ath12k_wifi8_ipa_iface_context_deinit(struct ath12k_ipa *ipa_ctx)
 {
+	vfree(ipa_ctx->session_link_mask);
+	ipa_ctx->session_link_mask = NULL;
 	vfree(ipa_ctx->vdev_to_iface);
 	ipa_ctx->vdev_to_iface = NULL;
 	vfree(ipa_ctx->iface_context);
@@ -531,10 +575,13 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 	struct ath12k_dp_link_peer *dp_link_peer;
 	struct ieee80211_rx_status *status;
 	struct ath12k_link_vif *cumac_arvif;
+	struct ath12k_dp_hw_group *dp_hw_grp;
+	struct ieee80211_vif *vif;
+	struct wireless_dev *wdev;
+	struct net_device *dev;
 	int i;
 	u16 peer_id;
 	u8 vdev_id, hw_link_id;
-
 	if (!skb) {
 		ath12k_ipa_err(NULL, "skb is NULL");
 		return;
@@ -556,51 +603,14 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 
 	cumac_ab = ipa_ctx->ab;
 	cumac_dp = ath12k_ab_to_dp(cumac_ab);
+	dp_hw_grp = cumac_dp->dp_hw_grp;
 
 	eth = skb_eth_hdr(skb);
 	peer_id = ath12k_ipa_cb_get_ta_peer_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
 	vdev_id = ath12k_ipa_cb_get_vap_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
+	hw_link_id = ath12k_ipa_cb_get_hw_link_id((const struct ipa_wdi6_rx_skb_cb *)skb->cb);
 
 	rcu_read_lock();
-
-	cumac_arvif = ath12k_mac_get_arvif_by_vdev_id(cumac_ab, vdev_id);
-	if (!cumac_arvif) {
-		ath12k_ipa_err(cumac_ab, "cumac_arvif is NULL");
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	cumac_ar = cumac_arvif->ar;
-	if (!cumac_ar) {
-		ath12k_ipa_err(cumac_ab, "cumac_ar is NULL");
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	cumac_dp_pdev = ath12k_dp_to_dp_pdev(cumac_dp, cumac_ar->pdev_idx);
-	dp_peer = ath12k_dp_peer_find_by_peerid_index(cumac_dp, cumac_dp_pdev, peer_id);
-	if (!dp_peer) {
-		ath12k_ipa_err(cumac_ab, "dp_peer is null (peer_id=%d mac=%pM)", peer_id,
-			   eth->h_source);
-		rcu_read_unlock();
-		goto drop;
-	}
-
-	for (i = 0; i < ATH12K_DP_PEER_MAX_MLO_LINKS; i++) {
-		dp_link_peer = rcu_dereference(dp_peer->link_peers[i]);
-		if (dp_link_peer) {
-			hw_link_id = (u8)i;
-			break;
-		}
-	}
-
-	if (!dp_peer->is_authorized) {
-		ath12k_ipa_err(cumac_ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
-			       peer_id, eth->h_source, eth->h_dest,
-			       cpu_to_be16(eth->h_proto), dp_peer->addr);
-		rcu_read_unlock();
-		goto drop;
-	}
 
 	dp_pdev = ath12k_dp_hw_grp_to_dp_pdev(cumac_dp->dp_hw_grp, hw_link_id);
 	if (!dp_pdev) {
@@ -609,6 +619,45 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 		goto drop;
 	}
 
+	dp_peer = ath12k_dp_peer_find_by_peerid_index(dp_pdev->dp, dp_pdev, peer_id);
+	if(!dp_peer) {
+		ath12k_ipa_err(cumac_ab, "IPA_W2I: dp_peer NULL for hw_link_id=%u peer_id %u", hw_link_id, peer_id);
+		rcu_read_unlock();
+		goto drop;
+	}
+
+	if (eth->h_proto == cpu_to_be16(ETH_P_PAE)) {
+		ipa_ctx->stats.rx_eapol++;
+		vif = ath12k_dp_peer_get_vif(dp_peer);
+		if (!vif) {
+			ath12k_ipa_err(cumac_ab, "IPA_W2I EAPOL: vif NULL peer_id=%u", peer_id);
+			rcu_read_unlock();
+			goto drop;
+		}
+		wdev = ieee80211_vif_to_wdev(vif);
+		if (!wdev || !wdev->netdev) {
+			ath12k_ipa_err(cumac_ab, "IPA_W2I EAPOL: wdev/netdev NULL peer_id=%u", peer_id);
+			rcu_read_unlock();
+			goto drop;
+		}
+		dev = wdev->netdev;
+		skb->protocol = eth_type_trans(skb, dev);
+		cfg80211_rx_control_port(dev, skb, false, -1);
+		pr_err_ratelimited("ath12k IPA_W2I: EAPOL delivered via ctrl port peer_id=%u proto=0x%x dev=%s\n",
+				   peer_id, be16_to_cpu(eth->h_proto), dev->name);
+		rcu_read_unlock();
+		return;
+	}
+
+/*
+	if (!dp_peer->is_authorized) {
+		ath12k_ipa_err(cumac_ab, "peer is unauthorized. peer_id=%d src=%pM dst=%pM proto=0x%X dp_peer->addr=%pM",
+			       peer_id, eth->h_source, eth->h_dest,
+			       cpu_to_be16(eth->h_proto), dp_peer->addr);
+		rcu_read_unlock();
+		goto drop;
+	}
+*/
 	hw = dp_pdev->hw;
 	ar = dp_pdev->ar;
 	skb->protocol = eth->h_proto;
@@ -625,7 +674,6 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 
 	ath12k_dp_ipa_mac80211_rx(hw, dp_peer->sta, skb);
 	ipa_ctx->stats.sent_to_mac++;
-
 	rcu_read_unlock();
 	return;
 drop:
@@ -634,11 +682,19 @@ drop:
 	return;
 }
 
+static u32 ath12k_wifi8_dp_ipa_rx_default_routing(u32 reo_dest, struct ath12k_base *ab)
+{
+	if (dp_ipa_enable() && !ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_SFE_ENABLE))
+		return ATH12K_DP_WIFI8_REO2SW5_RDI;
+
+	return reo_dest;
+}
+
 static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.dp_srng_cleanup = ath12k_wifi8_dp_ipa_srng_cleanup,
 	.dp_srng_setup = ath12k_wifi8_dp_ipa_srng_setup,
 	.dp_srng_get_rsrc = ath12k_wifi8_dp_ipa_srng_get_rsrc,
-	.dp_rx_default_routing = NULL,
+	.dp_rx_default_routing = ath12k_wifi8_dp_ipa_rx_default_routing,
 	.dp_rxdma_buf_setup = NULL,
 	.dp_get_tx_bank_id = NULL,
 	.dp_rx_buf_smmu_map_unmap = ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap,

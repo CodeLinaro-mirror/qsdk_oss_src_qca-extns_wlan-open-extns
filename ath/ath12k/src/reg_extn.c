@@ -563,8 +563,11 @@ ath12k_wmi_parse_hw_blocklist_chan_data_extn(struct ath12k_base *ab,
 	punc_info = le32_to_cpu(hw->puncture_pattern_bitmap_info);
 	punc = FIELD_GET(ATH12K_HWBL_PUNC_BITMAP, punc_info);
 
+	if (upd->num_chans >= upd->total_num_chan)
+		return -EINVAL;
+
 	idx = upd->num_chans;
-	new = krealloc(upd->chans, (idx + 1) * sizeof(*upd->chans), GFP_ATOMIC);
+	new = krealloc_array(upd->chans, idx + 1, sizeof(*upd->chans), GFP_ATOMIC);
 	if (!new) {
 		kfree(upd->chans);
 		upd->chans = NULL;
@@ -1772,6 +1775,7 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
 	struct ath12k_link_vif *arvif;
 	struct ath12k *ar = NULL;
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
 	u16 bw, center_freq;
 	bool found = false;
 	int i;
@@ -1780,6 +1784,9 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 
 	if (!chandef || !chandef->chan ||
 	    chandef->chan->band != NL80211_BAND_6GHZ)
+		return 0;
+
+	if (wdev_is_scan_radio(&sdata->wdev))
 		return 0;
 
 	arvif = NULL;

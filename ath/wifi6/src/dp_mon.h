@@ -70,6 +70,9 @@ ath12k_wifi6_dp_get_rx_desc_pool(struct ath12k_dp *dp, int mac_id)
 	if (unlikely(!dp_wifi6))
 		return NULL;
 
+	if (unlikely(mac_id < 0 || mac_id >= MAX_RXDMA_PER_PDEV))
+		return NULL;
+
 	return &dp_wifi6->rx_desc_status[mac_id];
 }
 
@@ -105,6 +108,9 @@ static inline
 u32 ath12k_wifi6_dp_rxdma_get_mon_dst_ring(struct ath12k_pdev_dp *dp_pdev, int mac_id)
 {
 	struct ath12k_dp *dp = dp_pdev->dp;
+
+	if (unlikely(mac_id < 0 || mac_id >= MAX_RXDMA_PER_PDEV))
+		return 0;
 
 	if (ath12k_dp_mon_rxdma1_enable(dp))
 		return dp_pdev->dp_mon_pdev->rxdma_mon_dst_ring[mac_id].ring_id;
@@ -145,6 +151,9 @@ void *ath12k_wifi6_dp_rx_cookie_to_mon_link_desc(struct ath12k_pdev_dp *dp_pdev,
 	u32 desc_bank = 0;
 
 	desc_bank = u32_get_bits(buf_info->sw_cookie, DP_LINK_DESC_BANK_MASK);
+	if (unlikely(desc_bank >= DP_LINK_DESC_BANKS_MAX))
+		return NULL;
+
 	if (ath12k_dp_mon_rxdma1_enable(dp)) {
 		link_desc_va =
 			pmon->link_desc_banks[desc_bank].vaddr +
@@ -178,8 +187,8 @@ u32 ath12k_wifi6_dp_get_rx_mon_refill_ring_size(struct ath12k_base *ab)
 
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp);
 void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp);
-int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp);
-void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp);
+int ath12k_wifi6_dp_mon_rx_ring_init(struct ath12k_dp *dp);
+void ath12k_wifi6_dp_mon_rx_ring_deinit(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp);
 int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 mac_id);
 void ath12k_wifi6_dp_mon_pdev_rx_srng_cleanup(struct ath12k_pdev_dp *dp_pdev);

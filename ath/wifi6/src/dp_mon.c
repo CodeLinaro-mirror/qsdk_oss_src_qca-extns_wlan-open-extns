@@ -115,8 +115,8 @@ ath12k_wifi6_dp_mon_rx_undecoded_phy_err_mask_set(struct ath12k_pdev_dp *dp_pdev
 const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.rx_srng_setup = ath12k_wifi6_dp_mon_rx_srng_setup,
 	.rx_srng_cleanup = ath12k_wifi6_dp_mon_rx_srng_cleanup,
-	.rx_buf_setup = ath12k_wifi6_dp_mon_rx_buf_setup,
-	.rx_buf_free = ath12k_wifi6_dp_mon_rx_buf_free,
+	.rx_ring_init = ath12k_wifi6_dp_mon_rx_ring_init,
+	.rx_ring_deinit = ath12k_wifi6_dp_mon_rx_ring_deinit,
 	.rx_htt_srng_setup = ath12k_wifi6_dp_mon_rx_htt_srng_setup,
 	.mon_pdev_alloc = ath12k_dp_mon_pdev_alloc,
 	.mon_pdev_free = ath12k_dp_mon_pdev_free,
@@ -151,6 +151,12 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.htt_rx_phy_err_filter_cfg = ath12k_wifi6_dp_mon_rx_htt_phy_err_filter_cfg,
 };
 
+static int ath12k_wifi6_dp_mon_rx_buf_replenish(struct ath12k_dp *dp);
+static int ath12k_wifi6_dp_mon_rx_pool_alloc(struct ath12k_dp *dp);
+static int ath12k_wifi6_dp_mon_rx_pool_init(struct ath12k_dp *dp);
+static void ath12k_wifi6_dp_mon_rx_status_pool_free(struct ath12k_dp *dp, int mac_id);
+static void ath12k_wifi6_dp_mon_rx_buf_ring_pool_free(struct ath12k_dp *dp);
+
 int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
@@ -160,34 +166,90 @@ int ath12k_wifi6_dp_mon_rx_srng_setup(struct ath12k_dp *dp)
 
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
 		srng = &dp_mon->rx_mon_status_refill_ring[i].refill_buf_ring;
-		ret = ath12k_dp_srng_setup(ab, srng,
+		ret = ath12k_dp_srng_alloc(ab, srng,
 					   HAL_RXDMA_MONITOR_STATUS, 0, i,
 					   HAL_RX_MON_STATUS_RING_SIZE);
 		if (ret) {
-			ath12k_warn(dp, "failed to setup mon status ring %d\n", i);
+			ath12k_warn(dp, "failed to alloc mon status ring %d\n", i);
 			return ret;
 		}
 	}
 
 	if (ath12k_dp_mon_rxdma1_enable(dp)) {
-		ret = ath12k_dp_srng_setup(ab,
+		ret = ath12k_dp_srng_alloc(ab,
 					   &dp_mon->rxdma_mon_buf_ring.refill_buf_ring,
 					   HAL_RXDMA_MONITOR_BUF, 0, 0,
 					   ath12k_wifi6_dp_get_rx_mon_refill_ring_size(ab));
 		if (ret) {
-			ath12k_warn(dp, "failed to setup HAL_RXDMA_MONITOR_BUF %d\n", ret);
+			ath12k_warn(dp, "failed to alloc HAL_RXDMA_MONITOR_BUF %d\n", ret);
 			return ret;
 		}
 
-		ret = ath12k_dp_srng_setup(ab, &dp_mon->rxdma_mon_desc_ring,
+		ret = ath12k_dp_srng_alloc(ab, &dp_mon->rxdma_mon_desc_ring,
 					   HAL_RXDMA_MONITOR_DESC,
 					   0, 0,
 					   HAL_RX_MON_DESC_RING_SIZE);
 		if (ret) {
-			ath12k_warn(dp, "failed to setup mon desc ring %d\n", ret);
+			ath12k_warn(dp, "failed to alloc mon desc ring %d\n", ret);
 			return ret;
 		}
 	}
+
+	ret = ath12k_wifi6_dp_mon_rx_pool_alloc(dp);
+	if (ret) {
+		ath12k_warn(dp, "failed to alloc mon rx desc pool %d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+int ath12k_wifi6_dp_mon_rx_ring_init(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
+	struct dp_srng *srng;
+	int i, ret;
+
+	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
+		srng = &dp_mon->rx_mon_status_refill_ring[i].refill_buf_ring;
+		ret = ath12k_dp_srng_init(ab, srng,
+					  HAL_RXDMA_MONITOR_STATUS, 0, i);
+		if (ret) {
+			ath12k_warn(dp, "failed to init mon status ring %d\n", i);
+			return ret;
+		}
+	}
+
+	if (ath12k_dp_mon_rxdma1_enable(dp)) {
+		ret = ath12k_dp_srng_init(ab,
+					  &dp_mon->rxdma_mon_buf_ring.refill_buf_ring,
+					  HAL_RXDMA_MONITOR_BUF, 0, 0);
+		if (ret) {
+			ath12k_warn(dp, "failed to init HAL_RXDMA_MONITOR_BUF %d\n", ret);
+			return ret;
+		}
+
+		ret = ath12k_dp_srng_init(ab, &dp_mon->rxdma_mon_desc_ring,
+					  HAL_RXDMA_MONITOR_DESC, 0, 0);
+		if (ret) {
+			ath12k_warn(dp, "failed to init mon desc ring %d\n", ret);
+			return ret;
+		}
+	}
+
+	ret = ath12k_wifi6_dp_mon_rx_pool_init(dp);
+	if (ret) {
+		ath12k_warn(dp, "failed to init mon rx desc pool %d\n", ret);
+		return ret;
+	}
+
+	ret = ath12k_wifi6_dp_mon_rx_buf_replenish(dp);
+	if (ret) {
+		ath12k_warn(dp, "failed to replenish mon rx buffers %d\n", ret);
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -205,8 +267,14 @@ void ath12k_wifi6_dp_mon_rx_srng_cleanup(struct ath12k_dp *dp)
 
 	if (ath12k_dp_mon_rxdma1_enable(dp)) {
 		ath12k_dp_srng_cleanup(ab, &dp_mon->rxdma_mon_desc_ring);
-		ath12k_dp_mon_rx_srng_cleanup(dp);
+		ath12k_dp_srng_cleanup(ab, &dp_mon->rxdma_mon_buf_ring.refill_buf_ring);
 	}
+
+	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++)
+		ath12k_wifi6_dp_mon_rx_status_pool_free(dp, i);
+
+	if (ath12k_dp_mon_rxdma1_enable(dp))
+		ath12k_wifi6_dp_mon_rx_buf_ring_pool_free(dp);
 }
 
 static int
@@ -309,7 +377,50 @@ out:
 }
 
 static int
-ath12k_wifi6_dp_mon_rx_status_buf_setup(struct ath12k_dp *dp, int mac_id)
+ath12k_wifi6_dp_mon_rx_status_pool_alloc(struct ath12k_dp *dp, int mac_id)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	u16 ring_size;
+	int ret;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_status[mac_id];
+	ring_size = HAL_RX_MON_STATUS_RING_SIZE;
+
+	ret = ath12k_wifi6_dp_rx_desc_pool_alloc(dp, rx_desc_pool, ring_size);
+	if (ret) {
+		ath12k_warn(dp, "rx desc pool alloc failed %d\n", ret);
+		return ret;
+	}
+
+	rx_desc_pool->dest_frag_enable = false;
+	rx_desc_pool->buf_size = RX_MON_STATUS_BUF_SIZE;
+
+	return 0;
+}
+
+static int
+ath12k_wifi6_dp_mon_rx_status_pool_init(struct ath12k_dp *dp, int mac_id)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	u16 ring_size;
+	int ret;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_status[mac_id];
+	ring_size = HAL_RX_MON_STATUS_RING_SIZE;
+
+	ret = ath12k_wifi6_rx_desc_pool_init(dp, rx_desc_pool, mac_id, ring_size);
+	if (ret) {
+		ath12k_warn(dp, "rx desc pool init failed %d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int
+ath12k_wifi6_dp_mon_rx_status_buf_replenish(struct ath12k_dp *dp, int mac_id)
 {
 	struct ath12k_base *ab = dp->ab;
 	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
@@ -320,20 +431,9 @@ ath12k_wifi6_dp_mon_rx_status_buf_setup(struct ath12k_dp *dp, int mac_id)
 	int num_entries;
 	size_t req_entries;
 	LIST_HEAD(list);
-	u16 ring_size;
 	int ret = 0;
 
 	rx_desc_pool = &dp_wifi6->rx_desc_status[mac_id];
-	ring_size = HAL_RX_MON_STATUS_RING_SIZE;
-
-	ret =  ath12k_wifi6_rx_desc_pool_init(dp, rx_desc_pool, mac_id, ring_size);
-	if (ret) {
-		ath12k_warn(dp, "rx desc pool init failed %d\n", ret);
-		return ret;
-	}
-	rx_desc_pool->dest_frag_enable =  false;
-	rx_desc_pool->buf_size = RX_MON_STATUS_BUF_SIZE;
-
 	rx_ring = &dp_mon->rx_mon_status_refill_ring[mac_id];
 	rx_status_srng = &rx_ring->refill_buf_ring;
 
@@ -356,19 +456,37 @@ ath12k_wifi6_dp_mon_rx_status_buf_setup(struct ath12k_dp *dp, int mac_id)
 }
 
 static int
-ath12k_wifi6_dp_mon_buf_setup(struct ath12k_dp *dp)
+ath12k_wifi6_dp_mon_buf_pool_alloc(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
-	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
 	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
 	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
-	int num_entries;
-	struct dp_rxdma_mon_ring *rx_ring;
-	struct dp_srng *rx_mon_buf_srng;
-	size_t req_entries;
-	LIST_HEAD(list);
 	u16 ring_size;
-	int ret = 0;
+	int ret;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_mon;
+	ring_size = ath12k_wifi6_dp_get_rx_mon_refill_ring_size(ab);
+
+	ret = ath12k_wifi6_dp_rx_desc_pool_alloc(dp, rx_desc_pool, ring_size);
+	if (ret) {
+		ath12k_warn(dp, "rx desc pool alloc failed %d\n", ret);
+		return ret;
+	}
+
+	rx_desc_pool->dest_frag_enable = true;
+	rx_desc_pool->buf_size = ATH12K_DP_MON_RX_BUF_SIZE;
+
+	return 0;
+}
+
+static int
+ath12k_wifi6_dp_mon_buf_pool_init(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	u16 ring_size;
+	int ret;
 
 	rx_desc_pool = &dp_wifi6->rx_desc_mon;
 	ring_size = ath12k_wifi6_dp_get_rx_mon_refill_ring_size(ab);
@@ -379,9 +497,24 @@ ath12k_wifi6_dp_mon_buf_setup(struct ath12k_dp *dp)
 		return ret;
 	}
 
-	rx_desc_pool->dest_frag_enable =  true;
-	rx_desc_pool->buf_size = ATH12K_DP_MON_RX_BUF_SIZE;
+	return 0;
+}
 
+static int
+ath12k_wifi6_dp_mon_buf_ring_replenish(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_mon *dp_mon = dp->dp_mon;
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+	int num_entries;
+	struct dp_rxdma_mon_ring *rx_ring;
+	struct dp_srng *rx_mon_buf_srng;
+	size_t req_entries;
+	LIST_HEAD(list);
+	int ret = 0;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_mon;
 	rx_ring = &dp_mon->rxdma_mon_buf_ring;
 	rx_mon_buf_srng = &rx_ring->refill_buf_ring;
 
@@ -404,21 +537,65 @@ ath12k_wifi6_dp_mon_buf_setup(struct ath12k_dp *dp)
 	return ret;
 }
 
-int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp)
+static int ath12k_wifi6_dp_mon_rx_pool_alloc(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
 	int i, ret = 0;
 
 	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
-		ret = ath12k_wifi6_dp_mon_rx_status_buf_setup(dp, i);
+		ret = ath12k_wifi6_dp_mon_rx_status_pool_alloc(dp, i);
 		if (ret) {
-			ath12k_err(ab, "failed to setup monitor status ring\n");
+			ath12k_err(ab, "failed to alloc monitor status ring pool\n");
 			return ret;
 		}
 	}
 
 	if (ath12k_dp_mon_rxdma1_enable(dp)) {
-		ret = ath12k_wifi6_dp_mon_buf_setup(dp);
+		ret = ath12k_wifi6_dp_mon_buf_pool_alloc(dp);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int ath12k_wifi6_dp_mon_rx_pool_init(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	int i, ret = 0;
+
+	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
+		ret = ath12k_wifi6_dp_mon_rx_status_pool_init(dp, i);
+		if (ret) {
+			ath12k_err(ab, "failed to init monitor status ring pool\n");
+			return ret;
+		}
+	}
+
+	if (ath12k_dp_mon_rxdma1_enable(dp)) {
+		ret = ath12k_wifi6_dp_mon_buf_pool_init(dp);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int ath12k_wifi6_dp_mon_rx_buf_replenish(struct ath12k_dp *dp)
+{
+	struct ath12k_base *ab = dp->ab;
+	int i, ret = 0;
+
+	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
+		ret = ath12k_wifi6_dp_mon_rx_status_buf_replenish(dp, i);
+		if (ret) {
+			ath12k_err(ab, "failed to init monitor status ring\n");
+			return ret;
+		}
+	}
+
+	if (ath12k_dp_mon_rxdma1_enable(dp)) {
+		ret = ath12k_wifi6_dp_mon_buf_ring_replenish(dp);
 		if (ret)
 			return ret;
 	}
@@ -427,7 +604,7 @@ int ath12k_wifi6_dp_mon_rx_buf_setup(struct ath12k_dp *dp)
 }
 
 static
-void ath12k_wifi6_dp_mon_rx_status_ring_free(struct ath12k_dp *dp, int mac_id)
+void ath12k_wifi6_dp_mon_rx_status_buf_free(struct ath12k_dp *dp, int mac_id)
 {
 	struct ath12k_base *ab = dp->ab;
 	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
@@ -457,14 +634,25 @@ void ath12k_wifi6_dp_mon_rx_status_ring_free(struct ath12k_dp *dp, int mac_id)
 		}
 		dev_kfree_skb_any(skb);
 		rx_desc_pool->mon_desc_pool[i].skb = NULL;
+		rx_desc_pool->mon_desc_pool[i].in_use = 0;
 	}
 
-	kfree(rx_desc_pool->mon_desc_pool);
-	rx_desc_pool->mon_desc_pool = NULL;
 	spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
 }
 
-void ath12k_wifi6_dp_mon_rx_buf_ring_free(struct ath12k_dp *dp)
+static
+void ath12k_wifi6_dp_mon_rx_status_pool_free(struct ath12k_dp *dp, int mac_id)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_status[mac_id];
+	kfree(rx_desc_pool->mon_desc_pool);
+	rx_desc_pool->mon_desc_pool = NULL;
+}
+
+static
+void ath12k_wifi6_dp_mon_rx_buf_ring_buf_free(struct ath12k_dp *dp)
 {
 	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
 	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
@@ -495,24 +683,33 @@ void ath12k_wifi6_dp_mon_rx_buf_ring_free(struct ath12k_dp *dp)
 		}
 		page_frag_free(vaddr);
 		rx_desc_pool->mon_desc_pool[i].vaddr = NULL;
+		rx_desc_pool->mon_desc_pool[i].in_use = 0;
 	}
 
-	kfree(rx_desc_pool->mon_desc_pool);
-	rx_desc_pool->mon_desc_pool = NULL;
 	spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
 }
 
-void ath12k_wifi6_dp_mon_rx_buf_free(struct ath12k_dp *dp)
+static
+void ath12k_wifi6_dp_mon_rx_buf_ring_pool_free(struct ath12k_dp *dp)
+{
+	struct ath12k_dp_wifi6 *dp_wifi6 = ath12k_get_dp_wifi6(dp);
+	struct ath12k_dp_rx_desc_pool *rx_desc_pool;
+
+	rx_desc_pool = &dp_wifi6->rx_desc_mon;
+	kfree(rx_desc_pool->mon_desc_pool);
+	rx_desc_pool->mon_desc_pool = NULL;
+}
+
+void ath12k_wifi6_dp_mon_rx_ring_deinit(struct ath12k_dp *dp)
 {
 	struct ath12k_base *ab = dp->ab;
 	int i;
 
-	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++) {
-		ath12k_wifi6_dp_mon_rx_status_ring_free(dp, i);
-	}
+	for (i = 0; i < ab->hw_params->num_rxdma_per_pdev; i++)
+		ath12k_wifi6_dp_mon_rx_status_buf_free(dp, i);
 
 	if (ath12k_dp_mon_rxdma1_enable(dp))
-		ath12k_wifi6_dp_mon_rx_buf_ring_free(dp);
+		ath12k_wifi6_dp_mon_rx_buf_ring_buf_free(dp);
 }
 
 int ath12k_wifi6_dp_mon_rx_htt_srng_setup(struct ath12k_dp *dp)
@@ -560,12 +757,20 @@ int ath12k_wifi6_dp_mon_pdev_rx_srng_setup(struct ath12k_pdev_dp *dp_pdev, u32 m
 	if (!ath12k_dp_mon_rxdma1_enable(dp))
 		return 0;
 
-	ret = ath12k_dp_srng_setup(ab, ring,
-				   HAL_RXDMA_MONITOR_DST,
-				   0, srng_id,
-				   HAL_RX_MON_DST_RING_SIZE);
+	ret = ath12k_dp_srng_alloc(ab, ring,
+				    HAL_RXDMA_MONITOR_DST,
+				    0, srng_id,
+				    HAL_RX_MON_DST_RING_SIZE);
 	if (ret) {
-		ath12k_warn(dp, "failed to setup mon dest ring %d\n", srng_id);
+		ath12k_warn(dp, "failed to alloc mon dest ring %d\n", srng_id);
+		return ret;
+	}
+
+	ret = ath12k_dp_srng_init(ab, ring,
+				   HAL_RXDMA_MONITOR_DST,
+				   0, srng_id);
+	if (ret) {
+		ath12k_warn(dp, "failed to init mon dest ring %d\n", srng_id);
 		return ret;
 	}
 

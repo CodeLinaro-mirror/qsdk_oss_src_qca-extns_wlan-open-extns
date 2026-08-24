@@ -128,6 +128,15 @@ extern const struct nla_policy
 ath12k_ctl_table_policy[QCA_WLAN_VENDOR_ATTR_CTL_TABLE_MAX + 1];
 
 extern const struct nla_policy
+ath12k_rtt_blob_policy[QCA_WLAN_VENDOR_ATTR_RTT_BLOB_MAX + 1];
+
+extern const struct nla_policy
+ath12k_sta_max_pwr_table_policy[QCA_WLAN_VENDOR_ATTR_STA_MAX_PWR_TABLE_MAX + 1];
+
+extern const struct nla_policy
+ath12k_power_table_policy[QCA_WLAN_VENDOR_ATTR_POWER_TABLE_MAX + 1];
+
+extern const struct nla_policy
 ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
 
 extern const struct nla_policy
@@ -165,6 +174,10 @@ ath12k_reg_params_policy[QCA_WLAN_VENDOR_ATTR_REG_PARAMS_MAX + 1];
 #define QCA_WLAN_CTL_5G_SIZE    1536
 #define QCA_WLAN_CTL_2G_SIZE    684
 #define QCA_WLAN_MAX_CTL_SIZE   MAX(QCA_WLAN_CTL_5G_SIZE, QCA_WLAN_CTL_2G_SIZE)
+#define MAX_PWTAB_SIZE          512
+
+/* RTT Blob */
+#define QCA_WLAN_MAX_RTT_BLOB_SIZE 1524
 
 #ifndef CPTCFG_QCN_EXTN
 
@@ -287,6 +300,30 @@ static inline int ath12k_vendor_ctl_table(struct wiphy *wiphy,
                             		  int data_len)
 {
 	return -1;
+}
+
+static inline int ath12k_vendor_rtt_blob(struct wiphy *wiphy,
+                                        struct wireless_dev *wdev,
+                                        const void *data,
+                                        int data_len)
+{
+       return -1;
+}
+
+static inline int ath12k_vendor_sta_max_pwr_table(struct wiphy *wiphy,
+						  struct wireless_dev *wdev,
+						  const void *data,
+						  int data_len)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int ath12k_vendor_power_table(struct wiphy *wiphy,
+					    struct wireless_dev *wdev,
+					    const void *data,
+					    int data_len)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline
@@ -506,6 +543,11 @@ static inline int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
 {
 	return -1;
 }
+
+static inline int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value)
+{
+	return -1;
+}
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -575,6 +617,21 @@ int ath12k_vendor_ctl_table(struct wiphy *wiphy,
 			    struct wireless_dev *wdev,
 			    const void *data,
 			    int data_len);
+
+int ath12k_vendor_rtt_blob(struct wiphy *wiphy,
+                          struct wireless_dev *wdev,
+                          const void *data,
+                          int data_len);
+
+int ath12k_vendor_sta_max_pwr_table(struct wiphy *wiphy,
+				    struct wireless_dev *wdev,
+				    const void *data,
+				    int data_len);
+
+int ath12k_vendor_power_table(struct wiphy *wiphy,
+			      struct wireless_dev *wdev,
+			      const void *data,
+			      int data_len);
 
 int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 				     struct wireless_dev *wdev,
@@ -774,6 +831,8 @@ enum ath12k_chan_144_state {
 
 int ath12k_vendor_nfcal_power_event(struct ath12k *ar,
 				    const struct ath12k_wmi_nfcal_power_event *param);
+
+int ath12k_vendor_get_chan_util(struct ath12k *ar, u32 *value);
 
 #endif /* CPTCFG_QCN_EXTN */
 

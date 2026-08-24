@@ -1027,6 +1027,8 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 		return -1;
 
 	ppdu = &rx_info->ppdu_info;
+	if (ppdu->peer_id == HAL_INVALID_PEERID)
+		return 0;
 	if (ppdu->num_users > 1)
 		return 0;
 
@@ -1046,9 +1048,12 @@ static int sa_core_update_rx_feedback(struct ath12k_ppdu_rx_info *rx_info)
 			 ppdu->preamble_type, 0) & SA_MASK_RCODE);
 	rx.npackets = ppdu->tcp_msdu_count +
 			ppdu->udp_msdu_count + ppdu->other_msdu_count;
-	for (i = 0; i < SA_MAX_RSSI_CHAINS; i++)
+	for (i = 0; i < SA_MAX_RSSI_CHAINS; i++) {
 		for (j = 0; j < SA_MAX_BW; j++)
 			rx.rx_rssi[i][j] = ppdu->rssi_chain[i][j];
+		if (!rx.rx_rssi[i][0])
+			rx.rx_rssi[i][0] = ppdu->rssi_chain_pri20[i];
+	}
 	rx.rx_rate_index = ppdu->bw;
 	rx_ctx.rx = &rx;
 
@@ -1538,7 +1543,7 @@ int sa_core_init(struct ath12k *ar,
 		rcu_read_unlock();
 		return -1;
 	}
-	sa_mode = ops->sa_algo_init(&init_cfg, init_flags);
+	sa_mode = ops->sa_algo_init(&init_cfg, (init_flags & SA_NEW_CONFIG));
 	rcu_read_unlock();
 
 	if (sa_mode < 0) {
@@ -1562,7 +1567,7 @@ int sa_core_init(struct ath12k *ar,
 	 */
 	sa_ar->enable_mask = SA_ENABLE_MASK | (init_cfg.txrx_feedback &
 			(SA_TX_FEEDBACK_MASK | SA_RX_FEEDBACK_MASK));
-	if (init_flags & SA_NEW_CONFIG) {
+	if ((init_flags & SA_NEW_CONFIG) || (init_flags & SA_SSR_CONFIG)) {
 		sa_ar->state = SA_INIT_DONE_STATE;
 		sa_core_get_gpio_config(ar->radio_idx, &gpio_cfg);
 		sa_core_get_rts_ant_flag(ar->radio_idx, &en_rts);
@@ -1690,7 +1695,7 @@ int sa_core_deinit(struct ath12k *ar, u8 init_flags)
 		ath12k_dbg(ab, ATH12K_DBG_ANY, "SA Core Deinit already done!\n");
 		return 0;
 	}
-	if (init_flags) {
+	if (init_flags & SA_NEW_CONFIG) {
 		/* Call deinit under RCU so the module cannot be unloaded
 		 * while we are executing inside it.
 		 */

@@ -25,7 +25,8 @@ struct ieee80211_qcn_5g_320mhz_csa_oper {
 static const struct ieee80211_qcn_5g_320mhz_csa_oper *
 ieee80211_qcn_find_5g_320mhz_csa_extn(const u8 *ies, size_t len)
 {
-	const struct ieee80211_qcn_5g_320mhz_csa_oper *fallback = NULL;
+	const struct ieee80211_qcn_5g_320mhz_csa_oper *csa_target = NULL;
+	bool has_240mhz_supp = false;
 	const struct element *elem;
 
 	for_each_element_id(elem, WLAN_EID_VENDOR_SPECIFIC, ies, len) {
@@ -48,22 +49,20 @@ ieee80211_qcn_find_5g_320mhz_csa_extn(const u8 *ies, size_t len)
 			if (attr_len > rem)
 				break;
 
-			if ((attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA ||
-			     attr_id == WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP) &&
-			    attr_len == sizeof(struct ieee80211_qcn_5g_320mhz_csa_oper)) {
-				if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA)
-					return (const void *)pos;
-
-				if (!fallback)
-					fallback = (const void *)pos;
-			}
+			if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP &&
+			    attr_len == sizeof(struct ieee80211_240mhz_vendor_oper_extn))
+				has_240mhz_supp = true;
+			else if (attr_id == WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA &&
+				 attr_len == sizeof(struct ieee80211_qcn_5g_320mhz_csa_oper) &&
+				 !csa_target)
+				csa_target = (const void *)pos;
 
 			pos += attr_len;
 			rem -= attr_len;
 		}
 	}
 
-	return fallback;
+	return has_240mhz_supp ? csa_target : NULL;
 }
 
 void
@@ -172,9 +171,29 @@ int ieee802_11_parse_elems_vendor_qcn_extn(const u8 *pos, u8 elen,
 	pos += 4;
 
 	while ((rem_elen > 2) && (pos < end)) {
+		if (pos[1] + 2 > rem_elen || pos + 2 + pos[1] > end)
+			break;
+
 		switch (pos[0]) {
+			case WLAN_OUI_QCN_ATTR_VHT_MCS10_11_SUPP:
+				if (pos[1] < 1)
+					break;
+				elems->elems_extn.vht_mcs10_11_supp = (pos[2] == 1);
+				break;
+			case WLAN_OUI_QCN_ATTR_HE_400NS_SGI_SUPP:
+				/* 3-byte payload: byte[0]=1xLTF, byte[1]=2xLTF, byte[2]=4xLTF */
+				if (pos[1] < 3)
+					break;
+				elems->elems_extn.he_400ns_sgi_supp =
+					(pos[2] & 0x1) | ((pos[3] & 0x1) << 1);
+				break;
+			case WLAN_OUI_QCN_ATTR_HE_2XLTF_160_80P80_SUPP:
+				if (pos[1] < 1)
+					break;
+				elems->elems_extn.he_2xltf_160_80p80_supp = pos[2];
+				break;
 			case WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP:
-				if (rem_elen < 11)
+				if (pos[1] < 9)
 					break;
 				elems->elems_extn.params_240MHz.eht_240mhz_cap
 					= (struct
@@ -314,6 +333,13 @@ void ieee80211_inform_bss_extn(struct cfg80211_bss *cbss,
 			elems->elems_extn.params_240MHz.eht_240mhz_cap;
 
 	}
+
+	/* Store VHT MCS10/11 support flag from QCN IE for later use
+	 * during association capability intersection.
+	 */
+	bss->bss_extn.vht_mcs10_11_supp = elems->elems_extn.vht_mcs10_11_supp;
+	bss->bss_extn.he_400ns_sgi_supp = elems->elems_extn.he_400ns_sgi_supp;
+	bss->bss_extn.he_2xltf_160_80p80_supp = elems->elems_extn.he_2xltf_160_80p80_supp;
 }
 
 size_t

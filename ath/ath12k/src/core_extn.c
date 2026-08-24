@@ -46,6 +46,7 @@ struct ath12k_vif_sysfs_entry {
 };
 
 static int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
+					      struct ath12k_vif *ahvif,
 					      struct ath12k_sta *ahsta,
 					      unsigned long valid_links,
 					      int *psoc_id);
@@ -203,7 +204,9 @@ static void ath12k_mac_accumulate_avg_link_rssi(void *data,
 	s32 *rssi_total_array = data;
 	struct ath12k_sta *ahsta = ath12k_sta_to_ahsta(sta);
 
-	rssi_total_array[ahsta->ahsta_extn.primary_soc_id] += ahsta->ahsta_extn.avg_link_rssi;
+	if (ahsta->ahsta_extn.primary_soc_id >= 0 &&
+	    ahsta->ahsta_extn.primary_soc_id < ATH12K_MAX_SOCS)
+		rssi_total_array[ahsta->ahsta_extn.primary_soc_id] += ahsta->ahsta_extn.avg_link_rssi;
 }
 
 static int ath12k_get_total_mlo_peers_ab(struct ath12k_base *ab)
@@ -250,12 +253,14 @@ static int ath12k_get_total_stations_ab(struct ath12k_base *ab)
 }
 
 int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
+				       struct ath12k_vif *ahvif,
 				       struct ath12k_sta *ahsta,
 				       unsigned long valid_links,
 				       int *psoc_id)
 {
 	u32 target_type;
 	struct ath12k *ar;
+	struct ath12k_link_vif *arvif;
 	struct ieee80211_sta *sta = ath12k_ahsta_to_sta(ahsta);
 	bool found_qca5332 = false;
 	bool found_qcn6432 = false;
@@ -263,21 +268,19 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 	bool found_qca5424 = false;
 	u8 forced_psoc_id = 0;
 	int num_links;
-	int i = 0;
+	u8 link_id;
 
 	num_links = hweight32(valid_links);
 	ath12k_dbg_level(NULL, ATH12K_DBG_MAC, ATH12K_DBG_L2,
 			 "mlo primary selection: forced check sta %pM valid_links 0x%lx links %d\n",
 			 sta->addr, valid_links, num_links);
 
-	/* loop through all ab in ah*/
-	for (i = 0; i < ah->num_radio; i++) {
-		ar = &ah->radio[i];
-		if (!ar) {
-			ath12k_err(NULL, "ar is NULL\n");
-			return -1;
-		}
+	for_each_set_bit(link_id, &valid_links, IEEE80211_MLD_MAX_NUM_LINKS) {
+		arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
+		if (!arvif || !arvif->ar)
+			continue;
 
+		ar = arvif->ar;
 		target_type = ar->ab->hw_rev;
 		switch (target_type) {
 		case ATH12K_HW_IPQ5332_HW10:
@@ -304,9 +307,9 @@ int ath12k_mlo_set_3_link_forced_primary_umac(struct ath12k_hw *ah,
 			break;
 
 		default:
-		ath12k_err(NULL,
-			   "Target not valid for pumac tgt_type %d",
-			   target_type);
+			ath12k_err(NULL,
+				   "Target not valid for pumac tgt_type %d",
+				   target_type);
 			return -EINVAL;
 		}
 	}
@@ -428,10 +431,12 @@ static void ath12k_peer_calculate_avg_rssi(struct ath12k_hw *ah,
 		num_psocs++;
 		if (ahsta->assoc_link_id == link_id) {
 			link_rssi = arsta->arsta_extn.rssi_assoc;
-		} else {
+		} else if (assoc_arvif) {
 			link_rssi = ath12k_derive_link_rssi(ah, arvif,
 							    assoc_arvif,
 							    arsta->arsta_extn.rssi_assoc);
+		} else {
+			link_rssi = arsta->arsta_extn.rssi_assoc;
 		}
 
 		total_rssi += link_rssi;
@@ -523,7 +528,7 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 			 "mlo primary selection: sta %pM avg_link_rssi %d valid_links 0x%lx\n",
 			 sta->addr, ahsta->ahsta_extn.avg_link_rssi, valid_links);
 
-	if (ath12k_mlo_set_3_link_forced_primary_umac(ah, ahsta, valid_links,
+	if (ath12k_mlo_set_3_link_forced_primary_umac(ah, ahvif, ahsta, valid_links,
 				&primary_psoc) == 0) {
 		goto exit_pri_link_selection;
 	}
@@ -558,11 +563,14 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 		if (!arvif->ar->ab->hw_params->is_plink_preferable) {
 			ath12k_err(NULL, "Skip UMAC selection ...\n");
 			psoc_id = ath12k_get_ab_device_id(arvif->ar->ab);
-			plink_preferable[psoc_id] = false;
+			if (psoc_id >= 0 && psoc_id < ATH12K_MAX_SOCS)
+				plink_preferable[psoc_id] = false;
 			continue;
 		}
 
 		psoc_id = ath12k_get_ab_device_id(arvif->ar->ab);
+		if (psoc_id < 0 || psoc_id >= ATH12K_MAX_SOCS)
+			continue;
 		plink_preferable[psoc_id] = true;
 		chan_width = arvif->chanctx.def.width;
 		ml_ch_width[psoc_id] = ath12k_mac_get_chan_width(chan_width);
@@ -666,6 +674,8 @@ int ath12k_get_best_primary_umac_w_rssi(struct ath12k_hw *ah,
 			bw = ml_ch_width[i];
 			cap = bw * (100 - cong);
 			total_ml_sta_count++;
+			if (!total_cap)
+				break;
 			grp_size = total_ml_sta_count * ((cap * 100) / total_cap);
 			group_size[i] = grp_size / 100;
 			if (grp_size % 100)
@@ -814,7 +824,9 @@ extern const struct sysfs_ops kobj_sysfs_ops;
 
 static void ath12k_vif_kobj_release(struct kobject *kobj)
 {
-	/* nothing */
+	struct ath12k_vif_sysfs_entry *entry =
+		container_of(kobj, struct ath12k_vif_sysfs_entry, kobj);
+	kfree(entry);
 }
 
 static struct kobj_type ath12k_vif_ktype = {
@@ -868,8 +880,11 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 		return;
 
 	ar->ar_extn.vifs_kobj = kobject_create_and_add("vifs", ar->ar_extn.radio_kobj);
-	if (!ar->ar_extn.vifs_kobj)
+	if (!ar->ar_extn.vifs_kobj) {
+		kobject_put(ar->ar_extn.radio_kobj);
+		ar->ar_extn.radio_kobj = NULL;
 		return;
+	}
 
 	for (i = 0; i <= 16; i++) {
 		struct ath12k_vif_sysfs_entry *entry;
@@ -883,7 +898,6 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 		kobject_init(&entry->kobj, &ath12k_vif_ktype);
 		if (kobject_add(&entry->kobj, ar->ar_extn.vifs_kobj, "%s", name)) {
 			kobject_put(&entry->kobj);
-			kfree(entry);
 			break;
 		}
 		for (r = 0; r < ar->ah->num_radio; r++) {
@@ -906,7 +920,6 @@ void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 			if (!entry)
 				continue;
 			kobject_put(&entry->kobj);
-			kfree(entry);
 			ar->ar_extn.vif_entries[i] = NULL;
 		}
 
@@ -965,7 +978,8 @@ ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 	return 0;
 }
 
-void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
+void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
+				struct ath12k_link_vif *arvif)
 {
 	/* Protects the extensions data update for an interface*/
 	spin_lock_init(&ahvif->ath12k_vif_extn.data_lock);
@@ -978,6 +992,13 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif)
 	ahvif->dp_vif.dp_extn.mdbg = 0;
 	ahvif->dp_vif.dp_extn.mesh_tx = 0;
 #endif
+
+	ath12k_gpr_arvif_init(arvif);
+}
+
+void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
+{
+	ath12k_gpr_arvif_deinit(arvif);
 }
 
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
@@ -1015,6 +1036,38 @@ int ath12k_wmi_op_rx_extn(enum wmi_tlv_event_id id, struct ath12k_base *ab,
 	}
 
 	return 0;
+}
+
+/**
+ * ath12k_mac_hw_register_extn - Extension hook for ath12k_mac_hw_register
+ * @ah: ath12k_hw instance
+ *
+ * Conditionally sets WIPHY_FLAG_SUPPORTS_PARALLEL_HW_SCAN on the wiphy based
+ * on the "parallel_hw_scan" INI key read from global.ini.  The flag is set
+ * only when the INI is enabled (true); it is cleared otherwise, overriding
+ * any unconditional assignment made by the core driver.
+ *
+ * Must be called from ath12k_mac_hw_register() after the wiphy has been
+ * allocated and the INI context is available.
+ */
+void ath12k_mac_hw_register_extn(struct ath12k_hw *ah)
+{
+	struct ath12k *ar;
+	struct wiphy *wiphy;
+
+	if (!ah || !ah->hw || !ah->num_radio)
+		return;
+
+	ar = &ah->radio[0];
+	wiphy = ah->hw->wiphy;
+
+	if (ath12k_cfg_get(ar->ab, ATH12K_CFG_PARALLEL_HW_SCAN)) {
+		wiphy->flags |= WIPHY_FLAG_SUPPORTS_PARALLEL_HW_SCAN;
+		wiphy_ext_feature_set(wiphy,
+				      NL80211_EXT_FEATURE_PARALLEL_HW_SCAN);
+		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+			   "parallel hw scan enabled via INI\n");
+	}
 }
 
 void ath12k_mac_setup_extn(struct ath12k *ar)
@@ -1413,26 +1466,28 @@ void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 				   struct ieee80211_link_sta *link_sta,
 				   struct ath12k_wmi_peer_assoc_arg *arg)
 {
-	struct ath12k_vif *ahvif = arvif->ahvif;
-	struct ath12k *ar = arvif->ar;
+	struct ath12k_vif *ahvif;
+	struct ath12k *ar;
 
-	if (!arsta || !link_sta || !arg) {
-		ath12k_err(ar->ab, "Link STA/Peer assoc args is NULL\n");
+	if (!arvif || !arsta || !link_sta || !arg)
 		return;
-	}
+
+	ahvif = arvif->ahvif;
+	ar = arvif->ar;
 
 	/* For statically added mesh peers, keys will be programmed by user.
 	 * Reset the need_ptk_4_way/need_gtk_2_way flag when sending peer assoc.
 	 *
 	 * Save calculated phymode and nss for peer lookup.
 	 */
-	if (ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+	if (ahvif && ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
 		arg->need_ptk_4_way = false;
 		arg->need_gtk_2_way = false;
-		link_sta->sta->sta_extn.peer_info.mesh_peer_phymode = arg->peer_phymode;
-		link_sta->sta->sta_extn.peer_info.mesh_peer_nss = arg->peer_nss;
+		if (link_sta->sta) {
+			link_sta->sta->sta_extn.peer_info.mesh_peer_phymode = arg->peer_phymode;
+			link_sta->sta->sta_extn.peer_info.mesh_peer_nss = arg->peer_nss;
+		}
 	}
-
 	return;
 }
 #endif
@@ -1693,4 +1748,130 @@ u32 ath12k_get_monitor_version(struct ath12k_base *ab)
 			    ab->hw_rev);
 		return 0;
 	}
+}
+
+/**
+ * ath12k_peer_assoc_h_vht_mcs10_11_extn - Encode VHT MCS 10/11 (1024-QAM)
+ * into the peer_assoc tx_mcs_set.
+ *
+ * VHT MCS 10/11 is an extension to 802.11ac negotiated via QCN vendor IE
+ * attribute 0x02.  When the VAP has MCS10/11 enabled and the hardware
+ * supports it, the per-SS bitmap is encoded into bits [23:16] of tx_mcs_set
+ * with the validity flag in bit 24.  If neither the peer QCN IE nor the
+ * nq2q fallback is active the extended bits are stripped so firmware sees a
+ * standard MCS 0-9 peer.
+ */
+void ath12k_peer_assoc_h_vht_mcs10_11_extn(struct ath12k *ar,
+					   struct ath12k_link_vif *arvif,
+					   struct ath12k_link_sta *arsta,
+					   struct ath12k_wmi_peer_assoc_arg *arg)
+{
+	u8 peer_higher_mcs;
+
+	if (!arvif || !ar || !ar->pdev)
+		return;
+
+	if (!arvif->arvif_extn.vht_mcs10_11_supp || !ar->pdev->cap.vht_higher_mcs_supp)
+		return;
+
+	if (arsta->arsta_extn.higher_vhtmcs_supp) {
+		/* Peer advertised MCS10/11 support via QCN IE:
+		 * use the negotiated per-SS intersection bitmap.
+		 */
+		peer_higher_mcs = arsta->arsta_extn.higher_vhtmcs_supp;
+	} else if (arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp) {
+		/* Non-QCA peer fallback: apply self capability to all
+		 * supported NSS chains.
+		 */
+		peer_higher_mcs = ar->pdev->cap.vht_higher_mcs_supp;
+	} else {
+		peer_higher_mcs = 0;
+	}
+
+	if (peer_higher_mcs) {
+		/* Mask to peer's actual NSS capability: a peer with
+		 * N spatial streams can only use MCS10/11 on NSS 1..N.
+		 * arg->peer_nss is already clamped to the negotiated NSS.
+		 */
+		if (arg->peer_nss < 8)
+			peer_higher_mcs &= (u8)((1 << arg->peer_nss) - 1);
+		peer_higher_mcs &= ar->pdev->cap.vht_higher_mcs_supp;
+		/* Set validity flag (bit 24) and per-SS bitmap [23:16] */
+		arg->tx_mcs_set |= IEEE80211_DISABLE_VHT_MCS_SUPPORT_0_11;
+		arg->tx_mcs_set |= ((u32)peer_higher_mcs << 16) &
+				   IEEE80211_VHT_MCS_SUPPORT_0_11_MASK;
+		ath12k_info(ar->ab,
+			    "VHT MCS10/11: peer %pM tx_mcs_set 0x%08x higher_vhtmcs_supp 0x%02x\n",
+			    arsta->addr, arg->tx_mcs_set,
+			    arsta->arsta_extn.higher_vhtmcs_supp);
+	} else {
+		arg->tx_mcs_set |= IEEE80211_DISABLE_VHT_MCS_SUPPORT_0_11;
+	}
+}
+
+/**
+ * ath12k_peer_assoc_h_he_cap_internal_extn - Encode HE 400ns SGI and 2x LTF
+ * 160/80+80 MHz internal capability into the peer_assoc arg.
+ *
+ * The QCA-internal HE capability bitmap is negotiated via QCN vendor IE
+ * attributes 0x03 (400ns SGI, bits [1:0]) and 0x04 (2x LTF 160/80+80, bit 2).
+ * Intersect with the local HW band capability so we never advertise a feature
+ * the local radio does not support.
+ */
+void ath12k_peer_assoc_h_he_cap_internal_extn(struct ath12k *ar,
+					      struct ath12k_link_sta *arsta,
+					      struct ath12k_wmi_peer_assoc_arg *arg,
+					      enum nl80211_band band)
+{
+	if (!arsta || !ar || !ar->pdev)
+		return;
+
+	arg->peer_he_cap_macinfo_internal = arsta->arsta_extn.he_cap_info_internal &
+					ar->pdev->cap.band[band].he_cap_info_internal;
+}
+
+/**
+ * ath12k_mac_vht_mcs10_11_ratemask_extn - Extend the per-NSS VHT ratemask
+ * to include MCS10 and MCS11 (1024-QAM) bits.
+ *
+ * When VHT MCS10/11 is enabled for this VAP and the radio supports it,
+ * extend each NSS chain's 12-bit ratemask entry to set bits 10 and 11,
+ * enabling MCS10 and MCS11 in the WMI_VDEV_RATEMASK_CMDID payload.
+ *
+ * @arvif: link vif whose ratemask is being built
+ * @arg:   ratemask WMI arg already populated with the standard MCS 0-9 bits;
+ *         MCS10/11 bits are OR'd in for supported NSS chains
+ */
+void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
+					   struct wmi_vdev_ratemask_arg *arg)
+{
+	u8 higher_mcs = arvif->ar->pdev->cap.vht_higher_mcs_supp;
+	u64 mcs1011_lower64 = 0, mcs1011_higher64 = 0;
+	u8 nss;
+
+	if (!arvif || !arvif->ar || !arvif->ar->pdev)
+		return;
+
+	if (!arvif->arvif_extn.vht_mcs10_11_supp ||
+	    !arvif->ar->pdev->cap.vht_higher_mcs_supp)
+		return;
+
+	for (nss = 0; nss < NL80211_VHT_NSS_MAX; nss++) {
+		if (!(higher_mcs & BIT(nss)))
+			continue;
+		/* Add MCS10 (bit 10) and MCS11 (bit 11) for this NSS */
+		if (nss < 5) {
+			mcs1011_lower64 |= (u64)(BIT(10) | BIT(11)) << (nss * 12);
+		} else if (nss == 5) {
+			mcs1011_lower64 |=
+				((u64)((BIT(10) | BIT(11)) & 0xf)) << 60;
+			mcs1011_higher64 |= (u64)((BIT(10) | BIT(11)) >> 4);
+		} else {
+			mcs1011_higher64 |= (u64)(BIT(10) | BIT(11)) <<
+						(((nss - 6) * 12) + 8);
+		}
+	}
+	arg->mask_lower32  |= lower_32_bits(mcs1011_lower64);
+	arg->mask_higher32 |= upper_32_bits(mcs1011_lower64);
+	arg->mask_lower32_2 |= lower_32_bits(mcs1011_higher64);
 }

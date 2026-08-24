@@ -59,16 +59,33 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 /**
  * ieee80211_bootup_cac_mesh_vdev_up_extn - trigger vdev_up for mesh vdevs
  * sharing a chanctx after boot-up CAC completes.
- * @ctx:     the chanctx whose CAC timer just fired
+ * @ctx: the chanctx whose CAC timer just fired
  *
  * The CAC timer fires once per chanctx and cfg80211_cac_event() is sent only
- * for the first link found.  For any mesh vdev on the same chanctx that has
- * already joined (enable_beacon=true), re-fire BSS_CHANGED_BEACON_ENABLED so
- * that ath12k_control_beaconing() is called again.  At this point the channel
- * is DFS_AVAILABLE, so ath12k_control_beaconing_bootup_cac_check_extn()
- * returns false and vdev_up is issued.
+ * for the first link found by the caller, scoped to that link's netdev
+ * ifindex. cfg80211_clear_cac_started() leaves cac_started set for mesh
+ * wdevs, so for every mesh vdev on the same chanctx that has already joined
+ * (enable_beacon=true) and still has cac_started set, call
+ * cfg80211_cac_event() to send it its own scoped CAC-finished notification
+ * and clear cac_started.
  */
 void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx);
+
+/**
+ * ieee80211_bootup_cac_mesh_carrier_on - bring up mesh carrier after boot-up CAC
+ * @sdata: the mesh sub-interface
+ *
+ * Called from ieee80211_bootup_cac_mesh_vdev_up_extn() after vdev_up has been
+ * sent to firmware (arvif->is_up is now true).  Calls netif_carrier_on() so
+ * the bridge layer starts udhcpc and DHCP DISCOVERs are sent only when the
+ * firmware can actually TX them.
+ *
+ * This is the counterpart to the deferred netif_carrier_on in
+ * ieee80211_start_mesh(): during boot-up CAC that call is skipped to avoid
+ * DHCP DISCOVERs being dropped by ath12k_wifi7_mcbc_handler (which gates
+ * broadcast TX on arvif->is_up).
+ */
+void ieee80211_bootup_cac_mesh_carrier_on(struct ieee80211_sub_if_data *sdata);
 
 /**
  * ieee80211_bootup_cac_handle_skip_extn - handle skip_cac flag during boot-up CAC.

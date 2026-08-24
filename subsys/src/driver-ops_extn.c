@@ -235,6 +235,24 @@ int ieee80211_mesh_ap_config_save(struct cfg80211_ap_settings *params,
 
 	mesh_conf->rsn_conf->wpa_versions = params->crypto.wpa_versions;
 
+	if (params->crypto.n_ciphers_pairwise > 0) {
+		mesh_conf->rsn_conf->n_pairwise_ciphers =
+			min_t(u8, params->crypto.n_ciphers_pairwise,
+			      NL80211_MAX_NR_CIPHER_SUITES);
+		memcpy(mesh_conf->rsn_conf->pairwise_ciphers,
+		       params->crypto.ciphers_pairwise,
+		       mesh_conf->rsn_conf->n_pairwise_ciphers * sizeof(u32));
+	}
+
+	if (params->crypto.n_akm_suites > 0) {
+		mesh_conf->rsn_conf->n_akm_suites =
+			min_t(u8, params->crypto.n_akm_suites,
+			      NL80211_MAX_NR_AKM_SUITES);
+		memcpy(mesh_conf->rsn_conf->akm_suites,
+		       params->crypto.akm_suites,
+		       mesh_conf->rsn_conf->n_akm_suites * sizeof(u32));
+	}
+
 	/* Save a copy of the local AP's RSN IE from the beacon tail and
 	 * pre-parse the RSN Capabilities for MFP cross-check. */
 	if (params->beacon.tail && params->beacon.tail_len > 0) {
@@ -274,7 +292,7 @@ void ieee80211_free_mesh_vap_caps(struct ieee80211_bss_conf *link_conf)
 {
 	struct mesh_bss_conf *mesh_conf;
 
-	if (!link_conf->bss_conf_extn)
+	if (!link_conf || !link_conf->bss_conf_extn)
 		return;
 
 	mesh_conf = &link_conf->bss_conf_extn->mesh_bss_caps;
@@ -339,8 +357,8 @@ void ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 			       struct ieee80211_sub_if_data *sdata,
 			       struct ieee80211_bss_conf *link_conf)
 {
-	if (!wdev || wdev->vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
-		pr_debug("managed_mesh_dbg ap_cleanup: skipped (vap_submode=%u)\n", wdev->vap_submode);
+	if (!wdev) {
+		pr_debug("managed_mesh_dbg ap_cleanup: skipped (wdev is NULL)\n");
 		return;
 	}
 
@@ -349,11 +367,9 @@ void ieee80211_mesh_ap_cleanup(struct wireless_dev *wdev,
 		return;
 	}
 
-	pr_info_ratelimited("managed_mesh_dbg ap_cleanup: called for %s bss_conf_extn=%p\n",
-			    sdata->name, link_conf->bss_conf_extn);
-
 	ieee80211_free_mesh_vap_caps(link_conf);
-	del_timer_sync(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
+	if (sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer_enabled)
+		del_timer_sync(&sdata->u.ap.if_ap_extn.mesh_peer_cleanup_timer);
 }
 EXPORT_SYMBOL(ieee80211_mesh_ap_cleanup);
 
@@ -528,7 +544,8 @@ static int ieee80211_mesh_peer_copy_bss_cap(struct ieee80211_bss_conf *bss_conf,
  */
 static int ieee80211_mesh_peer_ht_vht_mcsnssmap_update(struct ieee80211_ht_cap *ht_cap,
 						       struct ieee80211_vht_cap *vht_cap,
-						       u8 nss, u8 mode)
+						       u8 nss, u8 mode,
+						       enum nl80211_band band)
 {
 	int iter;
 
@@ -542,8 +559,15 @@ static int ieee80211_mesh_peer_ht_vht_mcsnssmap_update(struct ieee80211_ht_cap *
 	if (mode < MESH_PREAMBLE_VHT)
 	    return 0;
 
-	if (!vht_cap)
-	    return -EINVAL;
+	/* VHT is optional on 2.4 GHz and not supported on 6 GHz; skip VHT
+	 * MCS/NSS update for these bands. HE/EHT caps are updated separately
+	 * by the caller.
+	 */
+	if (!vht_cap) {
+		if (band == NL80211_BAND_2GHZ)
+			return 0;
+		return -EINVAL;
+	}
 
 	for (iter = 0; iter < 8; iter++) {
 		if (iter < nss) {
@@ -785,7 +809,7 @@ static int ieee80211_mesh_peer_update_cap(struct station_parameters *params,
 	if ((band != NL80211_BAND_6GHZ) && (mode >= MESH_PREAMBLE_HT)) {
 		ret = ieee80211_mesh_peer_ht_vht_mcsnssmap_update(mesh_ht_cap,
 								  mesh_vht_cap, nss,
-								  mode);
+								  mode, band);
 
 		if (ret < 0)
 			return ret;
@@ -875,10 +899,12 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	station_params->listen_interval = 0;
 
 	if (mode < MESH_PREAMBLE_EHT)
-		station_params->link_sta_params.link_id = -1;
+		station_params->link_sta_params.link_id =
+			ieee80211_vif_is_mld(vif) ?
+			(int)mesh_params->peers[0].link_id : -1;
 	else
 		station_params->link_sta_params.link_id =
-			vif->bss_conf.link_id;
+			link_conf->link_id;
 
 	station_params->link_sta_params.mld_mac =
 		is_zero_ether_addr(mesh_params->peer_mld_mac) ?
@@ -1065,6 +1091,8 @@ int ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy, struct ieee80211_v
 
 	memset(&params, 0, sizeof(params));
 
+	params.link_sta_params.link_id = -1;
+
 	/* AID and listen_interval properties can be set only for unassociated
 	 * station. They will be checked in cfg80211_check_station_change().
 	 */
@@ -1086,6 +1114,102 @@ int ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy, struct ieee80211_v
 EXPORT_SYMBOL(ieee80211_vendor_mesh_authorize_peer);
 
 /**
+ * ieee80211_mesh_send_deauth - send a deauth frame to a mesh peer, encrypting
+ * it when an MFP PTKSA is established.
+ *
+ * ieee80211_send_deauth_disassoc() unconditionally sets DONT_ENCRYPT for
+ * AP-type interfaces.  For a managed-mesh BSS with ieee80211w=2, deauth to
+ * an MFP peer with an installed pairwise key must be protected.  This helper
+ * calls the function with send_frame=false to populate @frame_buf, then
+ * builds and transmits the skb, omitting DONT_ENCRYPT when @peer_mfp and
+ * @key_installed are both true so the TX path encrypts with the PTK.
+ */
+static void ieee80211_mesh_send_deauth(struct ieee80211_sub_if_data *sdata,
+				       const u8 *peer_addr,
+				       const u8 *bssid,
+				       u16 reason,
+				       bool peer_mfp,
+				       bool key_installed,
+				       u8 *frame_buf)
+{
+	struct ieee80211_local *local = sdata->local;
+	struct sk_buff *skb;
+
+	ieee80211_send_deauth_disassoc(sdata, peer_addr, bssid,
+				       IEEE80211_STYPE_DEAUTH, reason,
+				       false, frame_buf);
+
+	skb = dev_alloc_skb(local->hw.extra_tx_headroom + IEEE80211_DEAUTH_FRAME_LEN);
+	if (!skb)
+		return;
+
+	skb_reserve(skb, local->hw.extra_tx_headroom);
+	skb_put_data(skb, frame_buf, IEEE80211_DEAUTH_FRAME_LEN);
+
+	if (!peer_mfp || !key_installed)
+		IEEE80211_SKB_CB(skb)->flags |= IEEE80211_TX_INTFL_DONT_ENCRYPT;
+
+	ieee80211_tx_skb(sdata, skb);
+}
+
+/*
+ * struct mesh_peer_del_ctx - Context for deferred mesh peer deletion.
+ *
+ * Heap-allocated before the deauth is queued.  The WMI management TX work and
+ * this deletion work are both serialised by the same wiphy workqueue (FIFO),
+ * so the deauth is guaranteed to reach firmware before del_station tears down
+ * the peer entry — regardless of whether the deauth is MFP-encrypted or open.
+ * This mirrors the natural ordering in regular AP mode where the application
+ * sends the deauth and calls del_station in separate, sequential steps.
+ */
+struct mesh_peer_del_ctx {
+	struct wiphy_work work;
+	struct ieee80211_sub_if_data *sdata;
+	u8 peer_addr[ETH_ALEN];
+	u16 sta_aid;
+};
+
+static void ieee80211_mesh_peer_del_work(struct wiphy *wiphy,
+					 struct wiphy_work *work)
+{
+	struct mesh_peer_del_ctx *ctx =
+		container_of(work, struct mesh_peer_del_ctx, work);
+	struct ieee80211_sub_if_data *sdata = ctx->sdata;
+	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+	struct station_del_parameters params;
+	struct ieee80211_sta *sta;
+	int ret;
+
+	/* Peer may have been removed by another path (e.g. beacon timeout)
+	 * between the deauth send and now — skip deletion if it is gone.
+	 */
+	rcu_read_lock();
+	sta = ieee80211_find_sta(&sdata->vif, ctx->peer_addr);
+	rcu_read_unlock();
+	if (!sta) {
+		kfree(ctx);
+		return;
+	}
+
+	/* Prepare deletion parameters */
+	memset(&params, 0, sizeof(params));
+	params.mac = ctx->peer_addr;
+	params.link_id = -1;
+	params.subtype = IEEE80211_STYPE_DEAUTH;
+	params.reason_code = WLAN_REASON_DEAUTH_LEAVING;
+
+	/* Call mac80211's del_station to remove the peer */
+	ret = rdev->ops->del_station(wiphy, sdata->dev, &params);
+	/* Free AID only on success — if deletion failed the station entry may
+	 * still exist with this AID, freeing it could cause an AID collision.
+	 */
+	if (!ret)
+		ieee80211_mesh_free_aid(sdata, ctx->sta_aid);
+
+	kfree(ctx);
+}
+
+/**
  * ieee80211_vendor_mesh_delete_local_peer: Mesh peer delete handler.
  *
  * @wiphy: WIPHY pointer
@@ -1103,6 +1227,9 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 	struct ieee80211_sub_if_data *sdata;
 	struct net_device *dev;
 	struct station_del_parameters params;
+	struct mesh_peer_del_ctx *del_ctx;
+	bool mfp_capable;
+	bool key_installed;
 	int ret;
 	u16 sta_aid = 0;
 	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
@@ -1140,26 +1267,31 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 		rcu_read_unlock();
 		return -EINVAL;
 	}
-	sta_aid = sta->aid;
+	sta_aid     = sta->aid;
+	mfp_capable = sta->sta_extn.peer_info.peer_mfp_capable;
+	key_installed = sta->sta_extn.peer_info.key_installed;
 	rcu_read_unlock();
 
-	/* Send deauth OTA before tearing down the station's TX path.
-	 * Skip if peer_rejected — RSN rejection already sent a deauth with
-	 * the appropriate reason; avoid sending a redundant DEAUTH_LEAVING. */
-	rcu_read_lock();
-	sta = ieee80211_find_sta(vif, peer_addr);
-	if (sta && !sta->sta_extn.peer_info.peer_rejected) {
-		rcu_read_unlock();
-		ieee80211_send_deauth_disassoc(sdata,
-					       peer_addr,
-					       sdata->vif.addr,
-					       IEEE80211_STYPE_DEAUTH,
-					       WLAN_REASON_DEAUTH_LEAVING,
-					       true,
-					       frame_buf);
-	} else {
-		rcu_read_unlock();
+	/* Send deauth OTA before tearing down the station's TX path. */
+	ieee80211_mesh_send_deauth(sdata, peer_addr, sdata->vif.addr,
+				   WLAN_REASON_DEAUTH_LEAVING,
+				   mfp_capable, key_installed, frame_buf);
+
+	/* Defer del_station so the ath12k WMI management TX work (queued ahead
+	 * of us in the same wiphy workqueue) processes the deauth first, while
+	 * the PTK is still installed in firmware.  See ieee80211_mesh_peer_del_work.
+	 */
+	del_ctx = kzalloc(sizeof(*del_ctx), GFP_KERNEL);
+	if (del_ctx) {
+		del_ctx->sdata = sdata;
+		ether_addr_copy(del_ctx->peer_addr, peer_addr);
+		del_ctx->sta_aid = sta_aid;
+		wiphy_work_init(&del_ctx->work, ieee80211_mesh_peer_del_work);
+		wiphy_work_queue(sdata->local->hw.wiphy, &del_ctx->work);
+		return 0;
 	}
+
+	/* Allocation failure — fall back to immediate deletion. */
 
 	/* Prepare deletion parameters */
 	memset(&params, 0, sizeof(params));
@@ -1172,7 +1304,7 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 	ret = rdev->ops->del_station(wiphy, dev, &params);
 
 	if (!ret)
-	    ieee80211_mesh_free_aid(sdata, sta_aid);
+		ieee80211_mesh_free_aid(sdata, sta_aid);
 
 	return ret;
 }
@@ -1285,9 +1417,11 @@ static u32 ieee80211_calc_beacon_ie_checksum_raw(const struct ieee80211_mgmt *mg
 }
 
 /**
- * ieee80211_mesh_install_peer_key - Install pairwise key and authorize a mesh peer.
+ * ieee80211_mesh_install_peer_key - Install pairwise key (or authorize
+ *	directly for an open BSS) and authorize a mesh peer.
  *
- * Called from ieee80211_update_mesh_peer_caps_work before capability intersection.
+ * Called from ieee80211_update_mesh_peer_caps_work after the WMI peer assoc so
+ * the firmware peer entry already has is_pmf_enabled=true when the PTK arrives.
  * Retries silently on subsequent beacons if the GTK is not yet available.
  *
  * @wiphy: WIPHY pointer
@@ -1301,7 +1435,6 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 	struct ieee80211_bss_conf *link_conf = NULL;
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 	struct net_device *dev = sdata->dev;
-	struct station_parameters sta_params = {0};
 	struct key_params kp = {};
 	u8 key_buf[WLAN_MAX_KEY_LEN];
 	u8 key_len = 0;
@@ -1310,6 +1443,18 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 
 	if (peer->key_installed)
 		return;
+
+	/* Open BSS: no pairwise key to install — authorize directly */
+	if (!peer->peer_ucast_cipher) {
+		ret = ieee80211_vendor_mesh_authorize_peer(wiphy, &sdata->vif, sta->sta.addr);
+		if (ret) {
+			pr_warn_ratelimited("managed_mesh_dbg install_peer_key: authorize failed for %pM (ret=%d)\n",
+					    sta->sta.addr, ret);
+			return;
+		}
+		peer->key_installed = true;
+		return;
+	}
 
 	for (i = 0; i < IEEE80211_MLD_MAX_NUM_LINKS; i++) {
 		struct ieee80211_bss_conf *lc =
@@ -1327,20 +1472,7 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 		return;
 	}
 
-	/* Step 1: Set NL80211_STA_FLAG_MFP if peer advertises MFP capability */
-	if (peer->peer_mfp_capable) {
-		sta_params.aid             = 0;
-		sta_params.listen_interval = -1;
-		sta_params.support_p2p_ps  = -1;
-		sta_params.sta_flags_mask  = BIT(NL80211_STA_FLAG_MFP);
-		sta_params.sta_flags_set   = BIT(NL80211_STA_FLAG_MFP);
-		ret = rdev->ops->change_station(wiphy, dev, sta->sta.addr, &sta_params);
-		if (ret)
-			pr_warn_ratelimited("managed_mesh_dbg install_peer_key: MFP flag set failed for %pM (ret=%d)\n",
-					    sta->sta.addr, ret);
-	}
-
-	/* Step 2: Retrieve the VAP's installed GTK */
+	/* Step 1: Retrieve the VAP's installed GTK */
 	ret = ieee80211_extn_get_key_material(&sdata->vif,
 					      link_conf->link_id,
 					      NULL,
@@ -1354,7 +1486,7 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 		return;
 	}
 
-	/* Step 3: Install as pairwise key */
+	/* Step 2: Install as pairwise key */
 	if (WARN_ON_ONCE(!peer->peer_ucast_cipher)) {
 		memzero_explicit(key_buf, sizeof(key_buf));
 		return;
@@ -1376,7 +1508,7 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 		return;
 	}
 
-	/* Step 4: Authorize peer */
+	/* Step 3: Authorize peer */
 	ret = ieee80211_vendor_mesh_authorize_peer(wiphy, &sdata->vif, sta->sta.addr);
 	if (ret) {
 		pr_warn_ratelimited("managed_mesh_dbg install_peer_key: authorize failed for %pM (ret=%d)\n",
@@ -1411,9 +1543,6 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 
 	lockdep_assert_wiphy(local->hw.wiphy);
 
-	/* Install pairwise key and authorize peer if not yet done */
-	ieee80211_mesh_install_peer_key(wiphy, sta);
-
 	/* TODO: Currently only SLO support is enabled, link_sta extraction to be
 	 * updated when MLO support is enabled */
 	link_sta = &sta->deflink;
@@ -1425,11 +1554,14 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 	ret = drv_mesh_peer_update_caps_extn(local, sdata, sta, link_sta);
 	if (ret < 0) {
 		printk(KERN_ERR "Mesh peer update failed for peer AID %d\n", sta->sta.aid);
-		sta->sta.sta_extn.peer_info.intersect_failures++;
+		sta->sta.sta_extn.peer_info.cap_update_failures++;
 	} else {
 		sta->sta.sta_extn.peer_info.intersection_done = true;
 		sta->sta.sta_extn.peer_info.intersect_successes++;
 	}
+
+	/* Install PTK after the peer assoc; firmware peer entry has PMF enabled */
+	ieee80211_mesh_install_peer_key(wiphy, sta);
 }
 
 /**
@@ -1650,13 +1782,8 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 	lockdep_assert_wiphy(wiphy);
 
 	/* RSN/WPA security gating — must pass before capability intersection */
-	if (ieee80211_mesh_rsn_ie_check(sdata, link_conf, pubsta, elems, mgmt)) {
-		if (net_ratelimit())
-			sdata_info(sdata,
-				   "managed_mesh_dbg beacon: RSN IE check failed for peer %pM\n",
-				   mgmt->sa);
+	if (ieee80211_mesh_rsn_ie_check(sdata, link_conf, pubsta, elems, mgmt))
 		return -EACCES;
-	}
 	rsn_check_passed = true;
 
 	link_sta = &sta->deflink;
@@ -1667,7 +1794,7 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 
 	/* Validate basic requirements */
 	if (!elems->supp_rates) {
-		pubsta->sta_extn.peer_info.intersect_failures++;
+		pubsta->sta_extn.peer_info.cap_update_failures++;
 		return -EINVAL;
 	}
 
@@ -1731,8 +1858,9 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 		cap_changed = true;
 
 	/* Schedule update_cap_wk if capabilities changed, or if RSN check
-	 * passed and auto key-install is needed (skipped when
-	 * parse_beacon_install_key is set — consumer manages key install). */
+	 * passed and the peer still needs key install (secure BSS) or
+	 * authorization (open BSS) — skipped when parse_beacon_install_key
+	 * is set, since the consumer manages both in that mode. */
 	if (cap_changed || (rsn_check_passed &&
 			    !sta->sta.sta_extn.peer_info.parse_beacon_install_key &&
 			    !sta->sta.sta_extn.peer_info.key_installed))
@@ -1915,6 +2043,80 @@ caps_done:
  *
  * Returns true if the peer is rejected (caller should goto exit), false if OK.
  */
+
+/**
+ * ieee80211_mesh_rsn_locate_list - Navigate to a suite list within an RSN IE body.
+ * @rsn_body:     RSN IE body (starting at the version field)
+ * @rsn_body_len: Length of @rsn_body
+ * @list_index:   0 = pairwise cipher list, 1 = AKM suite list
+ * @count_out:    Returns the number of suites in the located list
+ *
+ * Returns a pointer to the first 4-byte suite entry in the requested list,
+ * or NULL if the IE is too short or malformed.
+ */
+static const u8 *
+ieee80211_mesh_rsn_locate_list(const u8 *rsn_body, u8 rsn_body_len,
+			       int list_index, u16 *count_out)
+{
+	const u8 *pos = rsn_body;
+	u16 ie_len = rsn_body_len;
+	u16 count;
+	int idx;
+
+	/* Skip RSN version (2) + group cipher (4) */
+	if (ie_len < RSN_VERSION_LEN + RSN_SUITE_LEN)
+		return NULL;
+	pos   += RSN_VERSION_LEN + RSN_SUITE_LEN;
+	ie_len -= RSN_VERSION_LEN + RSN_SUITE_LEN;
+
+	for (idx = 0; idx <= list_index; idx++) {
+		if (ie_len < RSN_SUITE_COUNT_LEN)
+			return NULL;
+		count  = get_unaligned_le16(pos);
+		pos   += RSN_SUITE_COUNT_LEN;
+		ie_len -= RSN_SUITE_COUNT_LEN;
+		if ((u32)count * RSN_SUITE_LEN > ie_len)
+			return NULL;
+		if (idx == list_index) {
+			*count_out = count;
+			return pos;
+		}
+		pos   += count * RSN_SUITE_LEN;
+		ie_len -= count * RSN_SUITE_LEN;
+	}
+	/* Unreachable: the loop always returns when idx == list_index. */
+	return NULL;
+}
+
+/**
+ * ieee80211_mesh_negotiate_suite - Select best common suite using local preference.
+ * @peer_list:  Peer's flat suite list (array of 4-byte OUI+type entries)
+ * @peer_count: Number of entries in @peer_list
+ * @local:      Local suites in preference order
+ * @n_local:    Number of valid entries in @local
+ *
+ * Iterates @local in preference order and returns the first suite the peer
+ * also supports.  Local preference order always wins — the peer's ordering
+ * is irrelevant.  Returns 0 if no common suite is found.
+ *
+ * Used for both pairwise cipher and AKM suite negotiation.
+ */
+static u32
+ieee80211_mesh_negotiate_suite(const u8 *peer_list, u16 peer_count,
+			       const u32 *local, u8 n_local)
+{
+	int local_idx, peer_idx;
+
+	for (local_idx = 0; local_idx < n_local; local_idx++) {
+		for (peer_idx = 0; peer_idx < peer_count; peer_idx++) {
+			if (get_unaligned_be32(peer_list + peer_idx * RSN_SUITE_LEN)
+			    == local[local_idx])
+				return local[local_idx];
+		}
+	}
+	return 0;
+}
+
 static bool
 ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 			    struct ieee80211_bss_conf *link_conf,
@@ -1925,26 +2127,13 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 	struct sta_info *sta_info = container_of(sta, struct sta_info, sta);
 	struct mesh_peer_info *peer = &sta_info->sta.sta_extn.peer_info;
 	struct mesh_bss_conf *mesh_caps = NULL;
+	const u8 *peer_suite_list;
 	u32 local_wpa_versions = 0;
+	u32 negotiated_cipher = 0;
+	u32 negotiated_akm = 0;
+	u16 peer_suite_count = 0;
 	bool local_requires_rsn, peer_has_rsn;
-	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
-	u16 deauth_reason = WLAN_REASON_INVALID_AKMP;
 
-	/* Suppress repeated deauth/work-queue on subsequent beacons after
-	 * a rejection — timeout_wk will delete the peer asynchronously. */
-	if (peer->peer_rejected)
-		return true;
-
-	/* Retrieve local VAP security policy saved at start_ap time.
-	 * Only log before key installation is complete — after that the
-	 * check runs silently on every beacon for re-validation. */
-	if (!peer->key_installed)
-		pr_debug_ratelimited("managed_mesh_dbg rsn_check: %s wpa_versions=0x%x peer=%pM\n",
-				     sdata->name,
-				     (link_conf->bss_conf_extn &&
-				      link_conf->bss_conf_extn->mesh_bss_caps.rsn_conf) ?
-				     link_conf->bss_conf_extn->mesh_bss_caps.rsn_conf->wpa_versions : 0,
-				     mgmt->sa);
 	if (link_conf->bss_conf_extn) {
 		mesh_caps = &link_conf->bss_conf_extn->mesh_bss_caps;
 		if (mesh_caps->rsn_conf)
@@ -1956,48 +2145,69 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 				(NL80211_WPA_VERSION_2 | NL80211_WPA_VERSION_3));
 	peer_has_rsn       = (elems->rsn != NULL);
 
-	/* Step 1: Presence gating */
-	if (local_requires_rsn && !peer_has_rsn) {
-		pr_warn_ratelimited("managed_mesh_dbg rsn_check: reject %pM — RSN required (wpa_versions=0x%x) "
-				     "but no RSN IE in peer beacon\n",
-				     mgmt->sa, local_wpa_versions);
-		deauth_reason = WLAN_REASON_INVALID_AKMP;
-		goto reject;
-	}
-	if (!local_requires_rsn && peer_has_rsn) {
-		pr_warn_ratelimited("managed_mesh_dbg rsn_check: reject %pM — unexpected RSN IE "
-				     "(local VAP is open)\n", mgmt->sa);
-		deauth_reason = WLAN_REASON_IE_DIFFERENT;
-		goto reject;
-	}
+	/* Step 1: Presence gating — RSN IE must be present on both sides or
+	 * absent on both sides; a mismatch means the security policies differ. */
 	if (!local_requires_rsn && !peer_has_rsn) {
 		/* Both open — clear any stale crypto state */
-		peer->peer_ucast_cipher = 0;
-		peer->peer_mcast_cipher = 0;
-		peer->peer_akm_suite    = 0;
-		peer->peer_wpa_versions = 0;
-		peer->peer_mfp_capable  = false;
-		peer->peer_mfp_required = false;
-		peer->peer_rsn_ie_len   = 0;
+		peer->peer_ucast_cipher  = 0;
+		peer->peer_mcast_cipher  = 0;
+		peer->peer_akm_suite     = 0;
+		peer->peer_wpa_versions  = 0;
+		peer->peer_mfp_capable   = false;
+		peer->peer_mfp_required  = false;
+		peer->peer_rsn_ie_len    = 0;
 		peer->peer_ht_restricted = false;
 		return false;
 	}
+	if (local_requires_rsn != peer_has_rsn)
+		goto reject;
 
 	/* Step 2: Parse peer RSN IE — log verbose only on first parse per peer */
 	if (ieee80211_mesh_parse_rsn_ie(elems->rsn, elems->rsn_len, peer,
 					!peer->intersection_done) < 0) {
-		pr_warn_ratelimited("managed_mesh_dbg rsn_check: reject %pM — malformed RSN IE\n", mgmt->sa);
-		deauth_reason = WLAN_REASON_INVALID_AKMP;
 		goto reject;
 	}
 
-	/* Step 3: PHY mode cipher checks */
+	/* Step 3: Validate peer cipher and AKM against local BSS policy.
+	 * For both, iterate local suites in preference order and select the
+	 * first one the peer also supports (local preference order wins).
+	 * This allows a peer that supports a superset (e.g. CCMP-256 + CCMP,
+	 * or PSK-SHA256 + PSK) to connect to a more constrained local BSS.
+	 */
+	if (mesh_caps && mesh_caps->rsn_conf) {
+		if (mesh_caps->rsn_conf->n_pairwise_ciphers > 0) {
+			peer_suite_list = ieee80211_mesh_rsn_locate_list(
+					elems->rsn, elems->rsn_len, 0,
+					&peer_suite_count);
+			negotiated_cipher = peer_suite_list ?
+				ieee80211_mesh_negotiate_suite(
+					peer_suite_list, peer_suite_count,
+					mesh_caps->rsn_conf->pairwise_ciphers,
+					mesh_caps->rsn_conf->n_pairwise_ciphers) : 0;
+			if (!negotiated_cipher)
+				goto reject;
+			peer->peer_ucast_cipher = negotiated_cipher;
+		}
+
+		if (mesh_caps->rsn_conf->n_akm_suites > 0) {
+			peer_suite_list = ieee80211_mesh_rsn_locate_list(
+					elems->rsn, elems->rsn_len, 1,
+					&peer_suite_count);
+			negotiated_akm = peer_suite_list ?
+				ieee80211_mesh_negotiate_suite(
+					peer_suite_list, peer_suite_count,
+					mesh_caps->rsn_conf->akm_suites,
+					mesh_caps->rsn_conf->n_akm_suites) : 0;
+			if (!negotiated_akm)
+				goto reject;
+			peer->peer_akm_suite = negotiated_akm;
+		}
+	}
+
+	/* Step 4: PHY mode cipher checks */
 	if (peer->peer_ucast_cipher == WLAN_CIPHER_SUITE_TKIP) {
 		if (elems->vht_cap_elem) {
 			/* TKIP is explicitly prohibited for VHT per 802.11ac §11.5.3 */
-			pr_warn_ratelimited("managed_mesh_dbg rsn_check: reject %pM — TKIP prohibited "
-					     "for VHT peers\n", mgmt->sa);
-			deauth_reason = WLAN_REASON_CIPHER_SUITE_REJECTED;
 			goto reject;
 		}
 		if (elems->ht_cap_elem) {
@@ -2009,41 +2219,38 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 		peer->peer_ht_restricted = false;
 	}
 
-	/* Step 4: MFP cross-check using RSN Capabilities pre-parsed at AP setup */
+	/* Step 5: MFP cross-check using RSN Capabilities pre-parsed at AP setup */
 	if (mesh_caps && mesh_caps->rsn_conf &&
 	    (mesh_caps->rsn_conf->rsn_caps & RSN_CAP_MFP_REQUIRED) &&
 	    !peer->peer_mfp_capable) {
-		pr_warn_ratelimited("managed_mesh_dbg rsn_check: reject %pM — MFP required "
-				    "but not supported by peer\n", mgmt->sa);
-		deauth_reason = WLAN_REASON_INVALID_AKMP;
 		goto reject;
 	}
 
-	/* Step 5: Save raw peer RSN IE body */
+	/* Step 6: Save raw peer RSN IE body */
 	if (elems->rsn_len <= (int)sizeof(peer->peer_rsn_ie)) {
 		memcpy(peer->peer_rsn_ie, elems->rsn, elems->rsn_len);
 		peer->peer_rsn_ie_len = elems->rsn_len;
 	}
 
-	/* Step 6: Key install is deferred to ieee80211_mesh_beacon_intersect
+	/* Set WLAN_STA_MFP once at RSN capability discovery so the subsequent
+	 * WMI peer assoc in update_cap_wk carries is_pmf_enabled=true before
+	 * the PTK is installed.
+	 */
+	if (peer->peer_mfp_capable && !test_sta_flag(sta_info, WLAN_STA_MFP)) {
+		sta_info->sta.mfp = true;
+		set_sta_flag(sta_info, WLAN_STA_MFP);
+	}
+
+	/* Step 7: Key install is deferred to ieee80211_mesh_beacon_intersect
 	 * which queues update_cap_wk after RSN check passes. */
 
 	return false;  /* All security checks passed */
 
 reject:
-	peer->peer_rejected = true;
-	/* Use link_conf->addr as BSSID — explicitly the per-link mesh BSS
-	 * address for both 11ax non-MLD and 11be MLD mesh BSS cases.
-	 * sdata drives the correct TX link via ieee80211_tx_skb. */
-	ieee80211_send_deauth_disassoc(sdata,
-				       mgmt->sa,
-				       link_conf->addr,
-				       IEEE80211_STYPE_DEAUTH,
-				       deauth_reason,
-				       true,
-				       frame_buf);
-	wiphy_work_queue(sdata->local->hw.wiphy,
-			 &sta_info->sta.sta_extn.timeout_wk);
+	/* Intersection failed — non-fatal.  Peer stays alive; intersection
+	 * is retried on the next beacon.  No deauth is sent here; the driver
+	 * only sends deauth when the host explicitly deletes the peer. */
+	peer->rsn_parse_failures++;
 	return true;
 }
 
@@ -2112,6 +2319,28 @@ ieee80211_process_mesh_peer_deauth_disassoc(struct ieee80211_rx_data *rx)
 	if (!sta || !sta->sta_extn.peer_info.is_mesh_peer) {
 		rcu_read_unlock();
 		return RX_DROP_MONITOR;
+	}
+
+	/* Populate rx->sta if absent (e.g. MLO link-steering) so the MFP
+	 * enforcement check below can evaluate the peer's WLAN_STA_MFP flag.
+	 */
+	if (!rx->sta) {
+		struct sta_info *si = container_of(sta, struct sta_info, sta);
+
+		rx->sta      = si;
+		rx->link_sta = &si->deflink;
+	}
+
+	/* Drop unprotected deauth/disassoc from an established MFP peer.
+	 * A unicast robust management frame must be protected when the peer
+	 * has WLAN_STA_MFP set; an unprotected frame indicates a spoofing
+	 * attempt and must be silently discarded.
+	 */
+	if (rx->sta &&
+	    test_sta_flag(rx->sta, WLAN_STA_MFP) &&
+	    !ieee80211_has_protected(mgmt->frame_control)) {
+		rcu_read_unlock();
+		return RX_DROP_U_UNPROT_UCAST_MGMT;
 	}
 
 	sdata_info(sdata, "RX %s from mesh peer %pM (reason: %d)\n",
@@ -2206,39 +2435,20 @@ ieee80211_process_mesh_peer_beacon(struct ieee80211_rx_data *rx)
 			goto exit;
 	}
 
-	/* Capture whether this is the first intersection before calling it,
-	 * since ieee80211_mesh_beacon_intersect sets intersection_done on success. */
-	bool first_intersection = !sta->sta_extn.peer_info.intersection_done;
-
 	ret = ieee80211_mesh_beacon_intersect(sdata, link_conf, sta, elems, mgmt, rx_status->band);
 
+	/* Update beacon reception timestamp on every received beacon regardless
+	 * of intersection result — prevents inactivity timeout from firing
+	 * while intersection is being retried on subsequent beacons. */
+	sta->sta_extn.peer_info.last_beacon_time = jiffies;
+
+	/* Count every full intersection attempt regardless of outcome. */
+	sta->sta_extn.peer_info.intersect_attempts++;
+
 	if (ret == 0) {
-		/* Update intersection attempts count */
-		sta->sta_extn.peer_info.intersect_attempts++;
-		/* Update beacon reception timestamp only on success — rejected
-		 * peers must not update it. */
-		sta->sta_extn.peer_info.last_beacon_time = jiffies;
 		/* Update checksum on success — reuses new_checksum computed above,
 		 * no second calculation needed. */
 		sta->sta_extn.peer_info.beacon_ie_checksum = new_checksum;
-
-		/* Authorize the peer directly after first successful intersection
-		 * ONLY for open BSS (peer_ucast_cipher == 0 — set by the "both open"
-		 * path in ieee80211_mesh_rsn_ie_check) in default auto-manage mode.
-		 * For secured BSS, update_cap_wk installs the key first and then
-		 * authorizes — authorizing here before the key is in place would be
-		 * incorrect. On re-intersections the peer is already authorized.
-		 * When parse_beacon_install_key = true, consumer manages auth. */
-		if (first_intersection &&
-		    !sta->sta_extn.peer_info.parse_beacon_install_key &&
-		    sta->sta_extn.peer_info.peer_ucast_cipher == 0) {
-			int auth_ret = ieee80211_vendor_mesh_authorize_peer(
-					sdata->local->hw.wiphy,
-					&sdata->vif, sta->addr);
-			if (auth_ret)
-				pr_warn_ratelimited("managed_mesh_dbg beacon: authorize failed for %pM after intersection (ret=%d)\n",
-						    sta->addr, auth_ret);
-		}
 	}
 
 exit:

@@ -68,7 +68,7 @@ void *ath12k_wifi6_dp_get_rx_desc(struct ath12k_dp *dp, u32 cookie)
 	else
 		rx_desc_pool = &dp_wifi6->rx_desc_buf;
 
-	if (unlikely(index > rx_desc_pool->pool_size))
+	if (unlikely(index >= rx_desc_pool->pool_size))
 		return NULL;
 
 	return &rx_desc_pool->mon_desc_pool[index];
@@ -87,8 +87,13 @@ u32 ath12k_wifi6_dp_get_rx_mon_err_dst_ring_size(struct ath12k_base *ab)
 }
 
 void ath12k_wifi6_dp_rx_ring_free(struct ath12k_base *ab);
-int ath12k_wifi6_dp_rx_ring_setup(struct ath12k_base *ab);
+void ath12k_wifi6_dp_rx_buf_free(struct ath12k_dp *dp);
+int ath12k_wifi6_dp_rx_ring_alloc(struct ath12k_base *ab);
+int ath12k_wifi6_dp_rx_ring_init(struct ath12k_base *ab);
 int ath12k_wifi6_dp_rxdma_buf_setup(struct ath12k_base *ab);
+int ath12k_wifi6_dp_rx_desc_pool_alloc(struct ath12k_dp *dp,
+				       struct ath12k_dp_rx_desc_pool *rx_desc_pool,
+				       u16 ring_size);
 int ath12k_wifi6_rx_desc_pool_init(struct ath12k_dp *dp,
 				   struct ath12k_dp_rx_desc_pool *rx_desc_pool,
 				   int mac_id, u16 ring_size);

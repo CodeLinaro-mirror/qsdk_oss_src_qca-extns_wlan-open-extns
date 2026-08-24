@@ -634,15 +634,6 @@ drop:
 	return;
 }
 
-
-static u32 ath12k_wifi8_dp_ipa_rx_default_routing(u32 reo_dest, struct ath12k_base *ab)
-{
-	if (dp_ipa_enable() && !ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_SFE_ENABLE))
-		return ATH12K_DP_WIFI8_REO2SW5_RDI;
-
-	return reo_dest;
-}
-
 static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.dp_srng_cleanup = ath12k_wifi8_dp_ipa_srng_cleanup,
 	.dp_srng_setup = ath12k_wifi8_dp_ipa_srng_setup,

@@ -322,7 +322,7 @@ struct ath12k_ipa_arch_ops {
 	int (*dp_srng_cleanup)(struct ath12k_base *ab);
 	int (*dp_srng_setup)(struct ath12k_base *ab);
 	void (*dp_srng_get_rsrc)(struct ath12k_base *ab);
-	u32 (*dp_rx_default_routing)(u32 reo_dest, struct ath12k_base *ab);
+	u32 (*dp_rx_default_routing)(u32 reo_dest);
 	int (*dp_rxdma_buf_setup)(struct ath12k_base *ab);
 	int (*dp_get_tx_bank_id)(struct ath12k_base *ab, u8 *bank_id);
 	int (*dp_rx_buf_smmu_map_unmap)(struct ath12k_base *ab, bool create);

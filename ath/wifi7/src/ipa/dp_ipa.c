@@ -405,7 +405,7 @@ static void ath12k_wifi7_dp_ipa_tx_comp_ring_init_hp(struct ath12k_ipa *ipa_ctx)
 		*wbm_srng->u.dst_ring.hp_addr = cached_hp;
 }
 
-static u32 ath12k_wifi7_dp_ipa_rx_default_routing(u32 reo_dest, struct ath12k_base *ab)
+static u32 ath12k_wifi7_dp_ipa_rx_default_routing(u32 reo_dest)
 {
 	if (dp_ipa_enable())
 		return ATH12K_IPA_REO_DST_RING+1;

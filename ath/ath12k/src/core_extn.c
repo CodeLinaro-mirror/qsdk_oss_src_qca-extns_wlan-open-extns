@@ -1671,6 +1671,25 @@ int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
 				      pos, end - pos) ? 1 : 0;
 }
 
+#define ATH12K_RRM_MEASURE_TYPE_BEACON 5
+
+bool ath12k_is_beacon_report_elem(u8 action_code, const u8 *buf, const u8 *end)
+{
+	if (action_code != WLAN_ACTION_RADIO_MSR_RM_REP)
+		return false;
+
+	if (buf + 5 > end)
+		return false;
+
+	if (buf[0] != WLAN_EID_MEASURE_REPORT)
+		return false;
+
+	if (buf[1] < 3)
+		return false;
+
+	return buf[4] == ATH12K_RRM_MEASURE_TYPE_BEACON;
+}
+
 /**
  * ath12k_control_beaconing_bootup_cac_check_extn - Check boot-up CAC state
  * and defer vdev_up if DFS CAC is still in progress.

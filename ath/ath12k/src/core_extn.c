@@ -1009,6 +1009,18 @@ void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
 		ath12k_cbs_deinit(ar);
 }
 
+void ath12k_mgmt_stats_scan_radio_tx_reset(struct ath12k_vif *ahvif)
+{
+	struct ath12k_mgmt_frame_stats *stats = &ahvif->mgmt_stats;
+
+	stats->tx_cmpl_succ_pkts = 0;
+	stats->tx_cmpl_succ_bytes = 0;
+	stats->tx_cmpl_retry_pkts = 0;
+	stats->tx_cmpl_retry_bytes = 0;
+	stats->tx_cmpl_err_pkts = 0;
+	stats->tx_cmpl_err_bytes = 0;
+}
+
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb)
 {

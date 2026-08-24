@@ -874,7 +874,7 @@
 	ATH12K_CFG_VALUE_OR_DEFAULT, "mon num ppdu desc")
 
 #define ATH12K_INI_DP_IPA_SFE_ENABLE \
-	ATH12K_CFG_INI_BOOL("dp_ipa_sfe_enable", true, \
+	ATH12K_CFG_INI_BOOL("dp_ipa_sfe_enable", false, \
 	"enable Shortcut Forwarding Engine (SFE) for IPA data path")
 
 #define ATH12K_CFG_REP_UL_RESP \

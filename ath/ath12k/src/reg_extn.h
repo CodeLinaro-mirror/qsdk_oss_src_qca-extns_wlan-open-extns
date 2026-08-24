@@ -151,4 +151,15 @@ struct ath12k_hw_blocklist_update {
 	u32 num_chans;
 	struct ath12k_hw_blocklist_chan_info *chans;
 };
+
+/**
+ * enum reg_unii_band
+ * @REG_UNII_BAND_1: Disable UNII-1 band channels
+ * @REG_UNII_BAND_2A: Disable UNII-2A band channels
+ */
+enum reg_unii_band {
+	REG_UNII_BAND_1 = 0x0,
+	REG_UNII_BAND_2A = 0x1,
+};
+
 #endif /* REG_EXTN_H */

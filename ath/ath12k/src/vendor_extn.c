@@ -24,6 +24,7 @@
 #include "ath12k_cmn_extn.h"
 #include "vendor_extn.h"
 #include "../net/wireless/core.h"
+#include "../net/wireless/nl80211.h"
 #include "../debug.h"
 #include "../mac.h"
 #include "esp_extn.h"
@@ -2363,6 +2364,202 @@ static void ath12k_vendor_notify_reg_change_extn(struct wiphy *wiphy,
 static void ath12k_vendor_chan144_notify_reg_change(struct wiphy *wiphy)
 {
 	ath12k_vendor_notify_reg_change_extn(wiphy, "CHAN144");
+}
+
+static bool reg_is_reg_unii_band_1_set(uint8_t unii_bitmap)
+{
+	return !!(unii_bitmap & BIT(REG_UNII_BAND_1));
+}
+
+static bool reg_is_reg_unii_band_2a_set(uint8_t unii_bitmap)
+{
+	return !!(unii_bitmap & BIT(REG_UNII_BAND_2A));
+}
+
+static bool is_chan_present_in_regd(struct ieee80211_channel *chan,
+				    const struct ieee80211_regdomain *regd)
+{
+	u32 center_freq_khz = ieee80211_channel_to_khz(chan);
+	const struct ieee80211_reg_rule *reg_rule;
+
+	reg_rule = freq_reg_info_regd(center_freq_khz, regd, MHZ_TO_KHZ(20), 0);
+	if (!IS_ERR(reg_rule))
+		return true;
+
+	ath12k_dbg(NULL, ATH12K_DBG_REG,
+		   "chan_coex_disable: %d MHz not found in regd\n",
+		   chan->center_freq);
+	return false;
+}
+
+static inline bool ath12k_is_chan_dfs_and_not_in_NOL(struct ieee80211_channel *chan)
+{
+	return (chan->flags & IEEE80211_CHAN_RADAR) &&
+	       (chan->dfs_state != NL80211_DFS_UNAVAILABLE);
+}
+
+static void ath12k_vendor_coex_apply_band(struct wiphy *wiphy,
+					  const u16 *freqs, int nfreqs,
+					  bool is_disable,
+					  const struct ieee80211_regdomain *regd)
+{
+	int i;
+
+	for (i = 0; i < nfreqs; i++) {
+		struct ieee80211_channel *chan;
+
+		chan = ieee80211_get_channel(wiphy, freqs[i]);
+		if (!chan) {
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "chan_coex_disable: %d MHz not found in wiphy\n",
+				   freqs[i]);
+			continue;
+		}
+
+		if (is_disable) {
+			chan->flags |= IEEE80211_CHAN_DISABLED;
+			if (ath12k_is_chan_dfs_and_not_in_NOL(chan))
+				chan->dfs_state = NL80211_DFS_USABLE;
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "chan_coex_disable: disabled %d MHz\n",
+				   chan->center_freq);
+		} else if (is_chan_present_in_regd(chan, regd)) {
+			chan->flags &= ~IEEE80211_CHAN_DISABLED;
+			if (ath12k_is_chan_dfs_and_not_in_NOL(chan))
+				chan->dfs_state = NL80211_DFS_USABLE;
+			ath12k_dbg(NULL, ATH12K_DBG_REG,
+				   "chan_coex_disable: enabled %d MHz\n",
+				   chan->center_freq);
+		}
+	}
+}
+
+/**
+ * ath12k_vendor_coex_validate_radio() - validate radio for chan_coex_disable
+ * @ar: ath12k radio instance to validate
+ *
+ * Checks that @ar is a 5 GHz radio (WMI_HOST_WLAN_5GHZ_CAP set) and that
+ * its hal_reg_cap frequency range covers at least part of the UNII-1 or
+ * UNII-2A bands.
+ *
+ * Return: 0 on success, -EOPNOTSUPP otherwise.
+ */
+static int ath12k_vendor_coex_validate_radio(struct ath12k *ar)
+{
+	struct ath12k_wmi_hal_reg_capabilities_ext_arg *reg_cap;
+	u8 phy_id;
+
+	if (!(ar->pdev->cap.supported_bands & WMI_HOST_WLAN_5GHZ_CAP)) {
+		ath12k_dbg(NULL, ATH12K_DBG_REG,
+			   "chan_coex_disable: Radio %u is not a 5 GHz radio\n",
+			   ar->pdev_idx);
+		return -EOPNOTSUPP;
+	}
+
+	phy_id = ar->ab->hw_params->single_pdev_only ?
+		 ar->pdev->cap.band[WMI_HOST_WLAN_5GHZ_CAP].phy_id :
+		 ar->pdev_idx;
+
+	reg_cap = &ar->ab->hal_reg_cap[phy_id];
+	if (reg_cap->low_5ghz_chan > ATH12K_MIN_5G_HIGH_BAND_FREQ &&
+	    reg_cap->high_5ghz_chan < ATH12K_5GHZ_MAX_CENTER) {
+		ath12k_dbg(NULL, ATH12K_DBG_REG,
+			   "chan_coex_disable: Radio %u does not cover UNII-1/2A\n",
+			   ar->pdev_idx);
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_coex_apply_mask() - update channel flags for UNII-1/2A
+ * @wiphy: wiphy whose channel list to update
+ * @coex_mask: bitmask selecting bands to disable — bit 0 set means UNII-1
+ *             (5180–5240 MHz) disabled; bit 1 set means UNII-2A (5260–5320 MHz)
+ *             disabled.  A value of 0 restores both bands.
+ * @regd: current regulatory domain used to gate re-enabling channels
+ *
+ * Updates IEEE80211_CHAN_DISABLED on the affected channels.  Re-enable is
+ * gated on is_chan_present_in_regd() so a channel that is prohibited by the
+ * current regulatory domain is never re-enabled.  UNII-2A channels that are
+ * on the NOL (dfs_state == NL80211_DFS_UNAVAILABLE) are skipped in both
+ * directions.
+ */
+static void ath12k_vendor_coex_apply_mask(struct wiphy *wiphy, u8 coex_mask,
+					  const struct ieee80211_regdomain *regd)
+{
+	static const u16 unii1_freqs[]  = {5180, 5200, 5220, 5240};
+	static const u16 unii2a_freqs[] = {5260, 5280, 5300, 5320};
+	bool dis1  = reg_is_reg_unii_band_1_set(coex_mask);
+	bool dis2a = reg_is_reg_unii_band_2a_set(coex_mask);
+
+	ath12k_vendor_coex_apply_band(wiphy, unii1_freqs,
+				      ARRAY_SIZE(unii1_freqs),
+				      dis1, regd);
+	ath12k_vendor_coex_apply_band(wiphy, unii2a_freqs,
+				      ARRAY_SIZE(unii2a_freqs),
+				      dis2a, regd);
+}
+
+/**
+ * ath12k_vendor_coex_notify_chan_update() - notify cfg80211 of channel change
+ * @wiphy: wiphy whose channel list was modified
+ *
+ * Notifies the driver's regulatory notifier (if WIPHY_FLAG_NOTIFY_REGDOM_BY_DRIVER
+ * is set) and multicasts an NL80211_CMD_WIPHY_REG_CHANGE event to userspace.
+ *
+ * Safe to call with wiphy_lock held and RTNL not held.  nl80211_wiphy_reg_change_event()
+ * takes the wiphy pointer directly, bypassing wiphy_idx_to_wiphy() which
+ * carries ASSERT_RTNL(), so there is no risk of an AB-BA deadlock.
+ */
+static void ath12k_vendor_coex_notify_chan_update(struct wiphy *wiphy)
+{
+	const struct ieee80211_regdomain *regd;
+	struct regulatory_request request = {};
+
+	regd = get_wiphy_regdom(wiphy);
+	if (!regd)
+		return;
+
+	cfg80211_init_reg_request(&request, wiphy, regd->alpha2);
+
+	if (wiphy->flags & WIPHY_FLAG_NOTIFY_REGDOM_BY_DRIVER)
+		reg_call_notifier(wiphy, &request);
+
+	nl80211_wiphy_reg_change_event(wiphy, &request);
+}
+
+static int ath12k_vendor_set_chan_coex_disable(struct ath12k *ar, u8 coex_mask)
+{
+	struct wiphy *wiphy = ath12k_ar_to_hw(ar)->wiphy;
+	const struct ieee80211_regdomain *regd;
+	int ret;
+
+	ret = ath12k_vendor_coex_validate_radio(ar);
+	if (ret != 0) {
+		ath12k_err(NULL, "chan_coex_disable: Radio validation failed\n");
+		return ret;
+	}
+
+	if (ar->chan_coex_disable_mask == coex_mask) {
+		ath12k_dbg(NULL, ATH12K_DBG_REG,
+			   "chan_coex_disable: mask unchanged (0x%x), skipping\n",
+			   coex_mask);
+		return 0;
+	}
+
+	regd = ath12k_get_current_regd(ar);
+	if (!regd) {
+		ath12k_err(NULL, "chan_coex_disable: regd not available\n");
+		return -EINVAL;
+	}
+
+	ath12k_vendor_coex_apply_mask(wiphy, coex_mask, regd);
+	ar->chan_coex_disable_mask = coex_mask;
+	ath12k_vendor_coex_notify_chan_update(wiphy);
+
+	return 0;
 }
 
 static int ath12k_vendor_chan144_apply(struct ath12k *ar, u8 enable)
@@ -6330,6 +6527,9 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_CHAN_144:
 		ret = ath12k_vendor_chan144_apply(ar, value);
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_CHAN_COEX_DISABLE:
+		ret = ath12k_vendor_set_chan_coex_disable(ar, (u8)value);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_TO_REO_DEST:
 		if (value < ATH12K_REO2SW0_RING || value > ATH12K_REO_RELEASE_RING) {
@@ -12857,6 +13057,10 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 	case QCA_WLAN_VENDOR_RADIO_PARAM_EN_CHAN_144:
 		ret = ath12k_vendor_get_en_chan144(ar, value);
 		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_CHAN_COEX_DISABLE:
+		*value = ar->chan_coex_disable_mask;
+		ret = 0;
+		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_PDEV_TO_REO_DEST:
                 *value = ar->radio_cfg.pdev_to_reo_dest;
                 ret = 0;
@@ -13503,7 +13707,6 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 		dp_vif = &ahvif->dp_vif;
 		dp_vif->dp_extn.allow_3addr_mc = !!allow_3addr_mc;
 	}
-
 
 	return 0;
 }

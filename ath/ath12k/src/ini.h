@@ -382,6 +382,7 @@
 	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
 	ATH12K_CFG(ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY) \
 	ATH12K_CFG(ATH12K_CFG_PARALLEL_HW_SCAN) \
+	ATH12K_CFG(ATH12K_CFG_CRASH_ON_UMCMN_FATAL) \
 	ATH12K_CFG(ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE) \
 
 #define ATH12K_CFG_REG \
@@ -523,6 +524,10 @@
 #define ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY \
 	ATH12K_CFG_INI_BOOL("mlo_force_mode2_recovery", true, \
 	"Force Mode2 MLO recovery, skip Mode3 even if FW supports it")
+
+#define ATH12K_CFG_CRASH_ON_UMCMN_FATAL \
+	ATH12K_CFG_INI_BOOL("crash_on_umcmn_fatal", false, \
+	"Indicate to crash/recover the system on umcmn fatal interrupt")
 
 /**
  * ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE - Reset Scan Radio special-VAP

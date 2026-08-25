@@ -66,6 +66,7 @@ static inline uint32_t qca_wifi_nss_plugins_emesh_ecm_valid_to_wifi_valid(uint32
 static inline uint32_t qca_wifi_nss_plugins_emesh_sawf_get_mark_data(struct ecm_classifier_emesh_sawf_flow_info *sawf_flow_info)
 {
 	struct ath_dp_metadata_param metadata = {0};
+	uint32_t result;
 
 	metadata.is_sawf_param_valid = 1;
 	metadata.sawf_param.netdev = sawf_flow_info->netdev;
@@ -86,7 +87,11 @@ static inline uint32_t qca_wifi_nss_plugins_emesh_sawf_get_mark_data(struct ecm_
 			     metadata.sawf_param.rule_id, metadata.sawf_param.valid_flag, metadata.sawf_param.mcast_flag,
 			     metadata.sawf_param.netdev->name, metadata.sawf_param.peer_mac);
 
-	return ath_get_metadata_info(&metadata);
+	result = ath_get_metadata_info(&metadata);
+
+	sawf_flow_info->out_wifi_arch_info = metadata.out_wifi_arch_info;
+
+	return result;
 }
 
 /*

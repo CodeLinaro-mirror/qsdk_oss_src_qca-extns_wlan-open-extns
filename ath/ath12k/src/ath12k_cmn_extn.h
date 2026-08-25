@@ -778,6 +778,11 @@ ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab)
 {
 }
 
+static inline void
+ath12k_core_nol_extn_regdom_change_radio_locked(struct ath12k *ar)
+{
+}
+
 static inline int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 {
 	return -1;
@@ -1329,6 +1334,7 @@ void ath12k_core_nol_extn_auto_dump_radio_locked(struct ath12k *ar,
 void ath12k_core_nol_extn_auto_restore_radio_locked(struct ath12k *ar,
 						     u8 radio_idx);
 void ath12k_core_nol_extn_auto_restore_all_radios(struct ath12k_base *ab);
+void ath12k_core_nol_extn_regdom_change_radio_locked(struct ath12k *ar);
 
 
 void ath12k_sysfs_init_extn(struct ath12k *ar);

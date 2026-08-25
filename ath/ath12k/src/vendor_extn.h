@@ -48,7 +48,8 @@ struct ath12k_vendor_nol_bin_hdr {
 	__le32 nop_ms;
 	__le64 dump_time_real_ns;
 	__le32 entry_count;
-	__le32 reserved;
+	u8 alpha2[2];
+	u8 reserved[2];
 } __packed;
 
 struct ath12k_vendor_nol_bin_entry {

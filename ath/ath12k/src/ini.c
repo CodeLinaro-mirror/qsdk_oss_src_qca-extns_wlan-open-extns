@@ -726,6 +726,11 @@ void ath12k_ini_override_runtime_params(struct ath12k_base *ab)
 	ab->mem_params.dp_params.tx_compl_ring_size[2] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_2);
 	ab->mem_params.dp_params.tx_compl_ring_size[3] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_3);
 	ab->mem_params.dp_params.tx_compl_ring_size[4] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_COMPL_RING_SIZE_4);
+	ab->mem_params.dp_params.tx_desc_count[0] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_DESC_COUNT_0);
+	ab->mem_params.dp_params.tx_desc_count[1] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_DESC_COUNT_1);
+	ab->mem_params.dp_params.tx_desc_count[2] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_DESC_COUNT_2);
+	ab->mem_params.dp_params.tx_desc_count[3] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_DESC_COUNT_3);
+	ab->mem_params.dp_params.tx_desc_count[4] = ath12k_cfg_get(ab, ATH12K_INI_DP_TX_DESC_COUNT_4);
 	ab->mem_params.dp_params.ppe_wbm2sw_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_PPE_WBM2SW_RING_SIZE);
 	ab->mem_params.dp_params.tqm2ppe_ring_size = ath12k_cfg_get(ab, ATH12K_INI_DP_TQM2PPE_RING_SIZE);
 	ab->mem_params.dp_params.rx_desc_count = ath12k_cfg_get(ab, ATH12K_INI_DP_RX_DESC_COUNT);

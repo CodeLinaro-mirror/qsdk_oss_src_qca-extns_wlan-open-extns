@@ -91,6 +91,28 @@ enum ath12k_vendor_ul_fixed_rate_mode {
 	ATH12K_VENDOR_UL_FIXED_RATE_EHT = 1,
 };
 
+enum qca_wlan_vendor_lowi_cmd_type {
+	/* Commands: userspace → kernel */
+	QCA_LOWI_CMD_RTT_REGISTER         = 108,
+	QCA_LOWI_CMD_RTT_START            = 109,
+	QCA_LOWI_CMD_RTT_CANCEL           = 110,
+	QCA_LOWI_CMD_CHANNEL_INFO         = 111,
+	QCA_LOWI_CMD_CAPABILITIES         = 112,
+	QCA_LOWI_CMD_AVAIL_CH             = 113,
+	QCA_LOWI_CMD_CONFIG_LCI           = 114,
+
+	/* Events: kernel → userspace */
+	QCA_LOWI_EVT_MEAS_RESULT          = 200,
+	QCA_LOWI_EVT_ERROR                = 201,
+	QCA_LOWI_EVT_CHANNEL_INFO_RSP     = 202,
+	QCA_LOWI_EVT_CAPS_RSP             = 203,
+	QCA_LOWI_EVT_REG_RSP              = 204,
+	QCA_LOWI_EVT_SESSION_DONE         = 205,
+	QCA_LOWI_EVT_RESPONDER_CH_INFO    = 206,
+	QCA_LOWI_EVT_CFG_RESP_MEAS_RSP    = 207,
+	QCA_LOWI_EVT_RESP_MEAS_INFO       = 208,
+};
+
 #define ATH12K_VENDOR_FIXED_RATE_HT_MCS_BIT			BIT(7)
 #define ATH12K_VENDOR_FIXED_RATE_HT_NSS_MASK			GENMASK(6, 3)
 #define ATH12K_VENDOR_FIXED_RATE_HT_NSS_SHIFT			3

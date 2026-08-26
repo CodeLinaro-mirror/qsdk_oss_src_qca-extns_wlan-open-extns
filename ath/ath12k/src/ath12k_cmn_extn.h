@@ -127,6 +127,7 @@ struct ath12k_link_vif_extn {
 	 */
 	bool vht_mcs10_11_supp;
 	bool vht_mcs10_11_nq2q_peer_supp;
+	bool rtt_initiator_role;
 };
 
 struct sta_240mhz_info {
@@ -404,6 +405,9 @@ struct ath12k_extn {
 	struct ath12k_cbs cbs;
 
 	u8 scan_blanking_mode;
+
+	/* serialises WMI OEM cmd -> response */
+	struct completion lowi_oem_done;
 };
 
 /**
@@ -1115,6 +1119,16 @@ ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
 					       struct ieee80211_bss_conf *link_conf)
 {
 	return false;
+}
+
+static inline int
+ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
+				 struct wireless_dev *wdev,
+				 struct ieee80211_hw *hw,
+				 struct ath12k_hw *ah,
+				 struct nlattr **tb)
+{
+	return -1;
 }
 #else
 
@@ -1888,5 +1902,28 @@ void ath12k_peer_assoc_h_he_cap_internal_extn(struct ath12k *ar,
 void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
 					   struct wmi_vdev_ratemask_arg *arg);
 
+/**
+ * ath12k_vendor_oem_data_lowi_extn() - Handle LOWI OEM data vendor commands
+ * @wiphy: wiphy on which the OEM data vendor command was received
+ * @wdev: wireless_dev the command targets, may be NULL if the caller expects
+ *        it to be resolved from @tb's IFINDEX attribute
+ * @hw: ieee80211_hw instance backing @wdev
+ * @ah: ath12k_hw instance backing @hw
+ * @tb: parsed OEM data vendor attributes (QCA_WLAN_VENDOR_ATTR_OEM_DATA_*)
+ *
+ * Resolves @wdev from the IFINDEX attribute when not already known, decodes
+ * the LOWI command/event type, MLO link ID and radio index carried in @tb,
+ * and dispatches RTT_REGISTER/START/CANCEL, CHANNEL_INFO, CAPABILITIES,
+ * AVAIL_CH and CONFIG_LCI requests from the userspace lowi-server to the
+ * corresponding ranging handler.
+ *
+ * Return: 0 or a negative error code on success/failure. Returns -EAGAIN if
+ * tb[QCA_WLAN_VENDOR_ATTR_OEM_DATA_CMD_TYPE] is absent, signalling the
+ * caller to fall through to the legacy Energy Service OEM-data path.
+ */
+int ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     struct ieee80211_hw *hw,
+				     struct ath12k_hw *ah, struct nlattr **tb);
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

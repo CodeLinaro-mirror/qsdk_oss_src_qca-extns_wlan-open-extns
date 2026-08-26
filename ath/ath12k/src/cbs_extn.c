@@ -969,3 +969,46 @@ out_free:
 	kfree(scan_arg);
 	return ret;
 }
+
+void ath12k_cbs_recovery_handler(struct ath12k *ar)
+{
+	struct ath12k_cbs *cbs = &ar->ar_extn.cbs;
+
+	if (!cbs->cbs_enable || !cbs->arvif || cbs->state == ATH12K_CBS_STATE_INIT)
+		return;
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_SCAN,
+		   "CBS: recovery_handler: state=%s chan_list_idx=%u/%u is_up=%d\n",
+		   ath12k_cbs_state_str(cbs->state), cbs->chan_list_idx,
+		   cbs->nchans, cbs->arvif->is_up);
+
+	/* The scan/timer submitted to the previous FW instance is gone;
+	 * the WMI scan event that would have driven the state machine
+	 * forward will never arrive.
+	 */
+	del_timer_sync(&cbs->timer);
+	spin_lock_bh(&cbs->lock);
+	cbs->pending_event = 0;
+	spin_unlock_bh(&cbs->lock);
+
+	/* If the link CBS was running on didn't come back up after
+	 * recovery, there is nothing to resume onto - reset CBS instead.
+	 */
+	if (!cbs->arvif->is_up) {
+		ath12k_cbs_stop(ar);
+		return;
+	}
+
+	cbs->ar = ar;
+	cbs->scan_id = ATH12K_CBS_SCAN_ID;
+
+	/* Restart the full scan cycle from channel 0.  Resuming from
+	 * chan_list_idx would produce a partial ACS report (channels
+	 * before the SSR point were never scanned by the new FW instance).
+	 * SCAN_START resets chan_list_idx, dwell_split_cnt and
+	 * scan_offset_idx via the event handler, so do not preset them here.
+	 */
+	ath12k_cbs_set_state(cbs, ATH12K_CBS_STATE_INIT);
+	ath12k_cbs_post_event(cbs, ATH12K_CBS_EVENT_SCAN_START);
+}
+EXPORT_SYMBOL_GPL(ath12k_cbs_recovery_handler);

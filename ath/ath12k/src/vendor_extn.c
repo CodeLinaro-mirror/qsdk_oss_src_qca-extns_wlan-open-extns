@@ -13386,13 +13386,24 @@ void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 		goto out;
 	}
 
-	if (cbs->chan_list[cbs->nchans - 1] ==
-	    le32_to_cpu(scan_ev->channel_freq))
+	/* WMI scan_id is a single value shared across all radios, so
+	 * scan_ev->channel_freq can reflect a scan submitted by a
+	 * different pdev's CBS instance rather than this one. Use the
+	 * driver's own chan_list_idx, maintained by the CBS state
+	 * machine for this ar, instead of trusting the FW-echoed freq.
+	 */
+	if (cbs->chan_list_idx >= cbs->nchans) {
+		spin_unlock_bh(&ar->data_lock);
+		goto out;
+	}
+
+	scan_complete_freq = cbs->chan_list[cbs->chan_list_idx];
+
+	if (cbs->chan_list_idx == cbs->nchans - 1)
 		scan_complete = VENDOR_SCAN_STATUS_NEW_RESULTS;
 	else
 		scan_complete = VENDOR_SPLIT_SCAN_COMPLETE_PER_CHANNEL;
 
-	scan_complete_freq = le32_to_cpu(scan_ev->channel_freq);;
 	wdev = NULL;
 	list_for_each_entry(arvif, &ar->arvifs, list) {
 		if (!arvif->ahvif || !arvif->ahvif->vif)
@@ -13463,6 +13474,7 @@ fail:
 out:
 	rcu_read_unlock();
 }
+
 
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev)

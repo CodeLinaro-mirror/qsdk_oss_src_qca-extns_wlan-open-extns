@@ -1217,6 +1217,8 @@ void ath12k_extn_reconfig_extn_params(struct ath12k *ar)
 	ath12k_reconfig_esp_params_extn(ar);
 
 	ath12k_smart_ant_api_recovery_handler(ar);
+
+	ath12k_cbs_recovery_handler(ar);
 }
 
 static bool ath12k_core_nol_extn_auto_enabled(struct ath12k_base *ab)

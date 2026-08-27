@@ -156,7 +156,13 @@ static int sa_test_init(struct ath12k_sa_config *cfg, int new_init)
 
 static int sa_test_deinit(u8 radio_id)
 {
-	struct radio_config *radio = &g_sa.radio[radio_id];
+	struct radio_config *radio;
+
+	if (radio_id >= SA_MAX_RADIOS) {
+		SA_DEBUG_PRINT(0, 0, "Invalid Radio ID %u", radio_id);
+		return -1;
+	}
+	radio = &g_sa.radio[radio_id];
 
 	radio->init_done = 0;
 	SA_DEBUG_PRINT(SA_DEBUG_LVL1, radio_id, " RadioId: %d\n", radio_id);
@@ -271,13 +277,19 @@ static int sa_test_peer_connect(void **ccp, struct ath12k_sa_node_info *node_inf
 		SA_DEBUG_PRINT(SA_DEBUG_LVL1, node->node_info.radio_id,
 			       "Called with non NULL ccp\n");
 	}
+	if (node_info->radio_id >= SA_MAX_RADIOS) {
+		kfree(node);
+		*ccp = NULL;
+		return -EINVAL;
+	}
 	memcpy(&node->node_info, node_info, sizeof(*node_info));
 	radio = &g_sa.radio[node->node_info.radio_id];
 
 	sa_node_init(node);
 
 	radio->nodes_connected++;
-	radio->node_count_per_ant[node->train_info.previous_selected_antenna]++;
+	if (node->train_info.previous_selected_antenna < SA_ANTENNA_COMBINATIONS)
+		radio->node_count_per_ant[node->train_info.previous_selected_antenna]++;
 	SA_DEBUG_PRINT(SA_DEBUG_LVL2, node->node_info.radio_id,
 		"Mac: %pM RadioId: %d max bw: %d NSS(TX,RX): (%d,%d) opmode: %d "
 		"channel: %d band: %d\n", node_info->mac_addr, node_info->radio_id,
@@ -382,10 +394,12 @@ static int sa_test_get_txantenna(void *ccp, u32 *antenna_array)
 {
 	int i;
 	struct sa_node_ccp *node = ccp;
-	struct sa_node_train_info *train_info = &node->train_info;
+	struct sa_node_train_info *train_info;
 
-	if (!antenna_array)
+	if (!node || !antenna_array)
 		return -1;
+
+	train_info = &node->train_info;
 
 	for (i = 0; i < SA_MAX_SA_CHAINS; i++)
 		antenna_array[i] = train_info->selected_antenna;
@@ -395,10 +409,12 @@ static int sa_test_get_txantenna(void *ccp, u32 *antenna_array)
 
 static int sa_test_get_txdefaultantenna(u8 radio_id, u32 *antenna)
 {
-	struct radio_config *radio = &g_sa.radio[radio_id];
+	struct radio_config *radio;
 
-	if (!antenna)
+	if (!antenna || radio_id >= SA_MAX_RADIOS)
 		return -1;
+
+	radio = &g_sa.radio[radio_id];
 
 	if (radio->init_done)
 		*antenna = radio->sa_params.default_tx_antenna;
@@ -410,7 +426,7 @@ static int sa_test_get_txdefaultantenna(u8 radio_id, u32 *antenna)
 
 static int sa_test_get_rxantenna(u8 radio_id, u32 *rx_antenna)
 {
-	if (!rx_antenna)
+	if (!rx_antenna || radio_id >= SA_MAX_RADIOS)
 		return -1;
 
 	*rx_antenna = g_sa.radio[radio_id].default_antenna;
@@ -448,7 +464,7 @@ static int sa_test_get_traininginfo(void *ccp, u32 *rate_array, u32 *antenna_arr
 
 static int sa_test_get_bcn_txantenna(u8 radio_id, u32 *bcn_txantenna)
 {
-	if (!bcn_txantenna)
+	if (!bcn_txantenna || radio_id >= SA_MAX_RADIOS)
 		return -1;
 
 	*bcn_txantenna = g_sa.radio[radio_id].bcn_antenna;
@@ -662,6 +678,8 @@ static int sa_test_set_param(struct ath12k_sa_config_params *params)
 						SA_TX_CONFIG_REQUIRED;
 			retval |= SA_TX_CONFIG_REQUIRED;
 		} else {
+			if (params->param_value >= SA_ANTENNA_COMBINATIONS)
+				return -1;
 			sa_params->default_tx_antenna = params->param_value;
 			if (radio->nodes_connected ==
 			    radio->node_count_per_ant[params->param_value]) {
@@ -1010,6 +1028,8 @@ static int sa_test_get_param(struct ath12k_sa_config_params *params)
 			SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
 				       "%s: nodes connected %d\n", __func__,
 				       radio->nodes_connected);
+			if (sa_params->num_tx_antennas > SA_ANTENNA_COMBINATIONS)
+				return -1;
 			for (i = 0; i < sa_params->num_tx_antennas; i++)
 				SA_DEBUG_PRINT(SA_DEBUG_LVL1, params->radio_id,
 					      "    ant %d, nodes %d\n", i,

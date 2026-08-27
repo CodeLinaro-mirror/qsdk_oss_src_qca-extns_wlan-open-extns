@@ -1123,10 +1123,19 @@ static int sa_core_get_tx_user_stats(struct ath12k_base *ab,
 	else
 		rate_flag = stats->rate.rate_flags;
 	bw = HTT_USR_RATE_BW(rate_flag);
-	if (bw == HTT_PPDU_STATS_BANDWIDTH_320MHZ)
+	if (bw == HTT_PPDU_STATS_BANDWIDTH_320MHZ) {
 		bw -= 3;
-	else
+	} else {
+		if (bw < 2) {
+			ath12k_err(ab, "Unexpected bandwidth value %u\n", bw);
+			return -1;
+		}
 		bw -= 2;
+	}
+	if (bw >= SA_MAX_RETRIES_INDEX) {
+		ath12k_err(ab, "rate_index %u out of range\n", bw);
+		return -1;
+	}
 	tx.rate_index = bw;
 	preamble = HTT_USR_RATE_PREAMBLE(rate_flag);
 	mcs = HTT_USR_RATE_MCS(rate_flag);

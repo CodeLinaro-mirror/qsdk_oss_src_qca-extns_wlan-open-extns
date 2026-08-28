@@ -198,17 +198,18 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 	if (ar->ah && ar->ah->hw && ar->ah->hw->wiphy)
 		wdev = ieee80211_vif_to_wdev(vif);
 
-	/* Send event to userspace if we have a valid wdev */
-	if (wdev) {
-		if (atomic_dec_and_test(&raw_pkt_ctx->num_cmpl_pending)) {
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "all packets completed (txn_id=0x%x), calling completion handler\n",
-				   transaction_id);
+	/* Always decrement completion counter regardless of wdev availability */
+	if (atomic_dec_and_test(&raw_pkt_ctx->num_cmpl_pending)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "all packets completed (txn_id=0x%x), calling completion handler\n",
+			   transaction_id);
+		if (wdev)
 			ath12k_handle_tx_completion(ar, raw_pkt_ctx, wdev, transaction_id);
-		} else {
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "packets still pending (txn_id=0x%x)\n", transaction_id);
-		}
+		else
+			ath12k_home_offchan_tx_drain(raw_pkt_ctx);
+	} else {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "packets still pending (txn_id=0x%x)\n", transaction_id);
 	}
 
 	dev_kfree_skb_any(skb);
@@ -709,6 +710,12 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 		return;
 	}
 
+	if (!ch_info) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "failed to update offchan stats, ch_info is NULL");
+		return;
+	}
+
 	if (ch_info->cmd_flags == WMI_CHAN_INFO_START_RESP)
 		ath12k_chan_info_event_extn(&ar->ar_extn, ch_info,
 					    channel_idx);
@@ -899,6 +906,7 @@ static void ath12k_handle_rx_scan_event(struct ath12k *ar,
 	if (!raw_ctx->vif) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "Operation already completed by timeout handler\n");
+		spin_unlock_bh(&raw_ctx->chan_lock);
 		return;
 	}
 
@@ -2164,13 +2172,15 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 	/* Send the vendor event */
 	cfg80211_vendor_event(skb, GFP_KERNEL);
 
-	/* Reset context to clean state after event is sent */
-	spin_lock_bh(&raw_pkt_ctx->chan_lock);
-	ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
-	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+	if (raw_pkt_ctx) {
+		/* Reset context to clean state after event is sent */
+		spin_lock_bh(&raw_pkt_ctx->chan_lock);
+		ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
-	/* Release the raw_ctx_mutex AFTER context reset to ensure clean state */
-	mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
+		/* Release the raw_ctx_mutex AFTER context reset to ensure clean state */
+		mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
+	}
 
 	return 0;
 }

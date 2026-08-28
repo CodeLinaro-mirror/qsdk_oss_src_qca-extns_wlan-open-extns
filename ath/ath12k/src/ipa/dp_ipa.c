@@ -1750,7 +1750,9 @@ void dp_ipa_get_resources(struct ath12k_base *ab)
 	i = 0;
 
 	/* IPA RX REFILL BUF ring - HAL_RXDMA_BUF SW2RXDMA_BUF1 */
-	ret = dp_ipa_setup_rx_refill_buf_ring(ab);
+	if (!ath12k_dp_umac_reset_in_progress(ab)) {
+		ret = dp_ipa_setup_rx_refill_buf_ring(ab);
+	}
 	ring_id = dp->rx_refill_buf_ring2.refill_buf_ring.ring_id;
 	srng = &ab->hal.srng_list[ring_id];
 	memset(&params, 0, sizeof(params));
@@ -2951,6 +2953,87 @@ void ath12k_dp_ipa_rx_refill_buf_ring_free(struct ath12k_base *ab)
         dp_ipa_cleanup_rx_refill_buf_ring(ab);
 }
 EXPORT_SYMBOL(ath12k_dp_ipa_rx_refill_buf_ring_free);
+
+/**
+ * ath12k_dp_ipa_rxdma_ring_setup() - IPA-specific RXDMA ring (re)initialization.
+ * @ab: ath12k base structure
+ *
+ * Called from ath12k_dp_rxdma_ring_setup() on IPA-offload targets, after the
+ * common rx_refill_buf_ring has been (re)initialized. Sets up the IPA
+ * intermediate RX refill ring (rx_refill_buf_ring2); buffers for it are
+ * replenished later via ath12k_dp_rxdma_buf_setup(), which must run before
+ * IPA pipes are re-enabled. Also (re)inits the per-pdev RX MAC buffer rings
+ * where the hardware carries them -- these do not hold host-managed buffers,
+ * so only the SRNG hardware register state needs restoring.
+ *
+ * Return: true, telling the caller that IPA offload owns rx_refill_buf_ring
+ * replenishment and the caller must skip its own common replenish.
+ */
+bool ath12k_dp_ipa_rxdma_ring_setup(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	int ret;
+
+	ret = ath12k_dp_srng_setup(ab, &dp->rx_refill_buf_ring2.refill_buf_ring,
+				   HAL_RXDMA_BUF, 2, 0, IPA_RX_REFILL_BUF_RING);
+	if (ret)
+		ath12k_warn(ab, "failed to setup rx_refill_buf_ring2 for IPA\n");
+
+	return true;
+}
+
+/**
+ * ath12k_dp_ipa_srng_hw_disable() - Disable the IPA-related RXDMA SRNGs.
+ * @ab: ath12k base structure
+ *
+ * Called from ath12k_dp_srng_hw_ring_disable() on IPA-offload targets to
+ * disable rx_refill_buf_ring, rx_refill_buf_ring2, and the per-pdev RX MAC
+ * buffer rings (when present) in hardware.
+ */
+void ath12k_dp_ipa_srng_hw_disable(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+
+	ath12k_hal_srng_hw_disable(ab, &ab->hal.srng_list[dp->rx_refill_buf_ring.refill_buf_ring.ring_id]);
+	ath12k_hal_srng_hw_disable(ab, &ab->hal.srng_list[dp->rx_refill_buf_ring2.refill_buf_ring.ring_id]);
+}
+
+/**
+ * ath12k_dp_ipa_rx_desc_dma_unmap() - DMA-unmap an RX descriptor's buffer.
+ * @ab: ath12k base structure
+ * @skb: RX buffer being released
+ *
+ * Called from ath12k_dp_umac_txrx_desc_cleanup() and ath12k_dp_cc_cleanup()
+ * on IPA-offload targets, where each RX descriptor's buffer is DMA-mapped
+ * individually and must be explicitly unmapped before the skb is freed.
+ */
+void ath12k_dp_ipa_rx_desc_dma_unmap(struct ath12k_base *ab, struct sk_buff *skb)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+
+	ath12k_core_dma_unmap_single(dp->dev, ATH12K_SKB_CB(skb)->paddr,
+				      DP_RX_BUFFER_SIZE, DMA_FROM_DEVICE);
+}
+
+/**
+ * ath12k_dp_rx_ring_hp_resync() - Resync rx_refill_buf_ring HP after an
+ * IPA-owned UMAC reset.
+ * @ab: ath12k base structure
+ *
+ * Called from ath12k_umac_reset_handle_post_reset_complete() to push the
+ * shadow HP value back to the HW register once IRQs are re-enabled.
+ */
+void ath12k_dp_rx_ring_hp_resync(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct dp_rxdma_ring *rx_ring = &dp->rx_refill_buf_ring;
+	struct hal_srng *srng;
+
+	srng = &ab->hal.srng_list[rx_ring->refill_buf_ring.ring_id];
+	spin_lock_bh(&srng->lock);
+	*srng->u.src_ring.hp_addr = srng->u.src_ring.hp;
+	spin_unlock_bh(&srng->lock);
+}
 
 static u32 dp_ipa_set_default_routing(u32 reo_dest)
 {
@@ -4870,3 +4953,162 @@ drop:
 	return;
 }
 
+/**
+ * ath12k_dp_ipa_pre_reset() - Disable IPA pipes before Mode-2 SSR SRNG reset.
+ * @ab: ath12k base structure
+ *
+ * Called in the pre_reset phase of UMAC reset.  Disabling IPA pipes prevents
+ * GSI from issuing new DMA accesses to WLAN ring buffers while the SRNG rings
+ * are being torn down and reinitialized.  Failure to do this can cause a GSI
+ * crash because the ring descriptors become invalid after reset.
+ *
+ * This function runs in process context (via the umac reset work queue) so
+ * the IPA driver's internal wait calls are safe to use here.
+ */
+void ath12k_dp_ipa_pre_reset(struct ath12k_base *ab)
+{
+	struct ath12k_wlan_ipa_priv *ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+
+	if (!ipa_ctx || !ipa_ctx->uc_loaded)
+		return;
+
+	ath12k_info(ab, "Mode-2 SSR: disabling IPA pipes before SRNG reset");
+	wlan_ipa_disable_pipes(ipa_ctx);
+	int ret = dp_ipa_rx_buf_smmu_map_unmap(ab, 0);
+	if (ret)
+		ath12k_err(ab, "RX buffer smmu unmapping failed\n");
+	dp_ipa_cleanup(ipa_ctx);
+}
+
+/**
+ * dp_ipa_tx_buf_replenish_wbm() - Re-insert existing IPA TX buffers into WBM.
+ *
+ * After UMAC reset the WBM ring is torn down and rebuilt empty.  The IPA TX
+ * buffers are still allocated and DMA-mapped (tracked in ipa_ctx->ipa_uc_tx_rsc
+ * and ipa_uc_tx_alt_rsc).  This function re-writes the HAL buffer-address
+ * descriptors for every buffer in the pool into the freshly initialised WBM
+ * ring without reallocating or re-DMA-mapping anything.
+ *
+ * Must be called after WBM ring reinit and before dp_ipa_enable_pipes().
+ */
+static void dp_ipa_tx_buf_replenish_wbm(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_wlan_ipa_priv *ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+	struct hal_srng *wbm_srng;
+	struct ath12k_buffer_addr *ring_entry;
+	struct sk_buff *skb;
+	u32 idx;
+	u8 ring_id, rbm_id;
+
+	/* Primary TX pool */
+	ring_id = dp->tx_ring[IPA_TX_COMP_RING].tcl_comp_ring.ring_id;
+	wbm_srng = &ab->hal.srng_list[ring_id];
+	rbm_id = ab->hal.tcl_to_cmp_rbm_map[IPA_TX_COMP_RING].rbm_id;
+
+	spin_lock_bh(&wbm_srng->lock);
+	ath12k_hal_srng_access_begin(ab, wbm_srng);
+
+	for (idx = 0; idx < ipa_ctx->ipa_uc_tx_rsc.alloc_tx_buf_cnt; idx++) {
+		skb = (struct sk_buff *)
+			ipa_ctx->ipa_uc_tx_rsc.tx_buf_pool_vaddr_unaligned[idx];
+		if (!skb)
+			continue;
+
+		ring_entry = ath12k_hal_srng_dst_get_next_hp_entry(ab, wbm_srng);
+		if (!ring_entry) {
+			ath12k_err(ab,
+				   "WBM TX ring full at idx %u during UMAC reset replenish\n",
+				   idx);
+			break;
+		}
+
+		ath12k_hal_rx_buf_addr_info_set(ring_entry,
+						ATH12K_SKB_CB(skb)->paddr, 0,
+						rbm_id);
+	}
+
+	ath12k_hal_srng_access_end(ab, wbm_srng);
+	spin_unlock_bh(&wbm_srng->lock);
+
+	ath12k_info(ab, "Mode-2 SSR: replenished %u IPA TX buffers into WBM ring",
+		    idx);
+
+	if (!ath12k_dp_ipa_is_alt_tx_required(ab))
+		return;
+
+	/* Alt TX pool */
+	ring_id = dp->tx_ring[IPA_TX_COMP_ALT_RING].tcl_comp_ring.ring_id;
+	wbm_srng = &ab->hal.srng_list[ring_id];
+	rbm_id = ab->hal.tcl_to_cmp_rbm_map[IPA_TX_COMP_ALT_RING].rbm_id;
+
+	spin_lock_bh(&wbm_srng->lock);
+	ath12k_hal_srng_access_begin(ab, wbm_srng);
+
+	for (idx = 0; idx < ipa_ctx->ipa_uc_tx_alt_rsc.alloc_tx_buf_cnt; idx++) {
+		skb = (struct sk_buff *)
+			ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned[idx];
+		if (!skb)
+			continue;
+
+		ring_entry = ath12k_hal_srng_dst_get_next_hp_entry(ab, wbm_srng);
+		if (!ring_entry) {
+			ath12k_err(ab,
+				   "WBM Alt TX ring full at idx %u during UMAC reset replenish\n",
+				   idx);
+			break;
+		}
+
+		ath12k_hal_rx_buf_addr_info_set(ring_entry,
+						ATH12K_SKB_CB(skb)->paddr, 0,
+						rbm_id);
+	}
+
+	ath12k_hal_srng_access_end(ab, wbm_srng);
+	spin_unlock_bh(&wbm_srng->lock);
+
+	ath12k_info(ab, "Mode-2 SSR: replenished %u IPA Alt TX buffers into WBM ring",
+		    idx);
+}
+
+/**
+ * ath12k_dp_ipa_post_reset() - Re-enable IPA pipes after Mode-2 SSR SRNG reinit.
+ * @ab: ath12k base structure
+ *
+ * Called after all SRNG rings are successfully reinitialized.  Because the
+ * UMAC reset resets all ring HP/TP values to 0, we must push the updated
+ * (reset) head pointer to the IPA TX doorbell and reconfigure the REO hash
+ * mapping before re-enabling the WDI pipes so that GSI starts with a
+ * consistent view of the ring state.
+ */
+void ath12k_dp_ipa_post_reset(struct ath12k_base *ab)
+{
+	struct ath12k_wlan_ipa_priv *ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+	int ret;
+
+	if (!ipa_ctx || !ipa_ctx->uc_loaded)
+		return;
+
+	/* Re-populate WBM ring with the existing (already DMA-mapped) IPA TX
+	 * buffers.  After UMAC reset the WBM ring was rebuilt empty; the SKBs
+	 * are still alive in ipa_ctx so we only need to re-write the ring
+	 * entries — no reallocation or re-DMA-mapping required.
+	 * This must happen before dp_ipa_enable_pipes() so that IPA has TX
+	 * buffers available the instant GSI channels are started.
+	 */
+	dp_ipa_tx_buf_replenish_wbm(ab);
+
+	/* After UMAC reset the TX completion ring HP is back at 0.  Setting
+	 * ipa_first_tx_db_access ensures dp_ipa_enable_pipes() writes this
+	 * reset value to the IPA TX doorbell before traffic resumes.
+	 */
+	ipa_ctx->ipa_first_tx_db_access = true;
+
+	ath12k_info(ab, "Mode-2 SSR: re-enabling IPA pipes after SRNG reinit");
+	dp_ipa_get_resources(ab);
+	dp_ipa_setup(ipa_ctx);
+	dp_ipa_set_doorbell_paddr(ipa_ctx);
+	ret = dp_ipa_enable_pipes(ipa_ctx);
+	if (ret)
+		ath12k_err(ab, "Mode-2 SSR: failed to re-enable IPA pipes: %d", ret);
+}

@@ -8,10 +8,12 @@
 
 #include <linux/mhi.h>
 #include <linux/uuid.h>
+#include <linux/workqueue.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
 
 
 struct ath12k_base;
+struct sk_buff;
 struct ieee80211_240mhz_vendor_oper_extn;
 struct ieee80211_ops_extn;
 struct ieee80211_iface_combination;
@@ -73,6 +75,37 @@ static inline void ath12k_mac_setup_radio_iface_comb_extn(
 	return;
 }
 
+static inline void ath12k_dp_ipa_pre_reset(struct ath12k_base *ab)
+{
+	return;
+}
+
+static inline void ath12k_dp_ipa_post_reset(struct ath12k_base *ab)
+{
+	return;
+}
+
+static inline bool ath12k_dp_ipa_rxdma_ring_setup(struct ath12k_base *ab)
+{
+	return false;
+}
+
+static inline void ath12k_dp_ipa_srng_hw_disable(struct ath12k_base *ab)
+{
+	return;
+}
+
+static inline void ath12k_dp_ipa_rx_desc_dma_unmap(struct ath12k_base *ab,
+						     struct sk_buff *skb)
+{
+	return;
+}
+
+static inline void ath12k_dp_rx_ring_hp_resync(struct ath12k_base *ab)
+{
+	return;
+}
+
 #else
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
@@ -91,6 +124,70 @@ int ath12k_add_sta_240mhz_info_extn(struct ath12k_vif *ahvif,
 
 void ath12k_mac_setup_radio_iface_comb_extn(
 		struct ieee80211_iface_combination *comb);
+
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+/**
+ * ath12k_dp_ipa_pre_reset() - Disable IPA pipes before SRNG ring reset.
+ *
+ * Called in the Mode-2 SSR pre_reset phase to prevent GSI from accessing
+ * WLAN ring buffers after the rings are torn down.
+ */
+void ath12k_dp_ipa_pre_reset(struct ath12k_base *ab);
+
+/**
+ * ath12k_dp_ipa_post_reset() - Re-enable IPA pipes after SRNG ring reinit.
+ *
+ * Called after all SRNG rings are reinitialized.  Forces a TX doorbell HP
+ * update (since rings are reset to HP/TP = 0) and reconfigures the REO
+ * hash mapping before re-enabling the WDI pipes.
+ */
+void ath12k_dp_ipa_post_reset(struct ath12k_base *ab);
+
+/**
+ * ath12k_dp_ipa_rxdma_ring_setup() - IPA-specific RXDMA ring (re)initialization.
+ *
+ * Called from ath12k_dp_rxdma_ring_setup() so that IPA-only ring setup
+ * (rx_refill_buf_ring2 and, where required, the per-pdev RX MAC buffer
+ * rings) stays out of the common function's control flow.
+ *
+ * Return: true if IPA offload owns rx_refill_buf_ring replenishment (the
+ * caller must skip its own common replenish), false otherwise.
+ */
+bool ath12k_dp_ipa_rxdma_ring_setup(struct ath12k_base *ab);
+
+/**
+ * ath12k_dp_ipa_srng_hw_disable() - Disable the IPA-related RXDMA SRNGs.
+ *
+ * Called from ath12k_dp_srng_hw_ring_disable() so that IPA-only SRNG
+ * disable calls stay out of the common function's control flow.
+ */
+void ath12k_dp_ipa_srng_hw_disable(struct ath12k_base *ab);
+
+/**
+ * ath12k_dp_ipa_rx_desc_dma_unmap() - DMA-unmap an RX descriptor's buffer.
+ *
+ * Called from ath12k_dp_umac_txrx_desc_cleanup() and ath12k_dp_cc_cleanup()
+ * so that the IPA-only DMA unmap stays out of the common cleanup loops.
+ */
+void ath12k_dp_ipa_rx_desc_dma_unmap(struct ath12k_base *ab, struct sk_buff *skb);
+
+/**
+ * ath12k_dp_rx_ring_hp_resync() - Resync rx_refill_buf_ring HP after an
+ * IPA-owned UMAC reset.
+ *
+ * Called from ath12k_umac_reset_handle_post_reset_complete() to push the
+ * shadow HP value back to the HW register once IRQs are re-enabled.
+ */
+void ath12k_dp_rx_ring_hp_resync(struct ath12k_base *ab);
+#else
+static inline void ath12k_dp_ipa_pre_reset(struct ath12k_base *ab) {}
+static inline void ath12k_dp_ipa_post_reset(struct ath12k_base *ab) {}
+static inline bool ath12k_dp_ipa_rxdma_ring_setup(struct ath12k_base *ab) { return false; }
+static inline void ath12k_dp_ipa_srng_hw_disable(struct ath12k_base *ab) {}
+static inline void ath12k_dp_ipa_rx_desc_dma_unmap(struct ath12k_base *ab,
+						     struct sk_buff *skb) {}
+static inline void ath12k_dp_rx_ring_hp_resync(struct ath12k_base *ab) {}
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
 
 struct ath12k_pci_extn {
 	/* SMMU DS */
@@ -121,6 +218,20 @@ struct ath12k_base_extn {
 	void **rx_buf_pool;
 	u32 rx_buf_cnt;
 	dma_addr_t mem_pa;
+#endif
+};
+
+struct ath12k_dp_umac_reset_extn {
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+	/* Used on IPA-offload targets where pipe enable/disable requires
+	 * process context (IPA driver uses wait calls internally).
+	 */
+	struct work_struct reset_work;
+	/* Dedicated WQ_UNBOUND|WQ_HIGHPRI workqueue so the reset work item
+	 * is scheduled at the highest normal priority (nice -20) on any
+	 * available CPU, minimising latency relative to the firmware timeline.
+	 */
+	struct workqueue_struct *reset_wq;
 #endif
 };
 

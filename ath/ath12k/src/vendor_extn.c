@@ -45,6 +45,18 @@
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #include "mesh_util.h"
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+#include "ipa/dp_ipa.h"
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
+
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+const struct nla_policy
+ath12k_ipa_stats_policy[QCA_WLAN_VENDOR_ATTR_IPA_STATS_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_IPA_STATS_DEBUG_INFO] = {
+		.type = NLA_NESTED,
+	},
+};
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
 
 const struct nla_policy
 ath12k_vendor_tdma_schedule_policy[QCA_WLAN_VENDOR_ATTR_TDMA_SCHEDULE_MAX + 1] = {
@@ -18611,3 +18623,397 @@ int ath12k_vendor_extap_info_handler(struct wiphy *wiphy,
 
 	return 0;
 }
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+/*
+ * ath12k_ipa_debug_info_fill_*() below reply to QCA_NL80211_VENDOR_SUBCMD_GET_
+ * IPA_DEBUG_INFO synchronously via cfg80211_vendor_cmd_reply(), so everything
+ * nests under the single QCA_WLAN_VENDOR_ATTR_IPA_STATS_DEBUG_INFO attribute
+ * (that top-level ID comes from the vendor's qca-vendor.h and can't be
+ * extended with new flat sibling attributes). This differs from the
+ * telemetry TX/RX MSDU and SOC DP stats events, which send common scalars
+ * as flat siblings plus one top-level nest per stats group as an
+ * unsolicited cfg80211_vendor_event() — that shape isn't available here.
+ * The idx+1 per-element nesting for IPA_DEBUG_INFO_VAP_LIST/IPA_DEBUG_INFO_EVT_LIST
+ * matches that other path's array convention exactly.
+ */
+
+/**
+ * ath12k_ipa_debug_info_fill_init() - Fill IPA_DEBUG_INFO_INIT sub-attributes
+ * @skb: Reply skb (nest already opened by caller)
+ * @init: Source init-params struct
+ *
+ * Return: 0 on success, -EMSGSIZE on nla_put failure
+ */
+static int ath12k_ipa_debug_info_fill_init(struct sk_buff *skb,
+					  const struct ath12k_ipa_init_params *init)
+{
+	if (nla_put_u8(skb, IPA_INIT_WDI_VERSION, init->wdi_version) ||
+	    nla_put_u8(skb, IPA_INIT_HDL, init->hdl) ||
+	    nla_put_u8(skb, IPA_INIT_INST_ID, init->inst_id) ||
+	    nla_put_u8(skb, IPA_INIT_OVER_GSI, init->over_gsi) ||
+	    nla_put_u8(skb, IPA_INIT_SMMU_ENABLED_IPA, init->smmu_enabled_ipa) ||
+	    nla_put_u8(skb, IPA_INIT_SMMU_S1_ENABLE, init->smmu_s1_enable) ||
+	    nla_put_u8(skb, IPA_INIT_UC_READY, init->uc_ready) ||
+	    nla_put_u8(skb, IPA_INIT_IS_DB_DDR_MAPPED, init->is_db_ddr_mapped) ||
+	    nla_put_u8(skb, IPA_INIT_NUM_CHIPS, init->num_chips) ||
+	    nla_put_u8(skb, IPA_INIT_NUM_RADIOS, init->num_radios) ||
+	    nla_put_u8(skb, IPA_INIT_TX_CLIENT, init->tx_client) ||
+	    nla_put_u8(skb, IPA_INIT_TX_BANK_ID, init->tx_bank_id) ||
+	    nla_put_u8(skb, IPA_INIT_TX_PMAC_ID, init->tx_pmac_id) ||
+	    nla_put_u8(skb, IPA_INIT_TX_PKT_OFFSET, init->tx_pkt_offset) ||
+	    nla_put_u8(skb, IPA_INIT_TX_IS_TXR_DB_PCIE, init->tx_is_txr_db_pcie) ||
+	    nla_put_u8(skb, IPA_INIT_TX_IS_EVT_DB_PCIE, init->tx_is_evt_db_pcie) ||
+	    nla_put_u32(skb, IPA_INIT_TX_NUM_PKT_BUFFERS, init->tx_num_pkt_buffers) ||
+	    nla_put_u32(skb, IPA_INIT_TX_TCL_RING_SIZE, init->tx_tcl_ring_size) ||
+	    nla_put_u32(skb, IPA_INIT_TX_WBM_RING_SIZE, init->tx_wbm_ring_size) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_TCL_RING_BASE_PA,
+			      init->tx_tcl_ring_base_pa, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_TCL_HP_PADDR,
+			      init->tx_tcl_hp_paddr, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_WBM_RING_BASE_PA,
+			      init->tx_wbm_ring_base_pa, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_WBM_TP_PADDR,
+			      init->tx_wbm_tp_paddr, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_DB_PHYS,
+			      init->tx_db_phys, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_DB_IOVA,
+			      init->tx_db_iova, NL80211_ATTR_PAD) ||
+	    nla_put_u8(skb, IPA_INIT_RX_CLIENT, init->rx_client) ||
+	    nla_put_u8(skb, IPA_INIT_RX_MLO_CHIP_ID, init->rx_mlo_chip_id) ||
+	    nla_put_u32(skb, IPA_INIT_RX_PKT_OFFSET, init->rx_pkt_offset) ||
+	    nla_put_u32(skb, IPA_INIT_RX_REO_RING_SIZE, init->rx_reo_ring_size) ||
+	    nla_put_u32(skb, IPA_INIT_RX_REFILL_RING_SIZE, init->rx_refill_ring_size) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_REO_RING_BASE_PA,
+			      init->rx_reo_ring_base_pa, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_REO_TP_PADDR,
+			      init->rx_reo_tp_paddr, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_REFILL_RING_BASE_PA,
+			      init->rx_refill_ring_base_pa, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_REFILL_HP_PADDR,
+			      init->rx_refill_hp_paddr, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_DB_PHYS,
+			      init->rx_db_phys, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_DB_IOVA,
+			      init->rx_db_iova, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_TX_UC_DB_PA,
+			      init->tx_uc_db_pa, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_RX_UC_DB_PA,
+			      init->rx_uc_db_pa, NL80211_ATTR_PAD) ||
+	    nla_put_u8(skb, IPA_INIT_PIPES_ENABLED, init->pipes_enabled) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_PIPES_ENABLED_NS,
+			      init->pipes_enabled_ns, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_INIT_START_NS,
+			      init->init_start_ns, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_INIT_DONE_NS,
+			      init->init_done_ns, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_PIPES_DISABLE_NS,
+			      init->pipes_disable_ns, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_INIT_DEINIT_DONE_NS,
+			      init->deinit_done_ns, NL80211_ATTR_PAD))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+/**
+ * ath12k_ipa_debug_info_fill_vp() - Fill IPA_VAP_VP sub-attributes
+ * @skb: Reply skb (nest already opened by caller)
+ * @vp: Source VP-config struct
+ *
+ * Return: 0 on success, -EMSGSIZE on nla_put failure
+ */
+static int ath12k_ipa_debug_info_fill_vp(struct sk_buff *skb,
+					const struct ath12k_ipa_vp_config *vp)
+{
+	if (nla_put_u8(skb, IPA_VP_NUM, vp->vp_num) ||
+	    nla_put_u8(skb, IPA_VP_AHVIF_ID, vp->ahvif_id) ||
+	    nla_put_u8(skb, IPA_VP_VDEV_ID, vp->vdev_id) ||
+	    nla_put_u8(skb, IPA_VP_LMAC_ID, vp->lmac_id) ||
+	    nla_put_u8(skb, IPA_VP_BANK_ID, vp->bank_id) ||
+	    nla_put_u8(skb, IPA_VP_ENTRY_VALID, vp->entry_valid) ||
+	    nla_put_u8(skb, IPA_VP_DROP_PREC_ENABLE, vp->drop_prec_enable) ||
+	    nla_put_u8(skb, IPA_VP_TO_FW_SW, vp->to_fw_sw) ||
+	    nla_put_u8(skb, IPA_VP_USE_PPE_INT_PRI, vp->use_ppe_int_pri) ||
+	    nla_put_u8(skb, IPA_VP_SEARCH_IDX_REG_NUM, vp->search_idx_reg_num) ||
+	    nla_put_u64_64bit(skb, IPA_VP_CONFIG_TIMESTAMP_NS,
+			      vp->config_timestamp_ns, NL80211_ATTR_PAD))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+/**
+ * ath12k_ipa_debug_info_fill_vap() - Fill one IPA_DEBUG_INFO_VAP_LIST element
+ * @skb: Reply skb (per-index nest already opened by caller)
+ * @vap: Source VAP-state struct
+ *
+ * Return: 0 on success, -EMSGSIZE on nla_put/nla_nest_start failure
+ */
+static int ath12k_ipa_debug_info_fill_vap(struct sk_buff *skb,
+					 const struct ath12k_ipa_vap_state *vap)
+{
+	struct nlattr *vp_attr;
+
+	if (nla_put(skb, IPA_VAP_NETDEV_NAME, sizeof(vap->netdev_name),
+		    vap->netdev_name) ||
+	    nla_put(skb, IPA_VAP_BSSID, sizeof(vap->bssid), vap->bssid) ||
+	    nla_put_u8(skb, IPA_VAP_AHVIF_ID, vap->ahvif_id) ||
+	    nla_put_u8(skb, IPA_VAP_VDEV_ID, vap->vdev_id) ||
+	    nla_put_u8(skb, IPA_VAP_DEVICE_ID, vap->device_id) ||
+	    nla_put_u8(skb, IPA_VAP_LMAC_ID, vap->lmac_id) ||
+	    nla_put_u8(skb, IPA_VAP_DEVICE_MODE, vap->device_mode) ||
+	    nla_put_u8(skb, IPA_VAP_ACTIVE, vap->active) ||
+	    nla_put_u8(skb, IPA_VAP_MLD_ENABLED, vap->mld_enabled))
+		return -EMSGSIZE;
+
+	vp_attr = nla_nest_start(skb, IPA_VAP_VP);
+	if (!vp_attr)
+		return -EMSGSIZE;
+
+	if (ath12k_ipa_debug_info_fill_vp(skb, &vap->vp))
+		return -EMSGSIZE;
+
+	nla_nest_end(skb, vp_attr);
+
+	if (nla_put_u8(skb, IPA_VAP_TX_CLIENT, vap->tx_client) ||
+	    nla_put_u8(skb, IPA_VAP_SESSION_ID, vap->session_id) ||
+	    nla_put_u8(skb, IPA_VAP_WMI_OFFLOAD_EN, vap->wmi_offload_en) ||
+	    nla_put_u8(skb, IPA_VAP_WMI_INTRABSS_VAL, vap->wmi_intrabss_val) ||
+	    nla_put_u64_64bit(skb, IPA_VAP_REG_TIMESTAMP_NS,
+			      vap->reg_timestamp_ns, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_VAP_UP_TIMESTAMP_NS,
+			      vap->up_timestamp_ns, NL80211_ATTR_PAD) ||
+	    nla_put_u64_64bit(skb, IPA_VAP_DOWN_TIMESTAMP_NS,
+			      vap->down_timestamp_ns, NL80211_ATTR_PAD))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+/**
+ * ath12k_ipa_debug_info_fill_evt() - Fill one IPA_DEBUG_INFO_EVT_LIST element
+ * @skb: Reply skb (per-index nest already opened by caller)
+ * @evt: Source event-entry struct
+ *
+ * Return: 0 on success, -EMSGSIZE on nla_put failure
+ */
+static int ath12k_ipa_debug_info_fill_evt(struct sk_buff *skb,
+					 const struct ath12k_ipa_evt_entry *evt)
+{
+	if (nla_put_u64_64bit(skb, IPA_EVT_TIMESTAMP_NS,
+			      evt->timestamp_ns, NL80211_ATTR_PAD) ||
+	    nla_put(skb, IPA_EVT_MAC_ADDR, sizeof(evt->mac_addr), evt->mac_addr) ||
+	    nla_put_u8(skb, IPA_EVT_DEVICE_ID, evt->device_id) ||
+	    nla_put_u8(skb, IPA_EVT_LMAC_ID, evt->lmac_id) ||
+	    nla_put_u8(skb, IPA_EVT_VDEV_ID, evt->vdev_id) ||
+	    nla_put_u8(skb, IPA_EVT_AHVIF_ID, evt->ahvif_id) ||
+	    nla_put_u8(skb, IPA_EVT_VP_NUM, evt->vp_num) ||
+	    nla_put_u8(skb, IPA_EVT_BANK_ID, evt->bank_id) ||
+	    nla_put_u8(skb, IPA_EVT_LOG_EVT, evt->log_evt) ||
+	    nla_put_u8(skb, IPA_EVT_IPA_WLAN_EVENT, evt->ipa_wlan_event) ||
+	    nla_put_u8(skb, IPA_EVT_WMI_OFFLOAD_TYPE, evt->wmi_offload_type) ||
+	    nla_put_u8(skb, IPA_EVT_WMI_ENABLE, evt->wmi_enable) ||
+	    nla_put_u8(skb, IPA_EVT_MLD_ENABLED, evt->mld_enabled) ||
+	    nla_put_s32(skb, IPA_EVT_RESULT, evt->result) ||
+	    nla_put(skb, IPA_EVT_NETDEV_NAME, sizeof(evt->netdev_name),
+		    evt->netdev_name))
+		return -EMSGSIZE;
+
+	return 0;
+}
+
+/**
+ * ath12k_vendor_get_ipa_debug_info() - Get IPA debug_info
+ * @wiphy: Wireless hardware description
+ * @wdev: Wireless device state
+ * @data: Vendor command data
+ * @data_len: Length of vendor command data
+ *
+ * This function retrieves the IPA debug_info and sends it
+ * to userspace via netlink, one field/sub-struct at a time as nested
+ * QCA_WLAN_VENDOR_ATTR_IPA_STATS_DEBUG_INFO attributes (see enum
+ * ipa_debug_info_attr and friends in dp_ipa_tlpd.h), rather than as a single
+ * opaque binary blob. The debug_info contains the complete state of the IPA
+ * offload subsystem for the entire hardware group.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_vendor_get_ipa_debug_info(struct wiphy *wiphy,
+                                   struct wireless_dev *wdev,
+                                   const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	struct ath12k *ar = ath12k_ah_to_ar(ah, 0);
+	struct ath12k_base *ab;
+	struct ath12k_ipa *ipa_ctx;
+	struct ath12k_ipa_debug_info *debug_info_copy;
+	struct sk_buff *skb;
+	struct nlattr *debug_info_attr, *init_attr, *list_attr, *idx_attr;
+	u32 num_ifaces, num_evts, i;
+	int ret = 0;
+
+	if (!ar)
+		return -ENODEV;
+
+	ab = ar->ab;
+
+	if (!ab) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: Invalid ab\n");
+		return -ENODEV;
+	}
+
+	/* Get the IPA context */
+	ipa_ctx = IPA_CTX(ab);
+	if (!ipa_ctx) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: IPA context not available\n");
+		return -ENODEV;
+	}
+
+	if (!ipa_ctx->debug_info) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: Debug info not initialized\n");
+		return -ENODEV;
+	}
+
+	/* Allocate temporary buffer for debug_info copy */
+	debug_info_copy = kzalloc(sizeof(*debug_info_copy), GFP_KERNEL);
+	if (!debug_info_copy) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: Failed to allocate debug_info buffer\n");
+		return -ENOMEM;
+	}
+
+	/* CRITICAL SECTION: Copy entire debug_info under lock protection */
+	spin_lock_bh(&ipa_ctx->debug_info_lock);
+	memcpy(debug_info_copy, ipa_ctx->debug_info, sizeof(*debug_info_copy));
+	spin_unlock_bh(&ipa_ctx->debug_info_lock);
+
+	num_ifaces = min_t(u32, debug_info_copy->num_active_ifaces,
+			   ATH12K_IPA_LOG_MAX_IFACE);
+	num_evts = min_t(u32, debug_info_copy->global_evt_write_idx,
+			 ATH12K_IPA_GLOBAL_EVT_DEPTH);
+
+	/* Per-attribute nesting overhead (NLA_HDRLEN + alignment per scalar)
+	 * inflates the wire size well past the raw struct size, so size the
+	 * reply generously.
+	 */
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy,
+	                                          sizeof(*debug_info_copy) * 4);
+	if (!skb) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: Failed to allocate reply skb\n");
+		kfree(debug_info_copy);
+		return -ENOMEM;
+	}
+
+	debug_info_attr = nla_nest_start(skb, QCA_WLAN_VENDOR_ATTR_IPA_STATS_DEBUG_INFO);
+	if (!debug_info_attr) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla nest failure: debug_info\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+
+	if (nla_put_u8(skb, IPA_DEBUG_INFO_NUM_ACTIVE_CHIPS,
+		       debug_info_copy->num_active_chips) ||
+	    nla_put_u8(skb, IPA_DEBUG_INFO_CUMAC_ENABLED,
+		       debug_info_copy->cumac_enabled) ||
+	    nla_put_u8(skb, IPA_DEBUG_INFO_CENTRAL_CHIP_ID,
+		       debug_info_copy->central_chip_id)) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla put failure: header\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+
+	init_attr = nla_nest_start(skb, IPA_DEBUG_INFO_INIT);
+	if (!init_attr) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla nest failure: init\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+	if (ath12k_ipa_debug_info_fill_init(skb, &debug_info_copy->init)) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla put failure: init\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+	nla_nest_end(skb, init_attr);
+
+	if (nla_put_u32(skb, IPA_DEBUG_INFO_NUM_ACTIVE_IFACES,
+			debug_info_copy->num_active_ifaces)) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla put failure: num_active_ifaces\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+
+	list_attr = nla_nest_start(skb, IPA_DEBUG_INFO_VAP_LIST);
+	if (!list_attr) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla nest failure: vap list\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+	for (i = 0; i < num_ifaces; i++) {
+		idx_attr = nla_nest_start(skb, i + 1);
+		if (!idx_attr) {
+			ath12k_err(ab, "IPA_DEBUG_INFO: nla nest failure: vap %u\n", i);
+			ret = -EMSGSIZE;
+			goto err_free;
+		}
+		if (ath12k_ipa_debug_info_fill_vap(skb, &debug_info_copy->vap[i])) {
+			ath12k_err(ab, "IPA_DEBUG_INFO: nla put failure: vap %u\n", i);
+			ret = -EMSGSIZE;
+			goto err_free;
+		}
+		nla_nest_end(skb, idx_attr);
+	}
+	nla_nest_end(skb, list_attr);
+
+	if (nla_put_u32(skb, IPA_DEBUG_INFO_EVT_WRITE_IDX,
+			debug_info_copy->global_evt_write_idx) ||
+	    nla_put_u32(skb, IPA_DEBUG_INFO_EVT_TOTAL_COUNT,
+			debug_info_copy->global_evt_total_count)) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla put failure: evt header\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+
+	list_attr = nla_nest_start(skb, IPA_DEBUG_INFO_EVT_LIST);
+	if (!list_attr) {
+		ath12k_err(ab, "IPA_DEBUG_INFO: nla nest failure: evt list\n");
+		ret = -EMSGSIZE;
+		goto err_free;
+	}
+	for (i = 0; i < num_evts; i++) {
+		idx_attr = nla_nest_start(skb, i + 1);
+		if (!idx_attr) {
+			ath12k_err(ab, "IPA_DEBUG_INFO: nla nest failure: evt %u\n", i);
+			ret = -EMSGSIZE;
+			goto err_free;
+		}
+		if (ath12k_ipa_debug_info_fill_evt(skb, &debug_info_copy->global_evt[i])) {
+			ath12k_err(ab, "IPA_DEBUG_INFO: nla put failure: evt %u\n", i);
+			ret = -EMSGSIZE;
+			goto err_free;
+		}
+		nla_nest_end(skb, idx_attr);
+	}
+	nla_nest_end(skb, list_attr);
+
+	nla_nest_end(skb, debug_info_attr);
+
+	/* Free temporary buffer */
+	kfree(debug_info_copy);
+
+	/* Send reply to userspace */
+	ret = cfg80211_vendor_cmd_reply(skb);
+	if (ret)
+		ath12k_err(ab, "IPA_DEBUG_INFO: Failed to send reply: %d\n", ret);
+	else
+		ath12k_dbg(ab, ATH12K_DBG_CFG,
+		           "IPA_DEBUG_INFO: Sent structured debug info (%u ifaces, %u events) to userspace\n",
+		           num_ifaces, num_evts);
+
+	return ret;
+
+err_free:
+	kfree_skb(skb);
+	kfree(debug_info_copy);
+	return ret;
+}
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */

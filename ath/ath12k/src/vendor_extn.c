@@ -14079,6 +14079,26 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 		dp_vif->dp_extn.allow_3addr_mc = !!allow_3addr_mc;
 	}
 
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_DIAGNOSTIC_STA_VAP]) {
+		u8 enable = nla_get_u8(
+			tb[QCA_WLAN_VENDOR_ATTR_CONFIG_DIAGNOSTIC_STA_VAP]);
+
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "DEBUG_DIAG_STA: %s-diagnostic_sta_vap vendor cmd received enable=%u wdev=%s\n",
+			   __func__, enable, wdev->netdev ? wdev->netdev->name : "(null)");
+
+		if (vif->type != NL80211_IFTYPE_STATION) {
+			ath12k_err(NULL, "%s-invalid vif for diagnostic_sta_vap\n",
+				   __func__);
+			return -EINVAL;
+		}
+
+		ieee80211_set_vif_diagnostic_sta_extn(vif, !!enable);
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "DEBUG_DIAG_STA: %s-configured diagnostic_sta_vap: %u for(%s)\n",
+			   __func__, enable, wdev->netdev->name);
+	}
+
 	return 0;
 }
 

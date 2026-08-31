@@ -24,6 +24,27 @@ u8 supported_rates_5g6g[SUPPORTED_RATES_LEN] = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x
 u8 supported_rates_2g[SUPPORTED_RATES_LEN] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
+void ieee80211_set_vif_diagnostic_sta_extn(struct ieee80211_vif *vif, bool diagnostic_sta)
+{
+	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
+	struct ieee80211_local *local = sdata->local;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	wiphy_dbg(local->hw.wiphy,
+		  "DEBUG_DIAG_STA: set_vif_diagnostic_sta called vif=%s type=%d diagnostic_sta=%d old=%d\n",
+		  sdata->name, vif->type, diagnostic_sta, vif->diagnostic_sta);
+
+	if (WARN_ON(vif->type != NL80211_IFTYPE_STATION))
+		return;
+
+	vif->diagnostic_sta = diagnostic_sta;
+
+	sdata_info(sdata, "vif %s CSA isolation\n",
+		   diagnostic_sta ? "marked" : "unmarked");
+}
+EXPORT_SYMBOL(ieee80211_set_vif_diagnostic_sta_extn);
+
 struct ieee80211_240mhz_vendor_oper_extn*
 drv_get_240mhz_cap_extn(struct ieee80211_local *local,
 			struct ieee80211_vif *vif,

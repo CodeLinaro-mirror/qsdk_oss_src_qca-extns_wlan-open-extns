@@ -5413,6 +5413,95 @@ static int ath12k_apply_cac_timeout_override(struct ath12k *ar,
 #endif
 }
 
+/**
+ * ath12k_should_remove_dfs_reg_rule - Check if a DFS rule should be blocked
+ * @ar: pointer to ath12k structure
+ * @rule: regulatory rule to check
+ *
+ * Return: true if @rule is a DFS rule and overlaps this radio's frequency
+ * range, false otherwise. If the radio range is unavailable, all DFS rules are
+ * considered applicable to this radio.
+ */
+static bool
+ath12k_should_remove_dfs_reg_rule(struct ath12k *ar,
+				  const struct ieee80211_reg_rule *rule)
+{
+	if (!(rule->flags & NL80211_RRF_DFS))
+		return false;
+
+	if (!ath12k_is_ar_range_valid(ar))
+		return true;
+
+	return ath12k_is_rule_in_radio(ar, rule);
+}
+
+/**
+ * ath12k_remove_dfs_reg_rules - Remove blocked DFS rules from a regdomain copy
+ * @ar: pointer to ath12k structure
+ * @regd: regulatory domain copy to update
+ *
+ * Compacts @regd in place by dropping DFS rules selected by
+ * ath12k_should_remove_dfs_reg_rule(). The stored firmware regdomain is not
+ * modified, so unblocking can restore DFS operation by rebuilding from a fresh
+ * firmware regdomain copy.
+ */
+static void
+ath12k_remove_dfs_reg_rules(struct ath12k *ar, struct ieee80211_regdomain *regd)
+{
+	unsigned int num_rules = 0;
+	unsigned int removed_rules = 0;
+	unsigned int i;
+
+	for (i = 0; i < regd->n_reg_rules; i++) {
+		struct ieee80211_reg_rule *rule = &regd->reg_rules[i];
+
+		if (ath12k_should_remove_dfs_reg_rule(ar, rule)) {
+			ath12k_info(ar->ab,
+				    "blockdfslist: remove DFS rule [%u-%u MHz] for pdev %u\n",
+				    KHZ_TO_MHZ(rule->freq_range.start_freq_khz),
+				    KHZ_TO_MHZ(rule->freq_range.end_freq_khz),
+				    ar->pdev_idx);
+			removed_rules++;
+			continue;
+		}
+
+		if (num_rules != i)
+			regd->reg_rules[num_rules] = *rule;
+		num_rules++;
+	}
+
+	regd->n_reg_rules = num_rules;
+
+	ath12k_info(ar->ab,
+		    "blockdfslist: pdev %u removed %u DFS rules, remaining %u rules\n",
+		    ar->pdev_idx, removed_rules, regd->n_reg_rules);
+}
+
+/**
+ * ath12k_update_regd_block_dfs_ext - Apply DFS block state into reg_rules
+ * @ar: pointer to ath12k structure
+ * @regd: pointer to the regulatory domain copy to update
+ *
+ * When block_dfs_channels is set, removes DFS rules for this radio from the
+ * temporary regd copy passed to regulatory_set_wiphy_regd().  The original
+ * firmware regulatory domain is never modified, so unblocking uses a fresh copy
+ * with the original DFS rules intact.
+ */
+void ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
+				      struct ieee80211_regdomain *regd)
+{
+	if (!ar->ar_extn.block_dfs_channels)
+		return;
+
+	ath12k_info(ar->ab,
+		    "blockdfslist: apply pdev %u block %u range %u-%u rules %u\n",
+		    ar->pdev_idx, ar->ar_extn.block_dfs_channels,
+		    ar->chan_info.low_freq, ar->chan_info.high_freq,
+		    regd->n_reg_rules);
+
+	ath12k_remove_dfs_reg_rules(ar, regd);
+}
+
 /* Set radio level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
@@ -9243,95 +9332,6 @@ int ath12k_vendor_nol_restore_from_file_extn(struct wiphy *wiphy, u8 radio_idx,
 		*num_updated = updated;
 
 	return 0;
-}
-
-/**
- * ath12k_should_remove_dfs_reg_rule - Check if a DFS rule should be blocked
- * @ar: pointer to ath12k structure
- * @rule: regulatory rule to check
- *
- * Return: true if @rule is a DFS rule and overlaps this radio's frequency
- * range, false otherwise. If the radio range is unavailable, all DFS rules are
- * considered applicable to this radio.
- */
-static bool
-ath12k_should_remove_dfs_reg_rule(struct ath12k *ar,
-				  const struct ieee80211_reg_rule *rule)
-{
-	if (!(rule->flags & NL80211_RRF_DFS))
-		return false;
-
-	if (!ath12k_is_ar_range_valid(ar))
-		return true;
-
-	return ath12k_is_rule_in_radio(ar, rule);
-}
-
-/**
- * ath12k_remove_dfs_reg_rules - Remove blocked DFS rules from a regdomain copy
- * @ar: pointer to ath12k structure
- * @regd: regulatory domain copy to update
- *
- * Compacts @regd in place by dropping DFS rules selected by
- * ath12k_should_remove_dfs_reg_rule(). The stored firmware regdomain is not
- * modified, so unblocking can restore DFS operation by rebuilding from a fresh
- * firmware regdomain copy.
- */
-static void
-ath12k_remove_dfs_reg_rules(struct ath12k *ar, struct ieee80211_regdomain *regd)
-{
-	unsigned int num_rules = 0;
-	unsigned int removed_rules = 0;
-	unsigned int i;
-
-	for (i = 0; i < regd->n_reg_rules; i++) {
-		struct ieee80211_reg_rule *rule = &regd->reg_rules[i];
-
-		if (ath12k_should_remove_dfs_reg_rule(ar, rule)) {
-			ath12k_info(ar->ab,
-				    "blockdfslist: remove DFS rule [%u-%u MHz] for pdev %u\n",
-				    KHZ_TO_MHZ(rule->freq_range.start_freq_khz),
-				    KHZ_TO_MHZ(rule->freq_range.end_freq_khz),
-				    ar->pdev_idx);
-			removed_rules++;
-			continue;
-		}
-
-		if (num_rules != i)
-			regd->reg_rules[num_rules] = *rule;
-		num_rules++;
-	}
-
-	regd->n_reg_rules = num_rules;
-
-	ath12k_info(ar->ab,
-		    "blockdfslist: pdev %u removed %u DFS rules, remaining %u rules\n",
-		    ar->pdev_idx, removed_rules, regd->n_reg_rules);
-}
-
-/**
- * ath12k_update_regd_block_dfs_ext - Apply DFS block state into reg_rules
- * @ar: pointer to ath12k structure
- * @regd: pointer to the regulatory domain copy to update
- *
- * When block_dfs_channels is set, removes DFS rules for this radio from the
- * temporary regd copy passed to regulatory_set_wiphy_regd().  The original
- * firmware regulatory domain is never modified, so unblocking uses a fresh copy
- * with the original DFS rules intact.
- */
-void ath12k_update_regd_block_dfs_ext(struct ath12k *ar,
-				      struct ieee80211_regdomain *regd)
-{
-	if (!ar->ar_extn.block_dfs_channels)
-		return;
-
-	ath12k_info(ar->ab,
-		    "blockdfslist: apply pdev %u block %u range %u-%u rules %u\n",
-		    ar->pdev_idx, ar->ar_extn.block_dfs_channels,
-		    ar->chan_info.low_freq, ar->chan_info.high_freq,
-		    regd->n_reg_rules);
-
-	ath12k_remove_dfs_reg_rules(ar, regd);
 }
 
 /* Find the 'ar' radio instance using the radio index of the wiphy

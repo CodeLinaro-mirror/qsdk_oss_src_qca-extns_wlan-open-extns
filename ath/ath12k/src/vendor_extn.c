@@ -16439,3 +16439,760 @@ ath12k_vendor_sdwf_msduq_send_event(struct ath12k *ar,
 }
 
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
+const struct nla_policy
+ath12k_mapc_cotdma_policy[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_POLICY_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_PRIMARY_AC] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_MAX_TXOP_DUR] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_MIN_TXOP_DUR] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_NBR_AP_PRIO] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_START] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_INTERVAL] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_END] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_LATENCY_THRESHOLD] = { .type = NLA_U16 },
+};
+
+const struct nla_policy
+ath12k_mapc_peer_params_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAPC_PEER_MAC] = { .type = NLA_BINARY,
+						       .len  = ETH_ALEN },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_Q2Q_APID_TO] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_Q2Q_APID_FROM] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID] = { .type = NLA_U8  },
+};
+EXPORT_SYMBOL(ath12k_mapc_peer_params_policy);
+
+const struct nla_policy
+ath12k_mapc_cotdma_txop_policy_attr_policy
+		[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_TXOP_POLICY_PEER_MAC] = {
+		.type = NLA_BINARY,
+		.len  = ETH_ALEN,
+	},
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_TXOP_POLICY_COTDMA_PARAMS] =
+		NLA_POLICY_NESTED(ath12k_mapc_cotdma_policy),
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID] = { .type = NLA_U8 },
+};
+EXPORT_SYMBOL(ath12k_mapc_cotdma_txop_policy_attr_policy);
+
+const struct nla_policy
+ath12k_mapc_get_peer_params_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_PEER_MAC] = {
+		.type = NLA_BINARY, .len = ETH_ALEN },
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID] = { .type = NLA_U8 },
+};
+EXPORT_SYMBOL(ath12k_mapc_get_peer_params_policy);
+
+const struct nla_policy
+ath12k_cotdma_e2e_entry_policy[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_CONFIG_ENTRY_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_CONFIG_MODE] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_QMID] = { .type = NLA_U16 },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_MAC] = { .type = NLA_BINARY,
+								  .len  = ETH_ALEN },
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_BACKHAUL_MAC] = { .type = NLA_BINARY,
+								  .len  = ETH_ALEN },
+};
+
+const struct nla_policy
+ath12k_cotdma_e2e_config_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_CONFIG_ENTRY] = { .type = NLA_NESTED },
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID] = { .type = NLA_U8  }
+};
+EXPORT_SYMBOL(ath12k_cotdma_e2e_config_policy);
+
+static int ath12k_mapc_resolve_ar_arvif(struct wireless_dev *wdev,
+					struct ath12k_vif *ahvif,
+					u8 mlo_link_id,
+					struct ath12k **ar_out,
+					struct ath12k_link_vif **arvif_out)
+{
+	struct ath12k_link_vif *arvif;
+	struct ath12k *ar;
+
+	if (mlo_link_id != 0xff) {
+		ar = ath12k_get_ar_from_wdev(wdev, mlo_link_id);
+		if (!ar)
+			return -ENODEV;
+		arvif = ath12k_get_arvif_from_link_id(ahvif, mlo_link_id);
+		if (!arvif)
+			return -ENODEV;
+	} else {
+		arvif = &ahvif->deflink;
+		ar    = arvif->ar;
+		if (!ar)
+			return -ENODEV;
+	}
+
+	*ar_out    = ar;
+	*arvif_out = arvif;
+	return 0;
+}
+
+int ath12k_vendor_mapc_peer_params_extn(struct wiphy *wiphy,
+					struct wireless_dev *wdev,
+					const void *data, int data_len)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	struct ath12k_link_vif *arvif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	struct ath12k_wmi_peer_mapc_params_arg arg = {};
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+	u8 peer_addr[ETH_ALEN];
+	u8 mlo_link_id = 0xff;
+	u32 q2q_apid_to = 0, q2q_apid_from = 0;
+	int ret;
+	struct ieee80211_sta *sta;
+	struct ath12k_link_sta *arsta;
+
+	if (WARN_ON(!vif))
+		return -EINVAL;
+
+	if (vif->type != NL80211_IFTYPE_AP) {
+		ath12k_err(NULL,
+			   "MAPC Q2Q params: command applicable only for AP mode, vif type: %d\n",
+			   vif->type);
+		return -EOPNOTSUPP;
+	}
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_CONFIG_MAX,
+			data, data_len,
+			ath12k_mapc_peer_params_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "MAPC vendor: failed to parse attrs: %d\n", ret);
+		return ret;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]) {
+		mlo_link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]);
+		if (mlo_link_id >= ATH12K_NUM_MAX_LINKS) {
+			ath12k_err(NULL, "MAPC Q2Q params: invalid link_id %u\n",
+				   mlo_link_id);
+			return -EINVAL;
+		}
+	}
+
+	ret = ath12k_mapc_resolve_ar_arvif(wdev, ath12k_vif_to_ahvif(vif),
+					   mlo_link_id, &ar, &arvif);
+	if (ret)
+		return ret;
+
+	ab = ar->ab;
+	if (!test_bit(WMI_TLV_SERVICE_UHR_MAX_CTDMA_AP_PEERS_SUPPORT,
+		      ab->wmi_ab.svc_map)) {
+		ath12k_err(ab, "MAPC vendor: FW Co-TDMA svc bit absent, skipping\n");
+		return -EOPNOTSUPP;
+	}
+
+	/* Peer MAC is mandatory */
+	if (!tb[QCA_WLAN_VENDOR_ATTR_MAPC_PEER_MAC]) {
+		ath12k_err(NULL, "MAPC vendor: missing peer MAC\n");
+		return -EINVAL;
+	}
+	ether_addr_copy(peer_addr,
+			nla_data(tb[QCA_WLAN_VENDOR_ATTR_MAPC_PEER_MAC]));
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAPC_Q2Q_APID_TO])
+		q2q_apid_to = nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_MAPC_Q2Q_APID_TO]);
+	if (tb[QCA_WLAN_VENDOR_ATTR_MAPC_Q2Q_APID_FROM])
+		q2q_apid_from = nla_get_u16(tb[QCA_WLAN_VENDOR_ATTR_MAPC_Q2Q_APID_FROM]);
+
+	ether_addr_copy(arg.peer_addr, peer_addr);
+	arg.vdev_id                     = arvif->vdev_id;
+	arg.param_set_mask              = ATH12K_WMI_MAPC_SET_Q2Q;
+	arg.q2q_apid_to_neighbor_peer   = q2q_apid_to;
+	arg.q2q_apid_from_neighbor_peer = q2q_apid_from;
+
+	ret = ath12k_wmi_send_peer_set_mapc_params_cmd(ar, &arg);
+	if (ret) {
+		ath12k_err(ab,
+			   "MAPC vendor: WMI cmd failed for %pM: %d\n",
+			   arg.peer_addr, ret);
+		return ret;
+	}
+
+	/* Cache Q2Q APID pair for GET_MAPC_PEER_PARAMS. */
+	rcu_read_lock();
+	sta = ieee80211_find_sta(vif, peer_addr);
+	if (sta) {
+		arsta = &ath12k_sta_to_ahsta(sta)->deflink;
+		spin_lock_bh(&ar->data_lock);
+		arsta->arsta_extn.mapc_cache.q2q_apid_to_neighbor_peer   = q2q_apid_to;
+		arsta->arsta_extn.mapc_cache.q2q_apid_from_neighbor_peer = q2q_apid_from;
+		arsta->arsta_extn.mapc_cache.param_sets_recvd++;
+		spin_unlock_bh(&ar->data_lock);
+	} else {
+		ath12k_dbg(ab, ATH12K_DBG_MAC,
+			   "MAPC: peer %pM not found for Q2Q cache update\n",
+			   peer_addr);
+	}
+	rcu_read_unlock();
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_vendor_mapc_peer_params_extn);
+
+/*
+ * ath12k_vendor_mapc_cotdma_txop_policy_extn -
+ * QCA_NL80211_VENDOR_SUBCMD_MAPC_COTDMA_TXOP_POLICY.
+ *
+ * Sends WMI_PEER_SET_MAPC_PARAMS_CMDID carrying only the Co-TDMA TXOP
+ * sharing policy fields for the named peer.  All other WMI fields (APIDs,
+ * capability bitmap, channel params) are left at zero — FW preserves its
+ * stored values for those fields across this partial update.
+ *
+ * This handler is intentionally self-contained and independent of the
+ * QCA_NL80211_VENDOR_SUBCMD_MAPC_PEER_PARAMS handler.  It shares
+ * ath12k_mapc_cotdma_policy[] for NLA parsing but has no code dependency
+ * on that handler's TXOP path.  Removing TXOP config from
+ * QCA_NL80211_VENDOR_SUBCMD_MAPC_PEER_PARAMS in the future does not
+ * affect this handler.
+ */
+int
+ath12k_vendor_mapc_cotdma_txop_policy_extn(struct wiphy *wiphy,
+					   struct wireless_dev *wdev,
+					   const void *data, int data_len)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	struct ath12k_link_vif *arvif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	struct ath12k_wmi_peer_mapc_params_arg arg = {};
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+	struct nlattr *ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_POLICY_MAX + 1];
+	u8 peer_addr[ETH_ALEN];
+	u8 mlo_link_id = 0xff;
+	u32 primary_ac = 0, max_txop = 0, min_txop = 0, nbr_prio = 0;
+	u32 svc_start = 0, svc_interval = 0, svc_end = 0;
+	u32 latency_threshold = 0;
+	int ret;
+	struct ieee80211_sta *sta;
+	struct ath12k_link_sta *arsta;
+
+	if (WARN_ON(!vif))
+		return -EINVAL;
+
+	if (vif->type != NL80211_IFTYPE_AP) {
+		ath12k_err(NULL,
+			   "MAPC TXOP policy: command applicable only for AP mode, vif type: %d\n",
+			   vif->type);
+		return -EOPNOTSUPP;
+	}
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_CONFIG_MAX,
+			data, data_len,
+			ath12k_mapc_cotdma_txop_policy_attr_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "MAPC TXOP policy: attr parse failed: %d\n", ret);
+		return ret;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]) {
+		mlo_link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]);
+		if (mlo_link_id >= ATH12K_NUM_MAX_LINKS) {
+			ath12k_err(NULL, "MAPC TXOP policy: invalid link_id %u\n",
+				   mlo_link_id);
+			return -EINVAL;
+		}
+	}
+
+	ret = ath12k_mapc_resolve_ar_arvif(wdev, ath12k_vif_to_ahvif(vif),
+					   mlo_link_id, &ar, &arvif);
+	if (ret)
+		return ret;
+
+	ab = ar->ab;
+	if (!test_bit(WMI_TLV_SERVICE_UHR_MAX_CTDMA_AP_PEERS_SUPPORT,
+		      ab->wmi_ab.svc_map)) {
+		ath12k_err(ab, "MAPC TXOP policy: Co-TDMA svc bit absent, skipping\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_TXOP_POLICY_PEER_MAC]) {
+		ath12k_err(NULL, "MAPC TXOP policy: missing peer MAC\n");
+		return -EINVAL;
+	}
+	ether_addr_copy(peer_addr,
+			nla_data(tb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_TXOP_POLICY_PEER_MAC]));
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_TXOP_POLICY_COTDMA_PARAMS]) {
+		ath12k_err(NULL, "MAPC TXOP policy: missing COTDMA_PARAMS for %pM\n",
+			   peer_addr);
+		return -EINVAL;
+	}
+
+	ret = nla_parse_nested(ctb, QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_POLICY_MAX,
+			       tb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_TXOP_POLICY_COTDMA_PARAMS],
+			       ath12k_mapc_cotdma_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "MAPC TXOP policy: COTDMA_PARAMS parse failed for %pM: %d\n",
+			   peer_addr, ret);
+		return ret;
+	}
+
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_PRIMARY_AC])
+		primary_ac = nla_get_u8(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_PRIMARY_AC]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_MAX_TXOP_DUR])
+		max_txop =
+			nla_get_u8(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_MAX_TXOP_DUR]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_MIN_TXOP_DUR])
+		min_txop =
+			nla_get_u8(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_MIN_TXOP_DUR]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_NBR_AP_PRIO])
+		nbr_prio = nla_get_u8(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_NBR_AP_PRIO]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_START])
+		svc_start =
+			nla_get_u16(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_START]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_INTERVAL])
+		svc_interval =
+			nla_get_u16(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_INTERVAL]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_END])
+		svc_end = nla_get_u16(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_SERVICE_END]);
+	if (ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_LATENCY_THRESHOLD])
+		latency_threshold =
+			nla_get_u16(ctb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_LATENCY_THRESHOLD]);
+
+	ether_addr_copy(arg.peer_addr, peer_addr);
+	arg.vdev_id                = arvif->vdev_id;
+	arg.param_set_mask         = ATH12K_WMI_MAPC_SET_TXOP;
+	arg.primary_ac             = primary_ac;
+	arg.max_shared_txop_dur_us = max_txop;
+	arg.min_shared_txop_dur_us = min_txop;
+	arg.nbr_ap_prio            = nbr_prio;
+	arg.service_start_time     = svc_start;
+	arg.service_interval       = svc_interval;
+	arg.service_end_time               = svc_end;
+	arg.critical_traffic_dur_thresh_us = latency_threshold;
+
+	ath12k_dbg(ab, ATH12K_DBG_MAC,
+		   "MAPC TXOP policy: peer %pM vdev %d primary_ac=%u max_txop=%u min_txop=%u nbr_prio=%u svc_start=%u svc_interval=%u svc_end=%u latency_thresh=%u\n",
+		   arg.peer_addr, arg.vdev_id,
+		   arg.primary_ac, arg.max_shared_txop_dur_us, arg.min_shared_txop_dur_us,
+		   arg.nbr_ap_prio, arg.service_start_time,
+		   arg.service_interval, arg.service_end_time,
+		   arg.critical_traffic_dur_thresh_us);
+
+	ret = ath12k_wmi_send_peer_set_mapc_params_cmd(ar, &arg);
+	if (ret) {
+		ath12k_err(ab, "MAPC TXOP policy: WMI cmd failed for %pM: %d\n",
+			   arg.peer_addr, ret);
+		return ret;
+	}
+
+	/* Cache TXOP policy fields for GET_MAPC_PEER_PARAMS. */
+	rcu_read_lock();
+	sta = ieee80211_find_sta(vif, peer_addr);
+	if (sta) {
+		arsta = &ath12k_sta_to_ahsta(sta)->deflink;
+		spin_lock_bh(&ar->data_lock);
+		arsta->arsta_extn.mapc_cache.primary_ac = primary_ac;
+		arsta->arsta_extn.mapc_cache.nbr_ap_prio = nbr_prio;
+		arsta->arsta_extn.mapc_cache.service_start_time = svc_start;
+		arsta->arsta_extn.mapc_cache.service_interval = svc_interval;
+		arsta->arsta_extn.mapc_cache.service_end_time = svc_end;
+		arsta->arsta_extn.mapc_cache.critical_traffic_dur_thresh_us =
+			latency_threshold;
+		arsta->arsta_extn.mapc_cache.max_shared_txop_dur_us = max_txop;
+		arsta->arsta_extn.mapc_cache.min_shared_txop_dur_us = min_txop;
+		arsta->arsta_extn.mapc_cache.param_sets_recvd++;
+		spin_unlock_bh(&ar->data_lock);
+	} else {
+		ath12k_dbg(ab, ATH12K_DBG_MAC,
+			   "MAPC: peer %pM not found for TXOP cache update\n",
+			   peer_addr);
+	}
+	rcu_read_unlock();
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_vendor_mapc_cotdma_txop_policy_extn);
+
+static void mapc_e2e_cache_add(struct ath12k_mapc_peer_cache *cache,
+			       const struct ath12k_cotdma_e2e_entry *entry)
+{
+	int i, slot = -1;
+
+	for (i = 0; i < cache->e2e_entry_count; i++) {
+		if (cache->e2e_entries[i].qmid == entry->qmid) {
+			slot = i;
+			break;
+		}
+	}
+	if (slot < 0)
+		slot = cache->e2e_entry_count++;
+
+	cache->e2e_entries[slot].qmid         = entry->qmid;
+	cache->e2e_entries[slot].config_mode  = entry->config_mode;
+	cache->e2e_entries[slot].bsta_mac_valid = entry->bsta_mac_valid;
+	if (entry->bsta_mac_valid)
+		ether_addr_copy(cache->e2e_entries[slot].bsta_mac, entry->bsta_mac);
+}
+
+static void mapc_e2e_cache_remove(struct ath12k_mapc_peer_cache *cache,
+				  u16 qmid)
+{
+	int i;
+
+	for (i = 0; i < cache->e2e_entry_count; i++) {
+		if (cache->e2e_entries[i].qmid == qmid) {
+			cache->e2e_entries[i] =
+				cache->e2e_entries[--cache->e2e_entry_count];
+			break;
+		}
+	}
+}
+
+int
+ath12k_vendor_cotdma_e2e_config_extn(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     const void *data, int data_len)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+	struct nlattr *etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_CONFIG_ENTRY_MAX + 1];
+	struct nlattr *entry_attr;
+	struct ath12k_link_vif *arvif;
+	struct ath12k *ar;
+	struct ath12k_cotdma_e2e_entry entry;
+	struct ath12k_wmi_peer_mapc_params_arg arg = {};
+	struct ieee80211_sta *sta;
+	struct ath12k_link_sta *arsta;
+	u8 parsed = 0;
+	int ret, rem;
+	u8 mlo_link_id = 0xff;
+
+	if (WARN_ON(!vif))
+		return -EINVAL;
+
+	if (vif->type != NL80211_IFTYPE_AP) {
+		ath12k_err(NULL,
+			   "MAPC E2E_CONFIG: command applicable only for AP mode, vif type: %d\n",
+			   vif->type);
+		return -EOPNOTSUPP;
+	}
+
+	if (!data || !data_len) {
+		ath12k_err(NULL, "cotdma_e2e: data is NULL");
+		return -EINVAL;
+	}
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_CONFIG_MAX,
+			data, data_len, ath12k_cotdma_e2e_config_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "cotdma_e2e: failed to parse top-level attrs: %d", ret);
+		return ret;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]) {
+		mlo_link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]);
+		if (mlo_link_id >= ATH12K_NUM_MAX_LINKS) {
+			ath12k_err(NULL, "MAPC GET params: invalid link_id %u\n",
+				   mlo_link_id);
+			return -EINVAL;
+		}
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_CONFIG_ENTRY]) {
+		ath12k_err(NULL, "cotdma_e2e: mandatory ENTRY attribute missing");
+		return -EINVAL;
+	}
+
+	ret = ath12k_mapc_resolve_ar_arvif(wdev, ath12k_vif_to_ahvif(vif),
+					   mlo_link_id, &ar, &arvif);
+	if (ret)
+		return ret;
+
+	if (!test_bit(WMI_TLV_SERVICE_UHR_MAX_CTDMA_AP_PEERS_SUPPORT,
+		      ar->ab->wmi_ab.svc_map)) {
+		ath12k_err(ar->ab, "cotdma_e2e: Co-TDMA svc bit absent\n");
+		return -EOPNOTSUPP;
+	}
+
+	nla_for_each_nested(entry_attr,
+			    tb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_CONFIG_ENTRY], rem) {
+		memset(&arg, 0, sizeof(arg));
+		ret = nla_parse_nested(etb,
+				       QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_CONFIG_ENTRY_MAX,
+				       entry_attr,
+				       ath12k_cotdma_e2e_entry_policy, NULL);
+		if (ret) {
+			ath12k_err(NULL, "cotdma_e2e: failed to parse entry: %d", ret);
+			return ret;
+		}
+
+		if (!etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_CONFIG_MODE]   ||
+		    !etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_QMID]          ||
+		    !etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_MAC]) {
+			ath12k_err(NULL, "cotdma_e2e: mandatory entry attribute missing");
+			return -EINVAL;
+		}
+
+		memset(&entry, 0, sizeof(entry));
+
+		entry.config_mode = nla_get_u8(
+			etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_CONFIG_MODE]);
+
+		if (entry.config_mode > 1) {
+			ath12k_err(NULL, "cotdma_e2e: invalid config_mode %u\n",
+				   entry.config_mode);
+			return -EINVAL;
+		}
+
+		entry.qmid = nla_get_u16(
+			etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_QMID]);
+		nla_memcpy(entry.mapc_peer_mac,
+			   etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_MAC],
+			   ETH_ALEN);
+
+		if (etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_BACKHAUL_MAC]) {
+			entry.bsta_mac_valid = true;
+			nla_memcpy(entry.bsta_mac,
+				   etb[QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_BACKHAUL_MAC],
+				   ETH_ALEN);
+		}
+
+		/* Build WMI arg and send per-entry */
+		ether_addr_copy(arg.peer_addr, entry.mapc_peer_mac);
+		arg.vdev_id            = arvif->vdev_id;
+		arg.param_set_mask     = ATH12K_WMI_MAPC_SET_E2E;
+		arg.e2e_config_mode    = entry.config_mode;
+		arg.e2e_qmid           = entry.qmid;
+		arg.e2e_bsta_mac_valid = entry.bsta_mac_valid;
+		if (entry.bsta_mac_valid)
+			ether_addr_copy(arg.e2e_bsta_mac, entry.bsta_mac);
+
+		/* Validate cache capacity before sending WMI (add path only) */
+		if (entry.config_mode == 1) {
+			rcu_read_lock();
+			sta = ieee80211_find_sta(vif, entry.mapc_peer_mac);
+			if (sta) {
+				arsta = &ath12k_sta_to_ahsta(sta)->deflink;
+				spin_lock_bh(&ar->data_lock);
+				if (arsta->arsta_extn.mapc_cache.e2e_entry_count >=
+				    ATH12K_MAX_COTDMA_E2E_QMIDS) {
+					spin_unlock_bh(&ar->data_lock);
+					rcu_read_unlock();
+					ath12k_err(ar->ab,
+						   "cotdma_e2e: peer %pM cache full, rejecting qmid=%u\n",
+						   entry.mapc_peer_mac, entry.qmid);
+					return -ENOSPC;
+				}
+				spin_unlock_bh(&ar->data_lock);
+			}
+			rcu_read_unlock();
+		}
+
+		ret = ath12k_wmi_send_peer_set_mapc_params_cmd(ar, &arg);
+		if (ret) {
+			ath12k_err(ar->ab,
+				   "cotdma_e2e: WMI cmd failed for %pM qmid=%u: %d\n",
+				   entry.mapc_peer_mac, entry.qmid, ret);
+			return ret;
+		}
+
+		/* Update per-peer QMID list cache under data_lock */
+		rcu_read_lock();
+		sta = ieee80211_find_sta(vif, entry.mapc_peer_mac);
+		if (sta) {
+			struct ath12k_mapc_peer_cache *cache;
+
+			arsta = &ath12k_sta_to_ahsta(sta)->deflink;
+			cache = &arsta->arsta_extn.mapc_cache;
+			spin_lock_bh(&ar->data_lock);
+			if (entry.config_mode == 1)
+				mapc_e2e_cache_add(cache, &entry);
+			else
+				mapc_e2e_cache_remove(cache, entry.qmid);
+			spin_unlock_bh(&ar->data_lock);
+		} else {
+			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+				   "cotdma_e2e: peer %pM not found for cache update\n",
+				   entry.mapc_peer_mac);
+		}
+		rcu_read_unlock();
+
+		parsed++;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_vendor_cotdma_e2e_config_extn);
+
+/*
+ * ath12k_vendor_mapc_peer_get_params_extn -
+ * QCA_NL80211_VENDOR_SUBCMD_MAPC_PEER_GET_PARAMS.
+ *
+ * Returns all MAPC params for the named peer from the per-peer driver
+ * cache (arsta->arsta_extn.mapc_cache).
+ */
+int
+ath12k_vendor_mapc_peer_get_params_extn(struct wiphy *wiphy,
+					struct wireless_dev *wdev,
+					const void *data, int data_len)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	struct ath12k_link_vif *arvif;
+	struct ath12k *ar;
+	struct ath12k_base *ab;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
+	u8 peer_addr[ETH_ALEN];
+	u8 mlo_link_id = 0xff;
+	struct sk_buff *reply_skb;
+	struct ath12k_mapc_peer_cache cache = {};
+	struct ieee80211_sta *sta;
+	struct ath12k_link_sta *arsta;
+	int ret;
+
+	if (WARN_ON(!vif))
+		return -EINVAL;
+
+	if (vif->type != NL80211_IFTYPE_AP) {
+		ath12k_err(NULL,
+			   "MAPC GET params: command applicable only for AP mode, vif type: %d\n",
+			   vif->type);
+		return -EOPNOTSUPP;
+	}
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_CONFIG_MAX,
+			data, data_len,
+			ath12k_mapc_get_peer_params_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "MAPC GET PARAMS: attr parse failed: %d\n", ret);
+		return ret;
+	}
+
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]) {
+		mlo_link_id = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_MLO_LINK_ID]);
+		if (mlo_link_id >= ATH12K_NUM_MAX_LINKS) {
+			ath12k_err(NULL, "MAPC GET params: invalid link_id %u\n",
+				   mlo_link_id);
+			return -EINVAL;
+		}
+	}
+
+	ret = ath12k_mapc_resolve_ar_arvif(wdev, ath12k_vif_to_ahvif(vif),
+					   mlo_link_id, &ar, &arvif);
+	if (ret)
+		return ret;
+	ab = ar->ab;
+
+	if (!test_bit(WMI_TLV_SERVICE_UHR_MAX_CTDMA_AP_PEERS_SUPPORT,
+		      ab->wmi_ab.svc_map)) {
+		ath12k_err(ab, "MAPC GET PARAMS: Co-TDMA svc bit absent\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_PEER_MAC]) {
+		ath12k_err(NULL, "MAPC GET PARAMS: missing peer MAC\n");
+		return -EINVAL;
+	}
+	ether_addr_copy(peer_addr,
+			nla_data(tb[QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_PEER_MAC]));
+
+	/* Read per-peer cache under data_lock */
+	rcu_read_lock();
+	sta = ieee80211_find_sta(vif, peer_addr);
+	if (!sta) {
+		rcu_read_unlock();
+		ath12k_err(ab, "MAPC GET PARAMS: peer %pM not found\n",
+			   peer_addr);
+		return -ENOENT;
+	}
+	arsta = &ath12k_sta_to_ahsta(sta)->deflink;
+	spin_lock_bh(&ar->data_lock);
+	cache = arsta->arsta_extn.mapc_cache;
+	spin_unlock_bh(&ar->data_lock);
+	rcu_read_unlock();
+
+	reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, 512 +
+			cache.e2e_entry_count * (nla_total_size(sizeof(u8)) +
+						 nla_total_size(sizeof(u16)) +
+						 nla_total_size(ETH_ALEN) * 2));
+	if (!reply_skb)
+		return -ENOMEM;
+
+	if (nla_put(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_PEER_MAC,
+		    ETH_ALEN, peer_addr) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_SETS_RECVD,
+			cache.param_sets_recvd) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_SCHEME_BMP,
+			cache.scheme_enable_bitmap) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_CAP_BITMAP,
+			cache.mapc_capability_bitmap) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_APID_TO,
+			cache.apid_to_neighbor_peer) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_APID_FROM,
+			cache.apid_from_neighbor_peer) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_Q2Q_TO,
+			cache.q2q_apid_to_neighbor_peer) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_Q2Q_FROM,
+			cache.q2q_apid_from_neighbor_peer) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_CH_WIDTH,
+			cache.channel_width) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_CCFS,
+			cache.ccfs) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_BSS_COLOR,
+			cache.bss_color) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_RX_TXOP,
+			cache.rx_txop_return_support) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_DSB,
+			cache.disable_subchannel_bitmap) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_PRIMARY_AC,
+			cache.primary_ac) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_NBR_PRIO,
+			cache.nbr_ap_prio) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_SVC_START,
+			cache.service_start_time) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_SVC_INTERVAL,
+			cache.service_interval) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_SVC_END,
+			cache.service_end_time) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_LATENCY_THRESHOLD,
+			cache.critical_traffic_dur_thresh_us) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_MAX_TXOP,
+			cache.max_shared_txop_dur_us) ||
+	    nla_put_u32(reply_skb, QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_MIN_TXOP,
+			cache.min_shared_txop_dur_us)) {
+		kfree_skb(reply_skb);
+		return -EMSGSIZE;
+	}
+
+	if (cache.e2e_entry_count > 0) {
+		u8 i;
+
+		for (i = 0; i < cache.e2e_entry_count; i++) {
+			const struct ath12k_cotdma_e2e_cache_entry *e =
+				&cache.e2e_entries[i];
+			struct nlattr *entry_nest;
+
+			entry_nest = nla_nest_start(reply_skb,
+					QCA_WLAN_VENDOR_ATTR_MAPC_GET_PARAMS_E2E_ENTRIES);
+			if (!entry_nest) {
+				kfree_skb(reply_skb);
+				return -EMSGSIZE;
+			}
+			if (nla_put_u8(reply_skb,
+				       QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_CONFIG_MODE,
+				       e->config_mode) ||
+			    nla_put_u16(reply_skb,
+					QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_QMID,
+					e->qmid)) {
+				nla_nest_cancel(reply_skb, entry_nest);
+				kfree_skb(reply_skb);
+				return -EMSGSIZE;
+			}
+			if (e->bsta_mac_valid &&
+			    nla_put(reply_skb,
+				    QCA_WLAN_VENDOR_ATTR_MAPC_COTDMA_E2E_ENTRY_PEER_BACKHAUL_MAC,
+				    ETH_ALEN, e->bsta_mac)) {
+				nla_nest_cancel(reply_skb, entry_nest);
+				kfree_skb(reply_skb);
+				return -EMSGSIZE;
+			}
+			nla_nest_end(reply_skb, entry_nest);
+		}
+	}
+
+	return cfg80211_vendor_cmd_reply(reply_skb);
+}
+EXPORT_SYMBOL(ath12k_vendor_mapc_peer_get_params_extn);

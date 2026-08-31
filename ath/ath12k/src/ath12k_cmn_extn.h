@@ -120,6 +120,15 @@ struct ath12k_link_vif_extn {
 	struct work_struct gpr_work;
 	/* debugfs entry for the gpr_timer enable/disable knob */
 	struct dentry *debugfs_gpr_timer;
+	/* debugfs entry for the gpr_stats print/clear knob */
+	struct dentry *debugfs_gpr_stats;
+	/* GPR statistics counters */
+	/* times timer re-armed periodically */
+	atomic_t gpr_timer_start_count;
+	/* times user changed the period */
+	atomic_t gpr_timer_resize_count;
+	/* frames successfully queued for TX */
+	atomic_t gpr_send_count;
 	/* VHT MCS 10/11 (1024-QAM) support flags.
 	 * vht_mcs10_11_supp: overall enable for this VAP (default: true on HE targets).
 	 * vht_mcs10_11_nq2q_peer_supp: enable for peers that did not advertise

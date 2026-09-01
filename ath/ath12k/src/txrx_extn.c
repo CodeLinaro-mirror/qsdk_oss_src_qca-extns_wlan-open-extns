@@ -233,6 +233,71 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
  */
 #define OFFCHAN_MAX_MCS 7
 #define OFFCHAN_MAX_CCK_MCS 3
+#define ATH12K_GPR_MIN_PERIOD_MS 10
+
+/**
+ * ath12k_validate_mgmt_tx_params - Validate TX parameters for management frames
+ * @ar: ath12k radio context (for error logging)
+ * @vif: virtual interface for basic_rates check; pass NULL to skip the check
+ * @preamble: preamble type (PREAMBLE_OFDM=0 or PREAMBLE_CCK=1)
+ * @mcs: MCS index (0-7 for OFDM, 0-3 for CCK)
+ * @band: band type; BAND_5GHZ rejects CCK
+ *
+ * Validates preamble range, MCS range, band/CCK compatibility, and basic rate
+ * membership.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ath12k_validate_mgmt_tx_params(struct ath12k *ar,
+					  struct ieee80211_vif *vif,
+					  u8 preamble, u8 mcs, u8 band)
+{
+	/* CCK bit positions: 3, 2, 1, 0 for rates 11, 5.5, 2, 1 Mbps */
+	const u8 cck_bit_pos[] = {3, 2, 1, 0};
+	/* OFDM bit positions: 10, 8, 6, 4, 11, 9, 7, 5 for
+	 * rates 48, 24, 12, 6, 54, 36, 18, 9 Mbps
+	 */
+	const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
+	u8 rate_idx;
+
+	if (preamble >= PREAMBLE_INVALID) {
+		ath12k_err(ar->ab, "preamble %u not supported\n", preamble);
+		return -EINVAL;
+	}
+
+	if (mcs > OFFCHAN_MAX_MCS) {
+		ath12k_err(ar->ab, "mcs %u not supported\n", mcs);
+		return -EINVAL;
+	}
+
+	/* CCK is not valid on 5 GHz or 6 GHz */
+	if ((band == BAND_5GHZ || band == BAND_6GHZ) && preamble == PREAMBLE_CCK) {
+		ath12k_err(ar->ab, "CCK rate not valid for 5G/6G\n");
+		return -EINVAL;
+	}
+
+	/* Skip basic rate check if vif is NULL (data frames) or not configured */
+	if (!vif || !vif->bss_conf.basic_rates)
+		return 0;
+
+	if (preamble == PREAMBLE_CCK) {
+		if (mcs > OFFCHAN_MAX_CCK_MCS) {
+			ath12k_err(ar->ab, "Invalid CCK mcs %u for mgmt\n", mcs);
+			return -EINVAL;
+		}
+		rate_idx = cck_bit_pos[mcs];
+	} else {
+		rate_idx = ofdm_bit_pos[mcs];
+	}
+
+	if (!(vif->bss_conf.basic_rates & BIT(rate_idx))) {
+		ath12k_err(ar->ab, "Basic rate expected for mgmt packets\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int ath12k_fill_tx_param(struct sk_buff *skb,
 				u8 nss, u8 preamble, u8 mcs,
 				u8 retry, u8 power, u8 tx_beamforming,
@@ -242,34 +307,11 @@ static int ath12k_fill_tx_param(struct sk_buff *skb,
 	struct ath12k *ar;
 	struct ath12k_skb_tx_param *tx_param;
 	struct ieee80211_hdr *hdr;
-	u8 rate_idx;
 	__le16 fc;
-	/* CCK bit positions: 3, 2, 1, 0 for rates 1, 2, 5.5, 11 Mbps */
-	const u8 cck_bit_pos[] = {3, 2, 1, 0};
-	/* OFDM bit positions: 10, 8, 6, 4, 11, 9, 7, 5 for
-	 * rates 6, 9, 12, 18, 24, 36, 48, 54 Mbps
-	 */
-	const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
 
 	skb_cb = ATH12K_SKB_CB(skb);
 	ar = skb_cb->u.ar;
 	tx_param = &ar->ar_extn.raw_pkt_ctx.tx_param;
-
-	if (preamble >= PREAMBLE_INVALID) {
-		ath12k_err(ar->ab, "preamble %d not supported", preamble);
-		return -EINVAL;
-	}
-
-	if (mcs > OFFCHAN_MAX_MCS) {
-		ath12k_err(ar->ab, "mcs %d not supported", mcs);
-		return -EINVAL;
-	}
-
-	/* Check if CCK rate is valid for 5GHz */
-	if (band == BAND_5GHZ && preamble == PREAMBLE_CCK) {
-		ath12k_err(ar->ab, "Invalid rate: CCK rate is not valid for 5G\n");
-		return -EINVAL;
-	}
 
 	hdr = (struct ieee80211_hdr *)skb->data;
 	fc = hdr->frame_control;
@@ -277,28 +319,14 @@ static int ath12k_fill_tx_param(struct sk_buff *skb,
 	memset(tx_param, 0, sizeof(*tx_param));
 	if (ieee80211_is_data(fc)) {
 		tx_param->is_data = true;
-		goto fill_tx_param;
-	}
-
-	if (!skb_cb->vif->bss_conf.basic_rates) {
-		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-			   "Basic rate not configured! skipping basic rate check");
-		goto fill_tx_param;
-	}
-
-	if (preamble == PREAMBLE_CCK) {
-		if (mcs > OFFCHAN_MAX_CCK_MCS) {
-			ath12k_err(ar->ab, "Invalid rate for mgmt\n");
+		/* Data frames: validate basic params only, skip basic_rates check */
+		if (ath12k_validate_mgmt_tx_params(ar, NULL, preamble, mcs, band))
 			return -EINVAL;
-		}
-		rate_idx = cck_bit_pos[mcs];
-	} else
-		rate_idx = ofdm_bit_pos[mcs];
-
-	if (!(skb_cb->vif->bss_conf.basic_rates & BIT(rate_idx))) {
-		ath12k_err(ar->ab, "Basic rate expected for mgmt packets\n");
-		return -EINVAL;
+		goto fill_tx_param;
 	}
+
+	if (ath12k_validate_mgmt_tx_params(ar, skb_cb->vif, preamble, mcs, band))
+		return -EINVAL;
 
 fill_tx_param:
 	tx_param->nss = nss;
@@ -1704,6 +1732,7 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 	u32 transaction_id = 0;
 	u8 num_frames = 0;
 	u8 link_id = 0;
+	u8 gpr_band;
 	bool is_mld = false;
 
 	ret = nla_parse(tb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_MAX,
@@ -1854,6 +1883,33 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 			return -ENOMEM;
 		}
 		skb_put_data(skb, buf, buf_len);
+
+		/* GPR is a broadcast Probe Response — NSS must be 1 */
+		if (nss != 1) {
+			ath12k_err(NULL,"GPR: nss %u not supported, bcast require nss=1\n",
+				   nss);
+			dev_kfree_skb_any(skb);
+			return -EINVAL;
+		}
+
+		/* Validate TX params at configuration time */
+		{
+			if (arvif->ar->pdev->cap.supported_bands & BIT(NL80211_BAND_5GHZ))
+				gpr_band = BAND_5GHZ;
+			else if (arvif->ar->pdev->cap.supported_bands & BIT(NL80211_BAND_6GHZ))
+				gpr_band = BAND_6GHZ;
+			else
+				gpr_band = BAND_2GHZ;
+
+			ret = ath12k_validate_mgmt_tx_params(arvif->ar,
+							     arvif->ahvif->vif,
+							     preamble, mcs,
+							     gpr_band);
+		}
+		if (ret) {
+			dev_kfree_skb_any(skb);
+			return ret;
+		}
 
 		/* Free any previously stored GPR frame before replacing */
 		if (arvif->arvif_extn.gpr_frame) {

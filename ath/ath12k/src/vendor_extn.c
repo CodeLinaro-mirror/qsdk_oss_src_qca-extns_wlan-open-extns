@@ -35,7 +35,6 @@
 #include "dcs_extn.h"
 #include "cbs_extn.h"
 #include "rropinfo.h"
-#include "dp_stats_extn.h"
 #include "reg_extn.h"
 #include "dp_mon_extn.h"
 #include "../dp_mon.h"

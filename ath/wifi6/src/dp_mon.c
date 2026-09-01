@@ -1986,7 +1986,6 @@ ath12k_wifi6_dp_mon_update_scan_radio_stats(struct ath12k_pdev_dp *pdev_dp,
 					    struct hal_rx_mon_ppdu_info *ppdu_info)
 {
 	struct ath12k_pdev_mon_dp *dp_mon_pdev;
-	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
 	struct ath12k_dp_rx_scan_radio_stats *stats;
 	u32 num_users, user;
 
@@ -1994,8 +1993,7 @@ ath12k_wifi6_dp_mon_update_scan_radio_stats(struct ath12k_pdev_dp *pdev_dp,
 	if (!dp_mon_pdev || !ppdu_info)
 		return;
 
-	mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
-	stats = &mon_dp_extn->rx_scan_radio_stats;
+	stats = &dp_mon_pdev->scan_radio.rx_scan_radio_stats;
 
 	num_users = ppdu_info->num_users;
 	for (user = 0; user < num_users; user++) {

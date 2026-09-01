@@ -1672,6 +1672,8 @@ static int ath12k_gpr_tx(struct ath12k_link_vif *arvif)
 	ret = ath12k_custom_tx_extn(raw_pkt_ctx);
 	if (ret)
 		ath12k_err(ar->ab, "GPR TX: ath12k_custom_tx_extn failed: %d\n", ret);
+	else
+		atomic_inc(&arvif->arvif_extn.gpr_send_count);
 
 	/* Fire-and-forget: release mutex immediately, no completion event needed */
 	mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
@@ -1704,6 +1706,8 @@ static void ath12k_gpr_timer_handler(struct timer_list *t)
 	if (extn->gpr_period)
 		mod_timer(&arvif->arvif_extn.gpr_timer,
 			  jiffies + msecs_to_jiffies(extn->gpr_period));
+
+	atomic_inc(&extn->gpr_timer_start_count);
 
 	/* Defer actual TX to process context */
 	schedule_work(&arvif->arvif_extn.gpr_work);
@@ -1919,6 +1923,8 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 
 		arvif->arvif_extn.gpr_frame = skb;
 		/* period is carried via SCAN_DUR in the NL message for GPR */
+		if (scan_dur != arvif->arvif_extn.gpr_period)
+			atomic_inc(&arvif->arvif_extn.gpr_timer_resize_count);
 		arvif->arvif_extn.gpr_period = scan_dur;
 		arvif->arvif_extn.gpr_nss = nss;
 		arvif->arvif_extn.gpr_preamble = preamble;
@@ -2266,6 +2272,75 @@ static const struct file_operations ath12k_fops_gpr_timer = {
 };
 
 /**
+ * ath12k_read_gpr_stats - Print GPR statistics to debugfs
+ *
+ * Read: cat link0/gpr_stats
+ * Write 0: echo 0 > link0/gpr_stats  (clears all counters)
+ */
+static ssize_t ath12k_read_gpr_stats(struct file *file,
+				     char __user *user_buf,
+				     size_t count, loff_t *ppos)
+{
+	struct ath12k_link_vif *arvif = file->private_data;
+	struct ath12k_link_vif_extn *extn = &arvif->arvif_extn;
+	char buf[512];
+	int len = 0;
+	u64 expires_ns = 0;
+
+	if (timer_pending(&extn->gpr_timer)) {
+		long remaining = (long)(extn->gpr_timer.expires - jiffies);
+
+		if (remaining > 0)
+			expires_ns = jiffies_to_nsecs((unsigned long)remaining);
+	}
+
+	len += scnprintf(buf + len, sizeof(buf) - len, "------------------------------------\n");
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR on this VAP enabled    - %d   |\n", extn->gpr_timer_enabled ? 1 : 0);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR state                  - %s   |\n", timer_pending(&extn->gpr_timer) ? "Active" : "Dormant");
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR Minimum Period (ms)    - %d   |\n", ATH12K_GPR_MIN_PERIOD_MS);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| Current Timestamp (ns)     - %llu |\n", ktime_get_ns());
+	len += scnprintf(buf + len, sizeof(buf) - len, "| Timer expires in (ns)      - %llu |\n", expires_ns);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer start count      - %u   |\n", atomic_read(&extn->gpr_timer_start_count));
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer resize count     - %u   |\n", atomic_read(&extn->gpr_timer_resize_count));
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer send count       - %u   |\n", atomic_read(&extn->gpr_send_count));
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer user period (ms) - %u   |\n", extn->gpr_period);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR NSS                    - %u   |\n", extn->gpr_nss);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR Preamble               - %u   |\n", extn->gpr_preamble);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR MCS                    - %u   |\n", extn->gpr_mcs);
+	len += scnprintf(buf + len, sizeof(buf) - len, "------------------------------------\n");
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+}
+
+static ssize_t ath12k_write_gpr_stats(struct file *file,
+				      const char __user *user_buf,
+				      size_t count, loff_t *ppos)
+{
+	struct ath12k_link_vif *arvif = file->private_data;
+	struct ath12k_link_vif_extn *extn = &arvif->arvif_extn;
+	u8 val;
+
+	if (kstrtou8_from_user(user_buf, count, 0, &val))
+		return -EINVAL;
+
+	if (val != 0)
+		return -EINVAL;
+
+	/* Clear all GPR statistics counters */
+	atomic_set(&extn->gpr_timer_start_count,  0);
+	atomic_set(&extn->gpr_timer_resize_count, 0);
+	atomic_set(&extn->gpr_send_count,         0);
+
+	return count;
+}
+
+static const struct file_operations ath12k_fops_gpr_stats = {
+	.open  = simple_open,
+	.write = ath12k_write_gpr_stats,
+	.read  = ath12k_read_gpr_stats,
+};
+
+/**
  * ath12k_gpr_debugfs_register_extn - Create GPR timer debugfs entry for a link VIF
  * @arvif: link VIF for which to create the entry
  * @link_debugfs: parent debugfs directory (vif->link_debugfs[link_id])
@@ -2276,4 +2351,7 @@ void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
 	arvif->arvif_extn.debugfs_gpr_timer =
 		debugfs_create_file("gpr_timer", 0644, link_debugfs,
 				    arvif, &ath12k_fops_gpr_timer);
+	arvif->arvif_extn.debugfs_gpr_stats =
+		debugfs_create_file("gpr_stats", 0644, link_debugfs,
+				    arvif, &ath12k_fops_gpr_stats);
 }

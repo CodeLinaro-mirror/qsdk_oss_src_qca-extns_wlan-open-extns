@@ -1700,7 +1700,6 @@ int ath12k_dp_ipa_smmu_map(struct ath12k_base *ab, phys_addr_t paddr, u32 *iova_
 {
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ab);
 	struct platform_device *plat_priv;
-	unsigned long iova;
 	int flag = IOMMU_READ | IOMMU_WRITE;
 	struct pci_dev *root_port;
 	struct device_node *root_of_node;
@@ -1720,17 +1719,6 @@ int ath12k_dp_ipa_smmu_map(struct ath12k_base *ab, phys_addr_t paddr, u32 *iova_
 	}
 
 	len = roundup(size + paddr - rounddown(paddr, PAGE_SIZE), PAGE_SIZE);
-	iova = roundup(pci_priv->ath12k_pci_extn.smmu_iova_ipa_current, PAGE_SIZE);
-
-	if (iova >=
-	    (pci_priv->ath12k_pci_extn.smmu_iova_ipa_start +
-	     pci_priv->ath12k_pci_extn.smmu_iova_ipa_len)) {
-		ath12k_err(ab, "No IOVA space to map, iova %lx, smmu_iova_ipa_start %pad,"
-				"smmu_iova_ipa_len %zu\n", iova,
-				&pci_priv->ath12k_pci_extn.smmu_iova_ipa_start,
-				pci_priv->ath12k_pci_extn.smmu_iova_ipa_len);
-		return -ENOMEM;
-	}
 
 	root_port = pcie_find_root_port(pci_dev);
 	if (!root_port) {
@@ -1748,7 +1736,7 @@ int ath12k_dp_ipa_smmu_map(struct ath12k_base *ab, phys_addr_t paddr, u32 *iova_
 		}
 	}
 
-	ath12k_dbg(ab, ATH12K_DBG_PCI, "IOMMU map: iova %lx, len %zu\n", iova, len);
+	ath12k_dbg(ab, ATH12K_DBG_PCI, "IOMMU map: paddr %pa, len %zu\n", &paddr, len);
 
 	dma = (uint32_t)dma_map_resource(&pci_dev->dev, (phys_addr_t)paddr, len,
 					 DMA_BIDIRECTIONAL, 0);
@@ -1764,7 +1752,6 @@ int ath12k_dp_ipa_smmu_map(struct ath12k_base *ab, phys_addr_t paddr, u32 *iova_
 
 	*iova_addr = lower_32_bits(dma);
 
-	pci_priv->ath12k_pci_extn.smmu_iova_ipa_current = iova + len;
 	ath12k_dbg(ab, ATH12K_DBG_PCI, "IOMMU map: iova_addr %x\n", *iova_addr);
 
 	return 0;
@@ -1785,22 +1772,11 @@ int ath12k_dp_ipa_smmu_unmap(struct ath12k_base *ab, u32 iova_addr, size_t size)
 	iova = rounddown(iova_addr, PAGE_SIZE);
 	len = roundup(size + iova_addr - iova, PAGE_SIZE);
 
-	if (iova >= pci_priv->ath12k_pci_extn.smmu_iova_ipa_start +
-		    pci_priv->ath12k_pci_extn.smmu_iova_ipa_len) {
-		ath12k_err(ab, "Out of IOVA space to unmap, iova %lx,"
-				"smmu_iova_ipa_start %pad, smmu_iova_ipa_len %zu\n",
-				iova,
-				&pci_priv->ath12k_pci_extn.smmu_iova_ipa_start,
-				pci_priv->ath12k_pci_extn.smmu_iova_ipa_len);
-		return -ENOMEM;
-	}
-
 	ath12k_dbg(ab, ATH12K_DBG_PCI, "IOMMU unmap: iova %lx, len %zu\n", iova, len);
 
 	dma_unmap_resource(&pci_dev->dev, (dma_addr_t)iova_addr, len,
 			   DMA_BIDIRECTIONAL, 0);
 
-	pci_priv->ath12k_pci_extn.smmu_iova_ipa_current = iova;
 	return 0;
 }
 /* Done SMMU Init for SDX */

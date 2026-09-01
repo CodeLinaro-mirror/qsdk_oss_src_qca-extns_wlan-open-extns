@@ -443,7 +443,7 @@ int ath12k_vendor_set_mu_sounding_params_extn(struct wiphy *wiphy,
                   struct ath12k_wifi_generic_params *params)
 {
     return -1;
-{
+}
 
 int ath12k_vendor_sched_mu_enable(struct wiphy *wiphy,
                   struct wireless_dev *wdev,

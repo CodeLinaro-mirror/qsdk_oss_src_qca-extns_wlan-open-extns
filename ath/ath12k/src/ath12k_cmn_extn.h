@@ -1968,5 +1968,16 @@ int ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     struct ieee80211_hw *hw,
 				     struct ath12k_hw *ah, struct nlattr **tb);
+
+/**
+ * ath12k_link_sta_find_by_addr_all_radios_extn() - Find arsta by peer MAC
+ * across all radios
+ * @ah:   ath12k_hw instance
+ * @addr: peer link MAC address to look up
+ *
+ * Return: the arsta on success, NULL if not found.
+ */
+struct ath12k_link_sta *
+ath12k_link_sta_find_by_addr_all_radios_extn(struct ath12k_hw *ah, const u8 *addr);
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

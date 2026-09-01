@@ -79,4 +79,40 @@ int ath12k_vendor_send_lowi_oem_data_extn(struct ieee80211_hw *hw,
 void ath12k_wmi_lowi_oem_response_event_extn(struct ath12k_base *ab,
 					     struct sk_buff *skb);
 
+/**
+ * ath12k_arvif_from_peer_addr_extn() - Resolve the link vif for a PASN peer
+ * in STA mode
+ * @wdev: wireless_dev the vendor command was issued on
+ * @peer_addr: peer link MAC address to resolve
+ *
+ * For an associated STA, looks up @peer_addr across all radios via
+ * ath12k_link_sta_find_by_addr_all_radios_extn() and returns the peer's
+ * link vif. For an unassociated STA (PASN ranging before association),
+ * falls back to ath12k_find_rtt_arvif_from_wdev().
+ *
+ * Return: the resolved link vif, or NULL if not found.
+ */
+struct ath12k_link_vif *ath12k_arvif_from_peer_addr_extn(struct wireless_dev *wdev,
+							 const u8 *peer_addr);
+
+/**
+ * ath12k_wmi_send_ltf_key_seed_all_radios_extn() - Push LTF keyseed to every
+ * associated link vdev of a STA vif, MLO or SLO
+ * @wdev: wireless_dev the vendor command was issued on (STA mode)
+ * @arg: WMI LTF keyseed argument; vdev_id is overwritten per link
+ * @peer_addr: PASN peer link MAC address the keyseed belongs to
+ *
+ * For a non-MLO (SLO) vif, sends on the single deflink vdev directly, since
+ * such vifs never populate links_map/link[]. For an MLO vif, walks all set
+ * bits in links_map, skipping any link that is not currently started. Each
+ * active link vdev gets ath12k_wmi_send_ltf_key_seed() followed by
+ * ath12k_pasn_peer_set_ltf_keyseed().
+ *
+ * Return: 0 on success, -ENOLINK if the vif or its active link cannot be
+ * resolved, or a negative error code if any link's WMI send fails.
+ */
+int ath12k_wmi_send_ltf_key_seed_all_radios_extn(struct wireless_dev *wdev,
+						 struct ath12k_wmi_ltf_keyseed_arg *arg,
+						 const u8 *peer_addr);
+
 #endif /* RANGING_EXTN_H */

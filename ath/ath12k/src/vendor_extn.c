@@ -3238,7 +3238,8 @@ static void ath12k_wsi_bypass_workfn(struct work_struct *work)
 /* Set link-vif level parameters
  * set 'reload' to true to send reload event to userspace */
 static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 param,
-                                          u32 value, bool *reload, u32 flags)
+                                          u32 value, bool *reload, u32 flags,
+					  void *data, u32 data_len)
 {
 	struct ath12k *ar = arvif->ar;
 	int ret = -1;
@@ -4296,6 +4297,45 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		} else {
 			ret = -EOPNOTSUPP;
 		}
+		break;
+	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_CHMASK_PER_STA: {
+		struct ath12k_link_sta *arsta;
+		struct chmask_per_sta *chmask;
+		u8 max_nss;
+
+		if (!data || data_len != sizeof(struct chmask_per_sta)) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "chmask_per_sta: invalid data or len %u\n", data_len);
+			return -EINVAL;
+		}
+
+		chmask = (struct chmask_per_sta *)data;
+		if (!is_valid_ether_addr(chmask->mac)) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "chmask_per_sta: invalid MAC address\n");
+			return -EINVAL;
+		}
+
+		max_nss = ath12k_vendor_get_max_tx_nss(ar);
+		if (chmask->nss > max_nss) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "chmask_per_sta: nss %u exceeds max %u\n",
+				   chmask->nss, max_nss);
+			return -EINVAL;
+		}
+
+		spin_lock_bh(&ar->arsta_lock);
+		arsta = ath12k_link_sta_find_by_addr_vdev_id(ar, chmask->mac,
+							     arvif->vdev_id);
+		spin_unlock_bh(&ar->arsta_lock);
+		if (!arsta) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "chmask_per_sta: STA not found\n");
+			return -ENOTCONN;
+		}
+		ret = ath12k_wmi_set_peer_param(ar, chmask->mac, arvif->vdev_id,
+						WMI_PEER_NSS, chmask->nss);
 		break;
 	}
 	default:
@@ -6617,7 +6657,8 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
                    vif, param, value,
                    params->ifindex, params->link_id);
 
-        ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload, params->flags);
+        ret = ath12k_vendor_set_arvif_params(arvif, param, value, &reload, params->flags,
+					     params->data, params->data_len);
 
         if (!ret && reload)
                 ath12k_vendor_event_iface_reload_link(wiphy, wdev, params->link_id);

@@ -407,6 +407,7 @@ struct wlan_intf_extn {
 struct npca_intf_extn {
     u8 en_threshold;
     u8 dis_threshold;
+    u8 consec_samp;
 };
 
 #define ATH12K_MSEC_PER_SEC		1000

@@ -18,6 +18,7 @@
 void ath12k_mac_set_intf_detect(struct ath12k *ar, u16 intf_detect_bitmap)
 {
 	u16 prev_config_bitmap;
+	u16 requested_bitmap = intf_detect_bitmap;
 	int ret;
 
 	spin_lock_bh(&ar->data_lock);
@@ -32,6 +33,10 @@ void ath12k_mac_set_intf_detect(struct ath12k *ar, u16 intf_detect_bitmap)
         }
 
 	spin_unlock_bh(&ar->data_lock);
+	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+		   "DCS NPCA: requested=0x%04x stored=0x%04x fw=0x%04x previous=0x%04x\n",
+		   requested_bitmap, ar->ar_extn.dcs_config_bitmap,
+		   intf_detect_bitmap, prev_config_bitmap);
 	ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_DCS,
 					intf_detect_bitmap, ar->pdev->pdev_id);
 	if (ret) {
@@ -496,6 +501,80 @@ void ath12k_wlan_intf_rollover_stats_extn(struct ath12k *ar)
 	spin_unlock_bh(&ar->data_lock);
 }
 
+/**
+ * ath12k_dcs_npca_intf_monitor - Monitor P20 OBSS CU and signal
+ * hostapd to enable/disable NPCA after 5 consecutive threshold crossings.
+ *
+ * enable : reg_unused_cu > coch_intr_threshold + 20 for 5 secs
+ * disable: reg_unused_cu < 20% for 5 secs
+ */
+static void ath12k_dcs_npca_intf_monitor(struct ath12k *ar,
+					  struct ath12k_link_vif *arvif,
+					  struct ath12k_base *ab,
+					  struct dcs_wlan_intr_metrics *metrics)
+{
+	struct npca_intf_extn *npca_intf = &ar->ar_extn.npca_intf;
+	struct ieee80211_bss_conf *link_conf;
+	u8 en_threshold;
+	u8 dis_threshold;
+	u8 cu;
+	bool npca_enabled;
+
+	if (!arvif) {
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "DCS NPCA: no AP arvif, skipping monitor\n");
+		return;
+	}
+
+	cu = (u8)min_t(u32, metrics->reg_unused_cu, 100);
+	en_threshold = npca_intf->en_threshold ?: 50;
+	dis_threshold = npca_intf->dis_threshold ?: 20;
+	link_conf = rcu_dereference(arvif->ahvif->vif->link_conf[
+					 arvif->link_id]);
+	npca_enabled = link_conf &&
+		link_conf->chanreq.oper.npca_freq;
+
+	ath12k_dbg(ab, ATH12K_DBG_WMI,
+		   "DCS NPCA: pdev=%u link_id=%u cu=%u en_thr=%u dis_thr=%u "
+		   "consec=%u link_conf=%p npca_freq=%u npca_punct=0x%x "
+		   "npca_enabled=%u\n",
+		   ar->pdev->pdev_id, arvif->link_id, cu, en_threshold,
+		   dis_threshold, npca_intf->consec_samp, link_conf,
+		   link_conf ? link_conf->chanreq.oper.npca_freq : 0,
+		   link_conf ? link_conf->chanreq.oper.npca_puncture_bitmap : 0,
+		   npca_enabled);
+
+
+	if (npca_enabled) {
+		if (cu < dis_threshold)
+			npca_intf->consec_samp++;
+		else
+			npca_intf->consec_samp = 0;
+
+		if (npca_intf->consec_samp >= 5) {
+			ath12k_dbg(ab, ATH12K_DBG_WMI,
+				   "DCS NPCA: disabling NPCA after %u samples\n",
+				   npca_intf->consec_samp);
+			ath12k_vendor_send_intf_notify_extn(ar,
+						      ATH12K_DCS_NPCA_AUTO, 0);
+			npca_intf->consec_samp = 0;
+		}
+	} else {
+		if (cu > en_threshold)
+			npca_intf->consec_samp++;
+		else
+			npca_intf->consec_samp = 0;
+
+		if (npca_intf->consec_samp >= 5) {
+			ath12k_dbg(ab, ATH12K_DBG_WMI,
+				   "DCS NPCA: enabling NPCA after %u samples\n",
+				   npca_intf->consec_samp);
+			ath12k_vendor_send_intf_notify_extn(ar,
+						      ATH12K_DCS_NPCA_AUTO, 1);
+			npca_intf->consec_samp = 0;
+		}
+	}
+}
 
 /**
  * ath12k_dcs_wlan_intf_monitor - Accumulate WLAN interference score
@@ -563,6 +642,8 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	struct wmi_dcs_wlan_interference_stats *prev, *curr;
 	struct dcs_wlan_intr_metrics metrics = {};
 	struct ath12k *ar;
+	struct ath12k_link_vif *arvif;
+	struct ath12k_link_vif *ap_arvif = NULL;
 	int ret;
 	u32 cycle_count_den, tsf_den;
 
@@ -583,9 +664,23 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	}
 
 	spin_lock_bh(&ar->data_lock);
-	if (!(ar->ar_extn.dcs_config_bitmap & WMI_DCS_WLAN_INTF)) {
+	if (!(ar->ar_extn.dcs_config_bitmap & (WMI_DCS_WLAN_INTF | ATH12K_DCS_NPCA_AUTO))) {
 		spin_unlock_bh(&ar->data_lock);
 		goto exit;
+	}
+	spin_unlock_bh(&ar->data_lock);
+
+	spin_lock_bh(&ar->data_lock);
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (!arvif->is_started || !arvif->ahvif ||
+		    !arvif->ahvif->vif)
+			continue;
+
+		if (arvif->ahvif->vif->type != NL80211_IFTYPE_AP)
+			continue;
+
+		ap_arvif = arvif;
+		break;
 	}
 	spin_unlock_bh(&ar->data_lock);
 
@@ -696,6 +791,13 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	/* WLAN interference path: accumulate score, trigger channel switch */
 	if (ar->ar_extn.dcs_config_bitmap & WMI_DCS_WLAN_INTF)
 		ath12k_dcs_wlan_intf_monitor(ar, ab, &metrics);
+
+	/* NPCA auto path: monitor OBSS CU, signal hostapd on threshold */
+	if (ar->ar_extn.dcs_config_bitmap & ATH12K_DCS_NPCA_AUTO) {
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			   "DCS NPCA: monitor enabled, arvif=%p\n", ap_arvif);
+		ath12k_dcs_npca_intf_monitor(ar, ap_arvif, ab, &metrics);
+	}
 
 	ath12k_dbg(ab, ATH12K_DBG_WMI,
 		   "DCS: deltas rxclr=%u rxclr_ext=%u tx_frame=%u rx_frame=%u cycle=%u",

@@ -4604,6 +4604,55 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 						WMI_PEER_NSS, chmask->nss);
 		break;
 	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_FRAME_INJECTOR_EN: {
+		struct ath12k_frame_injector_params *fi;
+		struct wmi_frame_inject_arg arg = {};
+
+		if (!data || data_len < sizeof(*fi)) {
+			ath12k_err(NULL, "frame_inject: invalid data len %u\n", data_len);
+			return -EINVAL;
+		}
+
+		fi = (struct ath12k_frame_injector_params *)data;
+
+		if (fi->frametype != WMI_FRAME_INJECT_TYPE_QOS_NULL &&
+		    fi->frametype != WMI_FRAME_INJECT_TYPE_CTS_TO_SELF) {
+			ath12k_err(NULL, "frame_inject: unsupported frame type %u\n",
+				   fi->frametype);
+			return -EINVAL;
+		}
+
+		if (fi->enable > 1) {
+			ath12k_err(NULL, "frame_inject: enable must be 0 or 1\n");
+			return -EINVAL;
+		}
+		if(fi->enable) {
+			if (fi->inject_period > arvif->beacon_interval) {
+				ath12k_err(NULL,
+					   "frame_inject: inject_period %u ms exceeds beacon interval %u ms\n",
+					   fi->inject_period, arvif->beacon_interval);
+				return -EINVAL;
+			}
+
+			if (fi->frame_duration > ATH12K_FRAME_INJECTOR_MAX_DUR) {
+				ath12k_err(NULL,
+					   "frame_inject: frame_duration %u usecs exceeds max %u\n",
+					   fi->frame_duration, ATH12K_FRAME_INJECTOR_MAX_DUR);
+				return -EINVAL;
+			}
+		}
+		arg.vdev_id             = arvif->vdev_id;
+		arg.enable              = fi->enable;
+		arg.frame_type          = fi->frametype;
+		if (fi->enable) {
+			arg.frame_inject_period = fi->inject_period;
+			ether_addr_copy(arg.dstmac, fi->dstmac);
+			arg.fc_duration         = fi->frame_duration;
+			arg.bw                  = fi->bandwidth;
+		}
+		ret = ath12k_wmi_send_pdev_frame_inject_cmd(ar, &arg);
+		break;
+	}
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);

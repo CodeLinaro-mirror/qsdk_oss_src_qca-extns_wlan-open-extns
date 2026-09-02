@@ -377,6 +377,10 @@
 #define ATH12K_CFG_FILE_NAME_MAX 128
 #define ATH12K_MAX_CFG 0xffffffff
 
+#define ATH12K_DP_STATS_MASK_MIN		0x00000000
+#define ATH12K_DP_STATS_MASK_MAX		0xFFFFFFFF
+#define ATH12K_DP_STATS_MASK_DEFAULT		0x00000001
+
 /* Buffer size for ini_config debugfs read output */
 #define ATH12K_EXTN_INI_CONFIG_BUF_SIZE	4096
 
@@ -492,6 +496,7 @@
 	ATH12K_CFG(ATH12K_INI_DP_UCAST_ENABLE_AST_OVERRIDE) \
 	ATH12K_CFG(ATH12K_INI_DP_IPA_SFE_ENABLE) \
 	ATH12K_CFG_DP_IPA_OFFLOAD_ENTRIES \
+	ATH12K_CFG(ATH12K_INI_DP_STATS_MASK) \
 
 #ifdef CPTCFG_EXT_IPA_OFFLOAD
 #define ATH12K_CFG_DP_IPA_OFFLOAD_ENTRIES \
@@ -1148,6 +1153,13 @@
 #define ATH12K_CFG_SCAN_RADIO_TX_ON_DFS \
 	ATH12K_CFG_INI_BOOL("scan_radio_tx_on_dfs_channels", false, \
 	"Enable TX on DFS channels for scan radio")
+
+#define ATH12K_INI_DP_STATS_MASK \
+	ATH12K_CFG_INI_UINT("dp_stats_mask", \
+	ATH12K_DP_STATS_MASK_MIN, \
+	ATH12K_DP_STATS_MASK_MAX, \
+	ATH12K_DP_STATS_MASK_DEFAULT, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, "DP stats collection bitmask")
 
 /**
  * ATH12K_CFG_PARALLEL_HW_SCAN - Enable parallel hardware scan on multi-radio platforms

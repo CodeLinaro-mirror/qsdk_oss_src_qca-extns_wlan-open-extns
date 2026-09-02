@@ -18528,6 +18528,109 @@ ath12k_vendor_mapc_peer_get_params_extn(struct wiphy *wiphy,
 }
 EXPORT_SYMBOL(ath12k_vendor_mapc_peer_get_params_extn);
 
+const struct nla_policy
+ath12k_wnm_tim_bcast_policy[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_INTERVAL]  = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_OFFSET]    = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_HIGH_RATE] = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_LOW_RATE]  = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_ENABLE]    = { .type = NLA_U8 },
+	[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_PEER_MAC]  = { .type = NLA_BINARY,
+							    .len = ETH_ALEN },
+};
+
+int ath12k_vendor_wnm_tim_bcast_extn(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_MAX + 1];
+	struct nlattr *mac_attr;
+	struct ieee80211_sta *sta;
+	struct ath12k_sta *ahsta;
+	const u8 *peer_mac;
+	u8 interval, offset, high_rate, low_rate, enable;
+	int ret;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_MAX,
+			data, data_len, ath12k_wnm_tim_bcast_policy, NULL);
+	if (ret) {
+		pr_err("ath12k: WNM TIM Broadcast: nla_parse failed ret=%d data_len=%d\n",
+		       ret, data_len);
+		return ret;
+	}
+
+	pr_info("ath12k: WNM TIM Broadcast vendor cmd received data_len=%d\n",
+		data_len);
+
+	mac_attr = tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_PEER_MAC];
+	enable    = tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_ENABLE]    ?
+		    nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_ENABLE])    : 0;
+
+	/*
+	 * AP-level enable/disable: no PEER_MAC means this is a VAP-level
+	 * notification from hostapd at AP start (wnm_tim_bcast=1 in config).
+	 * Enable or disable SWBA event subscription for the vdev.
+	 */
+	if (!mac_attr || nla_len(mac_attr) != ETH_ALEN) {
+		struct ieee80211_vif *vif;
+		struct ath12k_vif *ahvif;
+		struct ath12k_link_vif *arvif;
+
+		if (!wdev) {
+			pr_err("ath12k: WNM TIM Broadcast AP enable: no wdev\n");
+			return -EINVAL;
+		}
+		vif = wdev_to_ieee80211_vif(wdev);
+		if (!vif) {
+			pr_err("ath12k: WNM TIM Broadcast AP enable: no vif\n");
+			return -EINVAL;
+		}
+		ahvif = ath12k_vif_to_ahvif(vif);
+		arvif = &ahvif->deflink;
+		if (!arvif->ar) {
+			pr_err("ath12k: WNM TIM Broadcast AP enable: arvif not ready\n");
+			return -ENODEV;
+		}
+		pr_info("ath12k: WNM TIM Broadcast: AP-level %s for vdev %d\n",
+			enable ? "enable" : "disable", arvif->vdev_id);
+		return ath12k_mac_wnm_tim_bcast_ap_enable(arvif, !!enable);
+	}
+
+	/* Per-STA path: configure TIM Broadcast parameters for a specific STA */
+	peer_mac = nla_data(mac_attr);
+
+	interval  = tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_INTERVAL]  ?
+		    nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_INTERVAL])  : 0;
+	offset    = tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_OFFSET]    ?
+		    nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_OFFSET])    : 0;
+	high_rate = tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_HIGH_RATE] ?
+		    nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_HIGH_RATE]) : 0;
+	low_rate  = tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_LOW_RATE]  ?
+		    nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_LOW_RATE])  : 0;
+
+	rcu_read_lock();
+	sta = ieee80211_find_sta_by_ifaddr(hw, peer_mac, NULL);
+	if (!sta) {
+		rcu_read_unlock();
+		return -ENOENT;
+	}
+
+	ahsta = ath12k_sta_to_ahsta(sta);
+	ahsta->tim_bcast_enabled  = !!enable;
+	ahsta->tim_bcast_interval = interval;
+	ahsta->tim_bcast_offset   = offset;
+	ahsta->tim_bcast_high_rate = high_rate;
+	ahsta->tim_bcast_low_rate  = low_rate;
+	rcu_read_unlock();
+
+	pr_info("ath12k: WNM TIM Broadcast: configured peer %pM interval=%u offset=%u enable=%u\n",
+		peer_mac, interval, offset, enable);
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_vendor_wnm_tim_bcast_extn);
+
 /**
  * ath12k_vendor_extap_setup_handler - vendor command handler for
  * %QCA_NL80211_VENDOR_SUBCMD_EXTAP_SETUP

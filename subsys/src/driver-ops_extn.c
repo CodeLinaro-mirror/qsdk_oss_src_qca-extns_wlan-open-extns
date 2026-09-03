@@ -64,21 +64,18 @@ int ieee80211_validate_6ghz_chandef_extn(struct ieee80211_local *local,
 /**
  * ieee80211_nol_regdom_change_locked_extn - notify driver of a regulatory domain update
  * @local: mac80211 local state
- * @channel: a 5 GHz channel from the band being updated; used to identify
- *           the matching ath12k ar instance via center-frequency range lookup
  *
  * Called from cfg80211_nol_regdom_update_locked_extn() after handle_band_custom()
  * has finished updating the 5 GHz channel table.  Delegates to the driver
- * callback which clears the in-memory NOL and restores it from the saved
- * dump file if the new country code matches.
+ * callback which iterates all radios on the ieee80211_hw and restores each
+ * radio's NOL from its dump file if the new country code matches.
  */
-void ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local,
-					     struct ieee80211_channel *channel)
+void ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local)
 {
 	if (!local->ops_extn || !local->ops_extn->nol_regdom_change_locked_extn)
 		return;
 
-	local->ops_extn->nol_regdom_change_locked_extn(&local->hw, channel);
+	local->ops_extn->nol_regdom_change_locked_extn(&local->hw);
 }
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT

@@ -419,8 +419,7 @@ ieee80211_validate_6ghz_chandef_extn(struct ieee80211_local *local,
 }
 
 static inline void
-ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local,
-					struct ieee80211_channel *channel)
+ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local)
 {
 }
 
@@ -521,8 +520,7 @@ int ieee80211_validate_6ghz_chandef_extn(struct ieee80211_local *local,
 					 const struct cfg80211_chan_def *chandef,
 					 enum ieee80211_ap_reg_power power_type);
 
-void ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local,
-					     struct ieee80211_channel *channel);
+void ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local);
 
 void
 ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
@@ -702,12 +700,8 @@ ieee80211_vendor_mesh_get_key(struct wiphy *wiphy,
  *	HW blocklist constraints).
  * @nol_regdom_change_locked_extn: Called from handle_band_custom() after
  *     per-channel regulatory processing completes for the 5 GHz band.
- *     The driver should clear its in-memory NOL and, if the new country
- *     code matches the saved dump, restore the NOL entries with
- *     correctly back-dated NOP timers.
- *     @hw: the ieee80211_hw for this radio
- *     @channel: any 5 GHz channel belonging to the radio being updated;
- *               used only to identify which ath12k ar instance to act on
+ *     The driver iterates all radios on the ieee80211_hw and restores
+ *     each radio's NOL from its dump file if the country code matches.
  * @mesh_peer_update_caps_extn: When receiving beacons from the mesh peer, parse the
  * 	relevant elements and update the mesh peer capabilities. Send the peer assoc
  * 	WMI to update the existing peer capabilities to FW.
@@ -721,8 +715,7 @@ struct ieee80211_ops_extn {
 					  unsigned int link_id,
 					  const struct cfg80211_chan_def *chandef,
 					  enum ieee80211_ap_reg_power power_type);
-	void (*nol_regdom_change_locked_extn)(struct ieee80211_hw *hw,
-					      struct ieee80211_channel *channel);
+	void (*nol_regdom_change_locked_extn)(struct ieee80211_hw *hw);
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	int (*mesh_peer_update_caps_extn)(struct ieee80211_hw *hw,
 					  struct ieee80211_vif *vif,

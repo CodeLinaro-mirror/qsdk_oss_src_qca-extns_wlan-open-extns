@@ -415,6 +415,7 @@
 	ATH12K_CFG(ATH12K_CFG_CRASH_ON_UMCMN_FATAL) \
 	ATH12K_CFG(ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_SPECTRAL_SCAN_COUNT_MAX) \
+	ATH12K_CFG(ATH12K_CFG_SYNC_RCU_EXPEDITE) \
 
 
 #define ATH12K_CFG_REG \
@@ -1161,6 +1162,9 @@
 	ATH12K_DP_STATS_MASK_DEFAULT, \
 	ATH12K_CFG_VALUE_OR_DEFAULT, "DP stats collection bitmask")
 
+#define ATH12K_CFG_SYNC_RCU_EXPEDITE \
+	ATH12K_CFG_INI_BOOL("use_sync_rcu_expedited", true, \
+	"Enable/Disable expedited RCU sync")
 /**
  * ATH12K_CFG_PARALLEL_HW_SCAN - Enable parallel hardware scan on multi-radio platforms
  *

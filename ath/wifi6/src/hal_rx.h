@@ -125,7 +125,7 @@ static inline void
 ath12k_wifi6_hal_rx_get_phyrx_abort(const void *tlv_data,
 				    struct hal_rx_mon_ppdu_info *ppdu_info)
 {
-	struct ath12k_wifi6_phyrx_abort_info *abort_info =
+	struct ath12k_phyrx_abort_info *abort_info =
 		ppdu_info->ppdu_info_extn.phyrx_abort_info;
 
 	if (!abort_info)

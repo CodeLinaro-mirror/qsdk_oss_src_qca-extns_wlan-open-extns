@@ -2026,3 +2026,74 @@ void ath12k_mac_update_encap_decap_ext(struct ieee80211_vif *vif,
 		ieee80211_set_vif_encap_ops(vif_to_sdata(vif));
 	}
 }
+
+/*
+ * ath12k_mac_op_remain_on_channel_extn - extension hook called from
+ * ath12k_mac_op_remain_on_channel() before the generic scan-vdev ROC path.
+ *
+ * For a PASN Authentication frame ROC, retune the dedicated RTT/ranging
+ * vdev (rtt_vif) onto the target channel directly via start_rtt_vif() in
+ * ranging_extn.c, instead of using a scan vdev.
+ *
+ * Returns 0 if the direct path handled the ROC (caller should return
+ * immediately), or a negative error if it does not apply/failed (caller
+ * should fall through to the regular scan-vdev ROC path).
+ */
+int ath12k_mac_op_remain_on_channel_extn(struct ieee80211_hw *hw,
+					 struct ieee80211_vif *vif,
+					 struct cfg80211_chan_def *chandef,
+					 int duration,
+					 enum ieee80211_roc_type type)
+{
+	struct ath12k *ar;
+
+	if (type != IEEE80211_ROC_TYPE_MGMT_TX_PASN)
+		return -EINVAL;
+
+	ar = ath12k_mac_select_scan_device(hw, vif, chandef->chan->center_freq);
+	if (!ar)
+		return -EINVAL;
+
+	return start_rtt_vif(ar, hw, chandef, duration, type);
+}
+EXPORT_SYMBOL(ath12k_mac_op_remain_on_channel_extn);
+
+/*
+ * ath12k_mgmt_over_wmi_tx_work_extn - extension hook called from
+ * ath12k_mgmt_over_wmi_tx_work() for each dequeued mgmt skb, before the
+ * normal ahvif/arvif lookup (which would fail/NULL-deref for a PASN Auth
+ * frame redirected to the dedicated RTT vdev, since it has no ahvif).
+ *
+ * Returns true if the skb was fully handled here (sent or dropped) and
+ * the caller should move on to the next skb; false if this skb is not
+ * PASN-related and normal processing should proceed.
+ */
+bool ath12k_mgmt_over_wmi_tx_work_extn(struct ath12k *ar, struct sk_buff *skb)
+{
+	return ranging_redirect_mgmt_tx_wmi(ar, skb);
+}
+EXPORT_SYMBOL(ath12k_mgmt_over_wmi_tx_work_extn);
+
+/*
+ * ath12k_wmi_mgmt_send_extn - extension hook called from
+ * ath12k_wmi_mgmt_send() when ath12k_mac_get_arvif() can't resolve the
+ * vdev_id, because the dedicated RTT/ranging vdev (rtt_vif) is not
+ * registered in mac80211's per-vif tracking.
+ */
+struct ath12k_link_vif *ath12k_wmi_mgmt_send_extn(struct ath12k *ar, u32 vdev_id)
+{
+	return ath12k_get_rtt_vif_by_vdev_id_extn(ar->ab, vdev_id);
+}
+EXPORT_SYMBOL(ath12k_wmi_mgmt_send_extn);
+
+/*
+ * ath12k_wmi_mgmt_get_freq_extn - extension hook called from
+ * ath12k_wmi_mgmt_get_freq() when the normal scan-state-derived
+ * frequency is 0, to supply the PASN direct-path rtt_vif's tuned
+ * channel instead.
+ */
+u32 ath12k_wmi_mgmt_get_freq_extn(struct ath12k *ar)
+{
+	return get_ranging_pasn_auth_freq(ar);
+}
+EXPORT_SYMBOL(ath12k_wmi_mgmt_get_freq_extn);

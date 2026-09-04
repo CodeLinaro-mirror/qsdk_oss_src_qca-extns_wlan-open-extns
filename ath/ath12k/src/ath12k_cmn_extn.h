@@ -104,6 +104,53 @@ struct esp_extn {
 	u32 fw_esp_air_time;
 	struct wiphy_work airtime_update_work;
 };
+
+struct ath12k_rtt_context_extn {
+      /* wdev from which the current RTT_START vendor command was received.
+         * Used to route PASN vendor events to the correct netlink socket when
+         * arvif->ahvif is NULL (rtt_arvif case).  Cleared after each LOWI
+         * response event so stale wdev pointers are never used.
+         */
+        struct wireless_dev *current_ranging_wdev;
+        /* Set after WMI_VDEV_ADD_MAC_ADDR_TO_RX_FILTER_CMDID is sent;
+         * cleared on rtt_arvif destroy so the next session re-installs.
+         */
+        bool rx_filter_sent;
+        /* Operating frequency (MHz) of the ranging target channel.
+         * Stored at RTT_START time from the resolved ar's channel context
+         * so ath12k_vendor_send_pasn_event_extn can trigger ROC on the
+         * correct freq (rtt_arvif has no chanctx of its own).
+         */
+        u32 ranging_freq;
+        /* MAC address for the WMI RX filter (WMI_VDEV_ADD_MAC_ADDR_TO_RX_FILTER_CMDID).
+         * Set in ath12k_pasn_send_roc_and_rx_filter_extn from current_ranging_wdev.
+         * Used in ath12k_mac_op_remain_on_channel to install the filter on the
+         * scan vdev with the actual ROC freq, so the MAC is known even when
+         * the ROC arrives without current_ranging_wdev being set.
+         */
+        u8 filter_mac[ETH_ALEN];
+        /* AP channel (MHz) for the active PASN Auth exchange.  Learned from
+         * chandef in remain_on_channel (CMD_FRAME freq).  Non-zero means
+         * rtt_arvif is tuned to this channel for PASN; cleared after retune
+         * to ranging_freq in vendor_pasn_cmd_extn.
+         */
+        u32 pasn_auth_freq;
+        /* Bitmap tracking active ranging operations.  current_ranging_wdev is
+         * cleared only when this reaches 0 (no operations pending).
+         * Bit positions:
+         *   ATH12K_RTT_STATE_WAITING_MEAS  (BIT(1)): set after WMI_OEM_REQ_CMDID
+         *     is sent, cleared after OEM response vendor event is sent to userspace.
+         *   ATH12K_RTT_STATE_WAITING_PASN  (BIT(2)): set after PASN auth vendor
+         *     event is sent to wpa_supplicant, cleared after WMI auth status sent.
+         * ranging_state == 0 means READY_IDLE — no active ranging session.
+         */
+        u8 ranging_state;
+};
+
+/* ranging_state bit definitions */
+#define ATH12K_RTT_STATE_WAITING_MEAS		BIT(1)
+#define ATH12K_RTT_STATE_WAITING_PASN		BIT(2)
+
 struct ath12k_link_vif_extn {
 #ifdef CPTCFG_EXT_IPA_STATS
 	struct ath12k_dp_ipa_stats_vif_hw_stats *stats;
@@ -1297,6 +1344,9 @@ void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 void ath12k_mac_hw_register_extn(struct ath12k_hw *ah);
 
 void ath12k_wifi7_hw_init_extn(struct ath12k_base *ab);
+struct ath12k_link_vif *ath12k_wifi7_mgmt_handler_extn(struct ieee80211_hw *hw,
+						       struct ieee80211_vif *vif,
+						       struct sk_buff *skb);
 
 void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
 
@@ -1308,8 +1358,17 @@ void ath12k_mac_op_add_interface_extn(struct ieee80211_hw *hw,
 				      struct ieee80211_vif *vif);
 void ath12k_rtt_vdev_assoc_extn(struct ath12k *ar,
 			   struct ath12k_link_vif *arvif);
+bool ath12k_rtt_hw_scan_blocked_extn(struct ath12k *ar);
 void ath12k_mac_op_remove_interface_extn(struct ieee80211_hw *hw,
 					 struct ieee80211_vif *vif);
+int ath12k_mac_op_remain_on_channel_extn(struct ieee80211_hw *hw,
+					 struct ieee80211_vif *vif,
+					 struct cfg80211_chan_def *chandef,
+					 int duration,
+					 enum ieee80211_roc_type type);
+bool ath12k_mgmt_over_wmi_tx_work_extn(struct ath12k *ar, struct sk_buff *skb);
+struct ath12k_link_vif *ath12k_wmi_mgmt_send_extn(struct ath12k *ar, u32 vdev_id);
+u32 ath12k_wmi_mgmt_get_freq_extn(struct ath12k *ar);
 void ath12k_gpr_arvif_init(struct ath12k_link_vif *arvif);
 void ath12k_gpr_arvif_deinit(struct ath12k_link_vif *arvif);
 void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,

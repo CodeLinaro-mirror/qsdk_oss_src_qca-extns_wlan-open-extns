@@ -78,12 +78,21 @@ struct notifier_block;
  * @IEEE80211_EXTN_VAP_SUBMODE_NONE: Default mode, no special submode applied.
  * @IEEE80211_EXTN_VAP_SUBMODE_MESH: VAP operates in mesh mode for mesh networking.
  * @IEEE80211_EXTN_VAP_SUBMODE_SCAN: VAP operates in scan mode, typically for offchannel scan.
+ * @IEEE80211_EXTN_VAP_SUBMODE_ETH_OFFLOAD_MESH: VAP operates in eth offload mesh.
+ * @IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH: VAP operates in raw mode mesh.
  */
 enum ieee80211_extn_vap_submode {
 	IEEE80211_EXTN_VAP_SUBMODE_NONE = 0,
 	IEEE80211_EXTN_VAP_SUBMODE_MESH = 1,
 	IEEE80211_EXTN_VAP_SUBMODE_SCAN = 2,
+	IEEE80211_EXTN_VAP_SUBMODE_ETH_OFFLOAD_MESH = 3,
+	IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH = 4,
 };
+
+#define IEEE80211_EXTN_VAP_IS_MESH_MODE(submode) \
+	((submode) == IEEE80211_EXTN_VAP_SUBMODE_MESH || \
+	 (submode) == IEEE80211_EXTN_VAP_SUBMODE_ETH_OFFLOAD_MESH || \
+	 (submode) == IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH)
 
 /**
  * enum mesh_peer_preamble_type: Preamble type for mesh peer config

@@ -7943,7 +7943,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 			ath12k_err(NULL, "Invalid param command received\n");
 			return -EINVAL;
 		}
-		if (wdev->vap_submode != QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+		if (!QCA_WLAN_VENDOR_VAP_IS_MESH_MODE(wdev->vap_submode)) {
 			ath12k_err(NULL, "Received command for vap_submode: %d\n"
 				   "Command valid only for mesh vap\n",
 				   wdev->vap_submode);
@@ -16229,7 +16229,7 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 
 	sdata = vif_to_sdata(vif);
 
-	if (sdata->wdev.vap_submode != IEEE80211_EXTN_VAP_SUBMODE_MESH) {
+	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode)) {
 		ath12k_err(NULL, "mesh_peer_dump: not a mesh VAP\n");
 		return -EINVAL;
 	}

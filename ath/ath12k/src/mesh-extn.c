@@ -10,24 +10,22 @@
 #include <net/genetlink.h>
 #include <net/cfg80211.h>
 #include <linux/etherdevice.h>
-#include "../core.h"
-#include "ath12k_cmn_extn.h"
-#include "vendor_extn.h"
-#include "../debug.h"
-#include "../mac.h"
-#include "esp_extn.h"
-#include "ini.h"
-#include "../cmn_defs.h"
+#include "../../core.h"
+#include "../../qcn_extns/ath12k_cmn_extn.h"
+#include "../../qcn_extns/vendor_extn.h"
+#include "../../debug.h"
+#include "../../mac.h"
+#include "../../qcn_extns/esp_extn.h"
+#include "../../qcn_extns/ini.h"
+#include "../../cmn_defs.h"
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
-#include "if_meta_hdr.h"
-#include "mesh_util.h"
+#include "../../qcn_extns/if_meta_hdr.h"
+#include "../../qcn_extns/mesh_util.h"
 #endif
-#include "../wifi7/dp_tx.h"
-#include "../../../../../../net/mac80211/qcn_extns/cmn_extn.h"
-#include "../core.h"
-#include "../dp_htt.h"
-#include "../dp_stats.h"
-#include "../wifi7/hal.h"
+#include "../../../../../../../net/mac80211/qcn_extns/cmn_extn.h"
+#include "../../dp_htt.h"
+#include "../../dp_stats.h"
+#include "../hal.h"
 
 u_int32_t ath12k_dp_mesh_rx_status_dump(struct ath12k_base *ab, struct mesh_recv_hdr_s *rs1)
 {
@@ -164,7 +162,6 @@ u_int32_t ath12k_dp_mesh_rx_status_dump(struct ath12k_base *ab, struct mesh_recv
 	}
 	return 0;
 }
-EXPORT_SYMBOL(ath12k_dp_mesh_rx_status_dump);
 
 bool ath12k_dp_mesh_rx_filter_mesh_packets(struct ath12k_base *ab,
 					   struct ath12k_dp_peer *peer,
@@ -211,7 +208,6 @@ bool ath12k_dp_mesh_rx_filter_mesh_packets(struct ath12k_base *ab,
 
 	return false;
 }
-EXPORT_SYMBOL(ath12k_dp_mesh_rx_filter_mesh_packets);
 
 /*
  * ath12k_dp_rx_fill_mesh_metadata: Process hal_rx_data and update mesh_recv_hdr_s.
@@ -273,6 +269,10 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 	    rx_desc->tlv_info.encrypted) {
 		rx_info->rs_flags |= MESH_RX_DECRYPTED;
 		rx_info->rs_keyix = rx_desc->key_id_octate;
+		ath12k_dbg_level(dp_pdev->dp->ab, ATH12K_DBG_MMESH, ATH12K_DBG_L2,
+				 "Mesh rx spd: key_id=%u ad1=%pM ad2=%pM\n",
+				 rx_desc->key_id_octate,
+				 rx_desc->ad1, rx_desc->ad2);
 		pairwise = !rx_desc->rx_msdu_info.da_is_mcbc;
 		peer_mac = pairwise ? link_peer->addr:NULL;
 
@@ -343,7 +343,6 @@ void ath12k_dp_rx_fill_mesh_metadata(struct ath12k_pdev_dp *dp_pdev,
 	if (ath12k_dp_stats_enabled(dp_pdev))
 		DP_PEER_MISC_STATS_INC(peer, mmesh_stat, rxhdr_updt, 0, 1);
 }
-EXPORT_SYMBOL(ath12k_dp_rx_fill_mesh_metadata);
 
 
 int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb, struct ath12k_vif *ahvif, bool print,
@@ -395,4 +394,3 @@ int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb, struct ath12k_vif *ahvif, 
 	}
 	return 0;
 }
-EXPORT_SYMBOL(ath12k_dp_add_mesh_meta_hdr);

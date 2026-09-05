@@ -63,21 +63,30 @@ int ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab);
 	(((vp_num) < ATH12K_DP_IPA_VP_MIN) || ((vp_num) > ATH12K_DP_IPA_VP_MAX))
 
 /**
- * struct ath12k_dp_ipa_vp_profile - IPA PPE VP entry profile
+ * struct ath12k_ipa_vp_profile - IPA PPE VP entry profile
  * @drop_prec_enable: Whether precedence-drop is enabled for this VP
  * @to_fw_sw: Whether packets should be routed to FW/SW path for this VP
  * @use_ppe_int_pri: Whether to use PPE internal priority for this VP
- * @search_idx_reg_num: Search-index register number used for VP programming
+ * @search_idx_reg_num: Search-index register number used for VP programming.
+ *                      For WDS (AP_VLAN with is_wds_4addr): dp_vif->ast_idx
+ *                      (same index used in TCL TX descriptors).
+ *                      For normal AP/STA: 0 (index-based lookup not used).
+ * @cache_set: Cache-set number (ast_hash) for WDS (AP_VLAN); 0 for normal.
+ *             Stored in the profile for reference; used when programming the
+ *             AST override map register.
  * @vdev_id: VDEV identifier associated with this VP
- * @bank_id: PPE bank identifier used for VP programming
+ * @bank_id: PPE bank identifier used for VP programming.
+ *           For WDS (AP_VLAN): bank with HAL_TX_BANK_CONFIG_INDEX_LOOKUP_EN=1.
+ *           For normal AP/STA: standard bank (INDEX_LOOKUP_EN=0).
  * @lmac_id: LMAC identifier corresponding to the radio/PHY
  * @entry_valid: True if this VP profile entry is valid
-*/
+ */
 struct ath12k_ipa_vp_profile {
 	u8 drop_prec_enable;
 	u8 to_fw_sw;
 	u8 use_ppe_int_pri;
 	u8 search_idx_reg_num;
+	u8 cache_set;
 	u32 vdev_id;
 	u32 bank_id;
 	u32 lmac_id;
@@ -85,12 +94,15 @@ struct ath12k_ipa_vp_profile {
 };
 
 int ath12k_dp_ipa_alloc_vp_num(struct ath12k_vif *ahvif, struct net_device *dev);
-void ath12k_dp_ipa_dealloc_vp_num(struct ath12k_vif *ahvif);
+void ath12k_dp_ipa_dealloc_vp_num(u8 ahvif_id);
 int ath12k_dp_ipa_get_vp_from_dev(struct net_device *dev);
 struct net_device *ath12k_dp_ipa_get_netdev_from_vp(u8 vp_num);
+u32 ath12k_dp_ipa_get_bank_id(struct net_device *dev);
+u8 ath12k_dp_ipa_get_search_idx_reg_num(struct net_device *dev);
+u8 ath12k_dp_ipa_get_cache_set(struct net_device *dev);
 void ath12k_dp_ipa_set_ppe_vp_entry_config(struct ath12k_ipa_vp_profile *vp_profile,
-					   struct net_device *dev,
-					   struct ath12k_link_vif *arvif);
+					   struct ath12k_link_vif *arvif,
+					   struct ath12k_vif *ahvif);
 void ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(struct ath12k_base *ab,
 					   u8 vp_num,
 					   struct ath12k_ipa_vp_profile *vp_profile);
@@ -105,7 +117,8 @@ int ath12k_wifi8_dp_fill_tx_src(struct ath12k_base *ab);
 int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create);
 void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 						struct ipa_wdi_reg_intf_in_params *in);
-void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id);
+void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id,
+					      u8 ahvif_id, struct ath12k_base *ab);
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
 						  int intf_idx);
 

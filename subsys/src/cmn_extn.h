@@ -30,6 +30,8 @@ struct sta_info;
 struct ieee80211_bss_conf;
 struct ieee80211_hw;
 struct ieee80211_sta;
+struct cfg80211_scan_request;
+struct cfg80211_bss;
 extern unsigned int mmeshsim;
 struct notifier_block;
 
@@ -487,6 +489,20 @@ ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool en
 	return;
 }
 
+static inline int
+ieee80211_clamp_scan_to_ap_channel_extn(struct ieee80211_sub_if_data *sdata,
+					struct cfg80211_scan_request *req)
+{
+	return 0;
+}
+
+static inline bool
+ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
+					 struct cfg80211_bss *bss)
+{
+	return false;
+}
+
 #else
 
 u8 *
@@ -559,6 +575,14 @@ void ieee80211_scan_radio_do_stop_extn(struct ieee80211_sub_if_data *sdata,
 				       u32 *hw_reconf_flags);
 
 void ieee80211_set_allow_scan_on_dfs_chan_extn(struct ieee80211_local *local, bool enable);
+
+int
+ieee80211_clamp_scan_to_ap_channel_extn(struct ieee80211_sub_if_data *sdata,
+					struct cfg80211_scan_request *req);
+
+bool
+ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
+					 struct cfg80211_bss *bss);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);

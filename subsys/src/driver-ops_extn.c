@@ -98,6 +98,187 @@ void ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local)
 
 	local->ops_extn->nol_regdom_change_locked_extn(&local->hw);
 }
+/*
+ * For a diagnostic-STA vif (vif->diagnostic_sta),
+ * clamp a scan request to whatever channel the co-channel-context AP vif
+ * on the scan's own radio is currently operating on.
+ * The diagnostic-STA vif is supposed to scan only on AP operating
+ * channel, so added change in mac80211 to find the subset of AP’s
+ * channel in scan channel list and overwrite the channel list with
+ * AP’s channel and update channel count to 1
+ *
+ * If the co-channel-context AP vif has a channel switch in progress
+ * (link_conf->csa_active), ctx->conf.def still reflects the OLD channel --
+ * the new one isn't applied until ieee80211_csa_finalize() runs. Scanning/
+ * reconnecting to the old channel while the AP is mid-switch races the
+ * finalize and has been observed to crash firmware. Returns -EBUSY in
+ * that case so the caller rejects the scan outright instead of targeting
+ * a channel the AP is already leaving; the isolated STA vif will naturally
+ * get a fresh CTRL-EVENT-DISCONNECTED-driven reconnect attempt once
+ * AP-CSA-FINISHED clears csa_active.
+ */
+int ieee80211_clamp_scan_to_ap_channel_extn(struct ieee80211_sub_if_data *sdata,
+					    struct cfg80211_scan_request *req)
+{
+	struct ieee80211_local *local = sdata->local;
+	struct ieee80211_chanctx *ctx;
+	struct ieee80211_channel *ap_chan = NULL;
+	bool ap_csa_active = false;
+	u32 radio_mask = 0;
+	u32 i, kept = 0, orig_n_channels = req->n_channels;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	for (i = 0; i < req->n_channels; i++) {
+		int radio_idx = cfg80211_get_hw_idx_by_chan(local->hw.wiphy,
+							    req->channels[i]);
+		if (radio_idx >= 0)
+			radio_mask |= BIT(radio_idx);
+	}
+
+	list_for_each_entry(ctx, &local->chanctx_list, list) {
+		struct ieee80211_link_data *link;
+
+		/*
+		 * radio_mask == 0 means cfg80211_get_hw_idx_by_chan()
+		 * couldn't resolve a radio for any requested channel (e.g.
+		 * wiphy->n_radio == 0, a single implicit radio) -- don't
+		 * filter by radio at all in that case. Likewise, a chanctx
+		 * with radio_idx < 0 is never excluded, since -1 means "no
+		 * specific radio" on this wiphy too.
+		 */
+		if (radio_mask && ctx->conf.radio_idx >= 0 &&
+		    !(radio_mask & BIT(ctx->conf.radio_idx)))
+			continue;
+
+		list_for_each_entry(link, &ctx->assigned_links,
+				    assigned_chanctx_list) {
+			if (link->sdata->vif.type == NL80211_IFTYPE_AP ||
+			    link->sdata->vif.type == NL80211_IFTYPE_MONITOR
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+			    || link->sdata->wdev.vap_submode ==
+			       IEEE80211_EXTN_VAP_SUBMODE_MESH
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+			   ) {
+				ap_chan = ctx->conf.def.chan;
+				ap_csa_active = link->conf->csa_active;
+				break;
+			}
+		}
+		if (ap_chan)
+			break;
+	}
+
+	wiphy_dbg(local->hw.wiphy,
+		  "DEBUG_DIAG_STA: clamp_scan_to_ap_channel: requested_n_channels=%u radio_mask=0x%x ap_chan=%d MHz ap_csa_active=%d\n",
+		  orig_n_channels, radio_mask, ap_chan ? ap_chan->center_freq : -1,
+		  ap_csa_active);
+
+	if (!ap_chan) {
+		wiphy_dbg(local->hw.wiphy,
+			  "DEBUG_DIAG_STA: clamp_scan_to_ap_channel: ap_chan not present, go for full scan");
+		return 0;
+	}
+
+	if (ap_csa_active) {
+		wiphy_dbg(local->hw.wiphy,
+			  "DEBUG_DIAG_STA: clamp_scan_to_ap_channel: AP CSA in progress, rejecting scan\n");
+		return -EBUSY;
+	}
+
+
+	for (i = 0; i < req->n_channels; i++) {
+		if (req->channels[i]->center_freq == ap_chan->center_freq &&
+		    req->channels[i]->freq_offset == ap_chan->freq_offset)
+			req->channels[kept++] = req->channels[i];
+	}
+	if (!kept) {
+		wiphy_dbg(local->hw.wiphy,
+			  "DEBUG_DIAG_STA: clamp_scan_to_ap_channel:"
+			  "AP channel not in scan list, rejecting scan\n");
+
+		return -EINVAL;
+	}
+	req->n_channels = kept;
+
+	wiphy_dbg(local->hw.wiphy,
+		  "DEBUG_DIAG_STA: clamp_scan_to_ap_channel: kept=%u of %u channels\n",
+		  kept, orig_n_channels);
+
+	return 0;
+}
+EXPORT_SYMBOL(ieee80211_clamp_scan_to_ap_channel_extn);
+
+/*
+ * There is a possibility for STA to do Auth/Assoc against a stale
+ * scan cached BSS entry. Hence validate the STA’s Auth/Assoc channel
+ * with the co-located AP’s channel, if different reject the Auth/Assoc
+ * frame and abort the connection
+ */
+bool ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
+					      struct cfg80211_bss *bss)
+{
+	struct ieee80211_local *local = sdata->local;
+	struct ieee80211_chanctx *ctx;
+	int bss_radio_idx;
+
+	if (!sdata->vif.diagnostic_sta)
+		return false;
+
+	bss_radio_idx = cfg80211_get_hw_idx_by_chan(local->hw.wiphy, bss->channel);
+
+	list_for_each_entry(ctx, &local->chanctx_list, list) {
+		struct ieee80211_link_data *link;
+
+		/*
+		 * bss_radio_idx < 0 means cfg80211_get_hw_idx_by_chan()
+		 * couldn't resolve a radio for @bss's channel (e.g.
+		 * wiphy->n_radio == 0, a single implicit radio) -- don't
+		 * filter by radio at all in that case. Likewise, a chanctx
+		 * with radio_idx < 0 is never excluded, since -1 means "no
+		 * specific radio" on this wiphy too.
+		 */
+		if (bss_radio_idx >= 0 && ctx->conf.radio_idx >= 0 &&
+		    bss_radio_idx != ctx->conf.radio_idx)
+			continue;
+
+		list_for_each_entry(link, &ctx->assigned_links,
+				    assigned_chanctx_list) {
+			struct ieee80211_channel *ap_chan;
+
+			if (link->sdata->vif.type != NL80211_IFTYPE_AP &&
+			    link->sdata->vif.type != NL80211_IFTYPE_MONITOR
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+			    && link->sdata->wdev.vap_submode !=
+			       IEEE80211_EXTN_VAP_SUBMODE_MESH
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+			   )
+				continue;
+
+			if (link->conf->csa_active) {
+				wiphy_dbg(local->hw.wiphy,
+					  "DEBUG_DIAG_STA: diagnostic_sta_blocks_bss: vif=%s co-vif=%s csa_active=1, blocking\n",
+					  sdata->name, link->sdata->name);
+				return true;
+			}
+
+			ap_chan = ctx->conf.def.chan;
+			if (ap_chan && bss->channel &&
+			    (bss->channel->center_freq != ap_chan->center_freq ||
+			     bss->channel->freq_offset != ap_chan->freq_offset)) {
+				wiphy_dbg(local->hw.wiphy,
+					  "DEBUG_DIAG_STA: diagnostic_sta_blocks_bss: vif=%s co-vif=%s bss_chan=%d MHz ap_chan=%d MHz mismatch, blocking\n",
+					  sdata->name, link->sdata->name,
+					  bss->channel->center_freq,
+					  ap_chan->center_freq);
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(ieee80211_diagnostic_sta_blocks_bss_extn);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)

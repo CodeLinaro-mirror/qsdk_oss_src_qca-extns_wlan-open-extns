@@ -1201,8 +1201,10 @@ ath12k_wifi6_dp_mon_rx_remove_raw_frame_fcs(struct ath12k_pdev_dp *dp_pdev,
 			}
 		}
 
-		skb_coalesce_rx_frag(*tail_msdu, (skb_shinfo(*tail_msdu)->nr_frags - 1),
-				     -fcs_len_left, 0);
+		if (skb_shinfo(*tail_msdu)->nr_frags > 0 && fcs_len_left > 0)
+			skb_coalesce_rx_frag(*tail_msdu,
+					     (skb_shinfo(*tail_msdu)->nr_frags - 1),
+					     -fcs_len_left, 0);
 	}
 }
 
@@ -1533,7 +1535,10 @@ ath12k_wifi6_dp_mon_rx_mpdu_pop(struct ath12k_pdev_dp *dp_pdev, int mac_id,
 		msdu_link_desc = ath12k_wifi6_dp_rx_cookie_to_mon_link_desc(dp_pdev,
 									    &buf_info,
 									    pmon);
-		/* Need to handle !msdu_link_desc */
+		if (!msdu_link_desc) {
+			ath12k_err(ab, "msdu_link_desc should not be NULL\n");
+			BUG_ON(1);
+		}
 
 		ath12k_hal_rx_msdu_list_get(&ab->hal, msdu_link_desc, &msdu_list,
 					    &num_msdus);
@@ -1746,7 +1751,20 @@ ath12k_wifi6_dp_mon_rx_mpdu_restitch(struct ath12k_pdev_dp *dp_pdev,
 	/* Look for FCS error*/
 	num_frags = skb_shinfo(tail_msdu)->nr_frags;
 
+	if (!num_frags) {
+		ath12k_dbg(ab, ATH12K_DBG_DP_MON,
+			   "%pK: tail msdu does not have enough nr frags %d\n",
+			   tail_msdu, num_frags);
+		goto mpdu_restitch_fail;
+	}
+
 	rx_desc = ath12k_dp_mon_skb_get_frag_addr(tail_msdu, num_frags - 1);
+	if(!rx_desc) {
+		ath12k_dbg(ab, ATH12K_DBG_DP_MON,
+			   "%pK: rx_desc is NULL %pK", dp_pdev, rx_desc);
+		goto mpdu_restitch_fail;
+	}
+
 	rx_desc -= rx_mon_pkt_tlv_size;
 
 	ppdu_info->rs_fcs_err = ath12k_wifi6_dp_rx_desc_mpdu_fcs_err_get(rx_desc);
@@ -1802,8 +1820,8 @@ int ath12k_wifi6_dp_mon_rx_deliver_mpdu(struct ath12k_pdev_dp *dp_pdev,
 					struct hal_rx_mon_ppdu_info *ppdu_info,
 					struct napi_struct *napi)
 {
-	struct ath12k_dp *dp = dp_pdev->dp;
-	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp *dp;
+	struct ath12k_base *ab;
 	struct sk_buff *mpdu, *next_mpdu;
 	struct ieee80211_rx_status rxs = {0};
 	int freq_update = -1;
@@ -1811,6 +1829,9 @@ int ath12k_wifi6_dp_mon_rx_deliver_mpdu(struct ath12k_pdev_dp *dp_pdev,
 	if (!dp_pdev) {
 		goto fail;
 	}
+
+	dp = dp_pdev->dp;
+	ab = dp->ab;
 
 	mpdu = ath12k_wifi6_dp_mon_rx_mpdu_restitch(dp_pdev, head_msdu, tail_msdu,
 						       ppdu_info);
@@ -1842,9 +1863,9 @@ fail:
 	mpdu = head_msdu;
 	while (mpdu) {
 		next_mpdu = mpdu->next;
-		dev_kfree_skb_any(mpdu);
-		ath12k_dbg(ab, ATH12K_DBG_DP_MON, "mpdu deliver failed mpdu = %pK"
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON, "mpdu deliver failed mpdu = %pK"
 			   "len = %u\n", mpdu, mpdu->len);
+		dev_kfree_skb_any(mpdu);
 		mpdu = next_mpdu;
 	}
 	return -EINVAL;
@@ -1998,6 +2019,9 @@ ath12k_wifi6_dp_mon_update_scan_radio_stats(struct ath12k_pdev_dp *pdev_dp,
 	stats = &mon_dp_extn->rx_scan_radio_stats;
 
 	num_users = ppdu_info->num_users;
+	if (num_users > HAL_MAX_UL_MU_USERS)
+		num_users = HAL_MAX_UL_MU_USERS;
+
 	for (user = 0; user < num_users; user++) {
 		struct hal_rx_user_status *rx_user_status =
 			&ppdu_info->userstats[user];

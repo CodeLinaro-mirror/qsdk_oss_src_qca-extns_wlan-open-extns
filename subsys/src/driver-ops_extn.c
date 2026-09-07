@@ -11,6 +11,7 @@
 #include "../debugfs_sta.h"
 #include "../debugfs_netdev.h"
 #include "../../wireless/core.h"
+#include "cmn_extn.h"
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define SUPPORTED_RATES_LEN 8
@@ -279,6 +280,81 @@ bool ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdat
 	return false;
 }
 EXPORT_SYMBOL(ieee80211_diagnostic_sta_blocks_bss_extn);
+
+static const char *
+ieee80211_diagnostic_sta_disconnect_reason_str(enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	switch (reason) {
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_CSA:
+		return "co-channel-context CSA";
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_RADAR:
+		return "co-channel-context DFS radar detection";
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_AWGN:
+		return "co-channel-context AWGN/CW interference";
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_USERSPACE_CHANGE:
+		return "co-channel-context userspace channel change";
+	default:
+		return "co-channel-context channel change";
+	}
+}
+
+/*
+ * Synchronously drop any diagnostic-STA vif (vif->diagnostic_sta, see
+ * mac80211.h) currently assigned to @ctx, notifying the driver of @reason
+ * so it can log/report it (see &enum ieee80211_diagnostic_sta_disconnect_reason).
+ * There is no single "initiator" link to exclude here: any isolated STA vif
+ * sharing @ctx is disconnected. This covers the co-located-AP CSA case too
+ * (the initiator link is never itself DIAGNOSTIC_STA -- that flag is only
+ * ever set on STA-type vifs -- so it is already excluded by the flag check
+ * below without needing a separate initiator check).
+ */
+void ieee80211_disconnect_diagnostic_sta_on_ctx_extn(struct ieee80211_local *local,
+						     struct ieee80211_chanctx *ctx,
+						     enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	struct ieee80211_link_data *link, *tmp;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	if (!ctx)
+		return;
+
+	list_for_each_entry_safe(link, tmp, &ctx->assigned_links,
+				 assigned_chanctx_list) {
+		if (!link->sdata->vif.diagnostic_sta)
+			continue;
+
+		sdata_info(link->sdata,
+			   "%s; disconnecting diagnostic-STA\n",
+			   ieee80211_diagnostic_sta_disconnect_reason_str(reason));
+		wiphy_work_queue(local->hw.wiphy, &link->sdata->u.mgd.csa_connection_drop_work);
+		ieee80211_link_release_channel(link);
+		drv_notify_diagnostic_sta_disconnect(local, link->sdata,
+						     link->link_id, reason);
+	}
+}
+EXPORT_SYMBOL(ieee80211_disconnect_diagnostic_sta_on_ctx_extn);
+
+/*
+ * mac80211's own copy of this helper (formerly a static inline in
+ * driver-ops.h) lived alongside drv_unassign_vif_chanctx() and friends;
+ * moved here since notify_diagnostic_sta_disconnect is itself a
+ * CPTCFG_QCN_EXTN-only driver op.
+ */
+void drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
+					struct ieee80211_sub_if_data *sdata,
+					unsigned int link_id,
+					enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	if (!sdata || !local->ops->notify_diagnostic_sta_disconnect)
+		return;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	local->ops->notify_diagnostic_sta_disconnect(&local->hw, &sdata->vif,
+						   link_id, reason);
+}
+EXPORT_SYMBOL(drv_notify_diagnostic_sta_disconnect);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)

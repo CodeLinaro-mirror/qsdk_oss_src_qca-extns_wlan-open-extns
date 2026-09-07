@@ -16814,6 +16814,139 @@ const char *ath12k_phymode_str(enum wmi_phy_mode mode)
 	return "<unknown>";
 }
 
+/**
+ * ath12k_diagnostic_sta_reason_to_vendor() - Map a mac80211 diagnostic-STA
+ * disconnect reason to the corresponding %qca_disconnect_reason_codes value.
+ * @reason: mac80211 &enum ieee80211_diagnostic_sta_disconnect_reason
+ *
+ * Return: matching enum qca_disconnect_reason_codes
+ */
+static enum qca_disconnect_reason_codes
+ath12k_diagnostic_sta_reason_to_vendor(enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	switch (reason) {
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_RADAR:
+		return QCA_STA_DISCONNECT_REASON_RADAR;
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_AWGN:
+		return QCA_STA_DISCONNECT_REASON_AWGN;
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_USERSPACE_CHANGE:
+		return QCA_STA_DISCONNECT_REASON_USERSPACE_CHANGE;
+	case IEEE80211_DIAGNOSTIC_STA_DISCONNECT_CSA:
+	default:
+		return QCA_STA_DISCONNECT_REASON_CSA;
+	}
+}
+
+/**
+ * ath12k_vendor_send_disconnect_reason() - Send driver disconnect reason
+ * vendor event
+ * @ar: ath12k device pointer
+ * @vif: the vif the reason applies to
+ * @reason: driver-specific disconnect reason, enum qca_disconnect_reason_codes
+ *
+ * Sends the %QCA_NL80211_VENDOR_SUBCMD_DRIVER_DISCONNECT_REASON vendor event
+ * to userspace with the driver-specific reason for a host-driver-initiated
+ * disconnection (see enum qca_disconnect_reason_codes), using the vif's own
+ * wdev so userspace can attribute the event to the correct interface.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ath12k_vendor_send_disconnect_reason(struct ath12k *ar,
+						struct ieee80211_vif *vif,
+						enum qca_disconnect_reason_codes reason)
+{
+	struct wireless_dev *wdev;
+	struct wiphy *wiphy;
+	struct sk_buff *skb;
+	int event_idx;
+	int ret;
+
+	if (!ar || !ar->ab || !ar->ah || !ar->ah->hw || !vif)
+		return -EINVAL;
+
+	wiphy = ath12k_ar_to_hw(ar)->wiphy;
+
+	wdev = ieee80211_vif_to_wdev(vif);
+	if (!wdev)
+		return -ENODEV;
+
+	event_idx = QCA_NL80211_VENDOR_SUBCMD_DRIVER_DISCONNECT_REASON_INDEX;
+	skb = cfg80211_vendor_event_alloc(wiphy, wdev, NLMSG_DEFAULT_SIZE,
+					  event_idx, GFP_ATOMIC);
+	if (!skb)
+		return -ENOMEM;
+
+	ret = nla_put_u32(skb, QCA_WLAN_VENDOR_ATTR_DRIVER_DISCONNECT_REASON_CODE,
+			  reason);
+	if (ret)
+		goto nla_fail;
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+		   "vendor driver disconnect reason event reason %d vif %pM\n",
+		   reason, vif->addr);
+
+	cfg80211_vendor_event(skb, GFP_ATOMIC);
+	return 0;
+
+nla_fail:
+	ath12k_warn(ar->ab,
+		    "failed to build driver disconnect reason vendor event reason %d ret %d\n",
+		    reason, ret);
+	kfree_skb(skb);
+	return ret;
+}
+
+/**
+ * ath12k_mac_op_notify_diagnostic_sta_disconnect() - mac80211
+ * .notify_diagnostic_sta_disconnect callback
+ * @hw: pointer as obtained from ieee80211_alloc_hw()
+ * @vif: the diagnostic-STA vif mac80211 just disconnected
+ * @reason: why it was disconnected, see &enum
+ *	ieee80211_diagnostic_sta_disconnect_reason
+ *
+ * Reports the disconnect and its reason to userspace via the existing
+ * %QCA_NL80211_VENDOR_SUBCMD_DRIVER_DISCONNECT_REASON vendor event
+ * (PRD R_STA_11). Called by mac80211 right after it drops the vif; ath12k
+ * carries no CSA-isolation logic of its own.
+ */
+void ath12k_mac_op_notify_diagnostic_sta_disconnect(struct ieee80211_hw *hw,
+						    struct ieee80211_vif *vif,
+						    unsigned int link_id,
+						    enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	struct ath12k *ar = ath12k_get_ar_by_vif(hw, vif, link_id);
+
+	if (!ar) {
+		ath12k_err(NULL,
+			   "diagnostic_sta_disconnect: no ar for vif %pM link_id %u reason %d\n",
+			   vif->addr, link_id, reason);
+		return;
+	}
+
+	ath12k_vendor_send_disconnect_reason(ar, vif,
+			ath12k_diagnostic_sta_reason_to_vendor(reason));
+}
+EXPORT_SYMBOL(ath12k_mac_op_notify_diagnostic_sta_disconnect);
+
+/**
+ * ath12k_mac_notify_diagnostic_sta_pdev_restart() - report a diagnostic-STA
+ * disconnect caused by a PDEV/firmware-recovery (SSR) restart.
+ * @ar: ath12k device pointer
+ * @vif: the diagnostic-STA vif being disconnected for the restart
+ *
+ * Called from ath12k_mac_reconfig_complete() alongside
+ * ieee80211_hw_restart_disconnect(); unlike the CSA/radar/AWGN/userspace-
+ * change reasons, a PDEV restart is entirely ath12k-internal and never
+ * routed through mac80211's notify_diagnostic_sta_disconnect() callback.
+ */
+void ath12k_mac_notify_diagnostic_sta_pdev_restart(struct ath12k *ar,
+						   struct ieee80211_vif *vif)
+{
+	ath12k_vendor_send_disconnect_reason(ar, vif,
+			QCA_STA_DISCONNECT_REASON_PDEV_RESTART);
+}
+EXPORT_SYMBOL(ath12k_mac_notify_diagnostic_sta_pdev_restart);
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 /**
  * ath12k_vendor_mesh_peer_dump - Send mesh peer info as a binary vendor reply.

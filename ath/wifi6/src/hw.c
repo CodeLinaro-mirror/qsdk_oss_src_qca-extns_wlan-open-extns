@@ -96,8 +96,7 @@ void ath12k_hw_qcn9074_fill_cfr_hdr_info(struct ath12k *ar,
 	header->meta_enh.gi_type = params->gi_type;
 	header->meta_enh.beamformed = 0;
 
-	memcpy(header->meta_enh.su_peer_addr,
-	       params->peer_mac_addr, ETH_ALEN);
+	memcpy(header->meta_enh.peer_addr, params->peer_mac_addr, ETH_ALEN);
 	memcpy(header->meta_enh.chain_rssi, params->chain_rssi,
 	       sizeof(params->chain_rssi));
 	memcpy(header->meta_enh.chain_phase, params->chain_phase,

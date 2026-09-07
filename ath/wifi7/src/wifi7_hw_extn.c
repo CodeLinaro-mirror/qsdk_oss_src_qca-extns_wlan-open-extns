@@ -24,20 +24,20 @@
 #include "../../qcn_extns/ath12k_cmn_extn.h"
 #include "../../mac.h"
 
-static void ath12k_nol_regdom_change_locked_extn(struct ieee80211_hw *hw,
-						 struct ieee80211_channel *channel)
+static void ath12k_nol_regdom_change_locked_extn(struct ieee80211_hw *hw)
 {
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
 	struct ath12k *ar;
+	int i;
 
-	ar = ath12k_mac_get_ar_by_center_freq(hw, channel->center_freq);
-	if (!ar) {
-		wiphy_err(hw->wiphy, "nol_regdom: no ar found for freq %u MHz\n",
-			  channel->center_freq);
-
-		return;
-	}
-
-	ath12k_core_nol_extn_regdom_change_radio_locked(ar);
+	/*
+	 * On split-phy devices, one ieee80211_hw can own multiple
+	 * 5 GHz radios with non-overlapping frequency ranges, each with its own
+	 * radio_idx and its own NOL dump file. Iterate all radios so every NOL file
+	 * is restored.
+	 */
+	for_each_ar(ah, ar, i)
+		ath12k_core_nol_extn_regdom_change_radio_locked(ar);
 }
 
 struct ieee80211_240mhz_vendor_oper_extn*

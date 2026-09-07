@@ -21,6 +21,9 @@ static inline int qca_wifi_nss_plugins_get_peer_priority(struct ecm_classifier_m
 {
 	struct ath_mscs_get_priority_param wlan_get_priority_param = {0};
 
+	if (!get_priority_info)
+		return -EINVAL;
+
 	wlan_get_priority_param.dst_mac = get_priority_info->dst_mac;
 	wlan_get_priority_param.src_mac = get_priority_info->src_mac;
 	wlan_get_priority_param.src_dev = get_priority_info->src_dev;

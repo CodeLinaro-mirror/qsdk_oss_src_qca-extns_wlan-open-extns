@@ -10,6 +10,10 @@
 #include "../accel_cfg.h"
 #include "vendor.h"
 
+
+
+#include "debug.h"
+
 void ath12k_sdwf_fill_msduq_event_data(struct ath12k_base *ab,
 				       struct ath12k_dp_link_peer *link_peer,
 				       u16 msduq, u16 qos_id,
@@ -22,8 +26,16 @@ void ath12k_sdwf_fill_msduq_event_data(struct ath12k_base *ab,
 	struct ath12k_sta *ahsta;
 	u16 peer_id;
 
-	if (!link_peer || !evt_dt || msduq == QOS_INVALID_MSDUQ || !ab->dp)
+	if (!link_peer || !evt_dt || msduq == QOS_INVALID_MSDUQ ||
+	    msduq < MSDUQ_MAX_DEF || !ab->dp) {
+		ath12k_dbg(ab, ATH12K_DBG_QOS,
+			   "sdwf fill msduq event early return: link_peer %s evt_dt %s msduq %u dp %s\n",
+			   link_peer ? "valid" : "null",
+			   evt_dt ? "valid" : "null",
+			   msduq,
+			   ab->dp ? "valid" : "null");
 		return;
+	}
 
 	evt_dt->hw_link_id = link_peer->hw_link_id;
 	ether_addr_copy(evt_dt->link_mac, link_peer->addr);
@@ -70,3 +82,10 @@ void ath12k_sdwf_fill_msduq_event_data(struct ath12k_base *ab,
 
 	evt_dt->peer_id = link_peer->peer_id;
 }
+
+
+
+
+
+
+

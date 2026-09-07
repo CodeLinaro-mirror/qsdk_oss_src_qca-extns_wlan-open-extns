@@ -7,6 +7,7 @@
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 #include "../../hal.h"
 #include <linux/iommu.h>
+#include "../../../qcn_extns/ini.h"
 
 /*
  * Global VP-to-netdev mapping table indexed by ahvif_id.
@@ -319,6 +320,8 @@ static int ath12k_wifi8_dp_ipa_tx_srng_setup(struct ath12k_base *ab)
 	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
 	struct ath12k_dp_wifi8 *dp_wifi8;
 	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa;
+	u32 ipa2tcl_ring_sz;
+	u32 tqm2ipa_ring_sz;
 
 	if (!dp)
 		return -EINVAL;
@@ -331,8 +334,11 @@ static int ath12k_wifi8_dp_ipa_tx_srng_setup(struct ath12k_base *ab)
 	if (!dp_wifi8_ipa)
 		return -EINVAL;
 
+	ipa2tcl_ring_sz = ath12k_cfg_get(ab, ATH12K_INI_DP_IPA2TCL_RING_SIZE);
+	tqm2ipa_ring_sz = ath12k_cfg_get(ab, ATH12K_INI_DP_TQM2IPA_RING_SIZE);
+
 	ret = ath12k_dp_srng_setup(ab, &dp_wifi8_ipa->ipa2tcl_ring, HAL_PPE2TCL, 0, 0,
-				   ATH12K_DP_WIFI8_IPA2TCL_RING_SIZE);
+				   ipa2tcl_ring_sz);
 	if (ret) {
 		ath12k_ipa_err(ab, "failed to set up ipa2tcl tx data ring :%d", ret);
 		goto err;
@@ -347,7 +353,7 @@ static int ath12k_wifi8_dp_ipa_tx_srng_setup(struct ath12k_base *ab)
 					       HAL_PPE2TCL);
 
 	ret = ath12k_dp_srng_setup(ab, &dp_wifi8_ipa->tqm2ipa_ring, HAL_TQM2PPE, 0, 0,
-				   ATH12K_DP_WIFI8_TQM2IPA_RING_SIZE);
+				   tqm2ipa_ring_sz);
 	if (ret) {
 		ath12k_ipa_err(ab, "failed to set up tqm2ipa tx completion ring :%d", ret);
 		goto err;

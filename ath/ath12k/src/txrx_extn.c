@@ -198,17 +198,18 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
 	if (ar->ah && ar->ah->hw && ar->ah->hw->wiphy)
 		wdev = ieee80211_vif_to_wdev(vif);
 
-	/* Send event to userspace if we have a valid wdev */
-	if (wdev) {
-		if (atomic_dec_and_test(&raw_pkt_ctx->num_cmpl_pending)) {
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "all packets completed (txn_id=0x%x), calling completion handler\n",
-				   transaction_id);
+	/* Always decrement completion counter regardless of wdev availability */
+	if (atomic_dec_and_test(&raw_pkt_ctx->num_cmpl_pending)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "all packets completed (txn_id=0x%x), calling completion handler\n",
+			   transaction_id);
+		if (wdev)
 			ath12k_handle_tx_completion(ar, raw_pkt_ctx, wdev, transaction_id);
-		} else {
-			ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-				   "packets still pending (txn_id=0x%x)\n", transaction_id);
-		}
+		else
+			ath12k_home_offchan_tx_drain(raw_pkt_ctx);
+	} else {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "packets still pending (txn_id=0x%x)\n", transaction_id);
 	}
 
 	dev_kfree_skb_any(skb);
@@ -233,6 +234,71 @@ void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)
  */
 #define OFFCHAN_MAX_MCS 7
 #define OFFCHAN_MAX_CCK_MCS 3
+#define ATH12K_GPR_MIN_PERIOD_MS 10
+
+/**
+ * ath12k_validate_mgmt_tx_params - Validate TX parameters for management frames
+ * @ar: ath12k radio context (for error logging)
+ * @vif: virtual interface for basic_rates check; pass NULL to skip the check
+ * @preamble: preamble type (PREAMBLE_OFDM=0 or PREAMBLE_CCK=1)
+ * @mcs: MCS index (0-7 for OFDM, 0-3 for CCK)
+ * @band: band type; BAND_5GHZ rejects CCK
+ *
+ * Validates preamble range, MCS range, band/CCK compatibility, and basic rate
+ * membership.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ath12k_validate_mgmt_tx_params(struct ath12k *ar,
+					  struct ieee80211_vif *vif,
+					  u8 preamble, u8 mcs, u8 band)
+{
+	/* CCK bit positions: 3, 2, 1, 0 for rates 11, 5.5, 2, 1 Mbps */
+	const u8 cck_bit_pos[] = {3, 2, 1, 0};
+	/* OFDM bit positions: 10, 8, 6, 4, 11, 9, 7, 5 for
+	 * rates 48, 24, 12, 6, 54, 36, 18, 9 Mbps
+	 */
+	const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
+	u8 rate_idx;
+
+	if (preamble >= PREAMBLE_INVALID) {
+		ath12k_err(ar->ab, "preamble %u not supported\n", preamble);
+		return -EINVAL;
+	}
+
+	if (mcs > OFFCHAN_MAX_MCS) {
+		ath12k_err(ar->ab, "mcs %u not supported\n", mcs);
+		return -EINVAL;
+	}
+
+	/* CCK is not valid on 5 GHz or 6 GHz */
+	if ((band == BAND_5GHZ || band == BAND_6GHZ) && preamble == PREAMBLE_CCK) {
+		ath12k_err(ar->ab, "CCK rate not valid for 5G/6G\n");
+		return -EINVAL;
+	}
+
+	/* Skip basic rate check if vif is NULL (data frames) or not configured */
+	if (!vif || !vif->bss_conf.basic_rates)
+		return 0;
+
+	if (preamble == PREAMBLE_CCK) {
+		if (mcs > OFFCHAN_MAX_CCK_MCS) {
+			ath12k_err(ar->ab, "Invalid CCK mcs %u for mgmt\n", mcs);
+			return -EINVAL;
+		}
+		rate_idx = cck_bit_pos[mcs];
+	} else {
+		rate_idx = ofdm_bit_pos[mcs];
+	}
+
+	if (!(vif->bss_conf.basic_rates & BIT(rate_idx))) {
+		ath12k_err(ar->ab, "Basic rate expected for mgmt packets\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int ath12k_fill_tx_param(struct sk_buff *skb,
 				u8 nss, u8 preamble, u8 mcs,
 				u8 retry, u8 power, u8 tx_beamforming,
@@ -242,34 +308,11 @@ static int ath12k_fill_tx_param(struct sk_buff *skb,
 	struct ath12k *ar;
 	struct ath12k_skb_tx_param *tx_param;
 	struct ieee80211_hdr *hdr;
-	u8 rate_idx;
 	__le16 fc;
-	/* CCK bit positions: 3, 2, 1, 0 for rates 1, 2, 5.5, 11 Mbps */
-	const u8 cck_bit_pos[] = {3, 2, 1, 0};
-	/* OFDM bit positions: 10, 8, 6, 4, 11, 9, 7, 5 for
-	 * rates 6, 9, 12, 18, 24, 36, 48, 54 Mbps
-	 */
-	const u8 ofdm_bit_pos[] = {10, 8, 6, 4, 11, 9, 7, 5};
 
 	skb_cb = ATH12K_SKB_CB(skb);
 	ar = skb_cb->u.ar;
 	tx_param = &ar->ar_extn.raw_pkt_ctx.tx_param;
-
-	if (preamble >= PREAMBLE_INVALID) {
-		ath12k_err(ar->ab, "preamble %d not supported", preamble);
-		return -EINVAL;
-	}
-
-	if (mcs > OFFCHAN_MAX_MCS) {
-		ath12k_err(ar->ab, "mcs %d not supported", mcs);
-		return -EINVAL;
-	}
-
-	/* Check if CCK rate is valid for 5GHz */
-	if (band == BAND_5GHZ && preamble == PREAMBLE_CCK) {
-		ath12k_err(ar->ab, "Invalid rate: CCK rate is not valid for 5G\n");
-		return -EINVAL;
-	}
 
 	hdr = (struct ieee80211_hdr *)skb->data;
 	fc = hdr->frame_control;
@@ -277,28 +320,14 @@ static int ath12k_fill_tx_param(struct sk_buff *skb,
 	memset(tx_param, 0, sizeof(*tx_param));
 	if (ieee80211_is_data(fc)) {
 		tx_param->is_data = true;
-		goto fill_tx_param;
-	}
-
-	if (!skb_cb->vif->bss_conf.basic_rates) {
-		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
-			   "Basic rate not configured! skipping basic rate check");
-		goto fill_tx_param;
-	}
-
-	if (preamble == PREAMBLE_CCK) {
-		if (mcs > OFFCHAN_MAX_CCK_MCS) {
-			ath12k_err(ar->ab, "Invalid rate for mgmt\n");
+		/* Data frames: validate basic params only, skip basic_rates check */
+		if (ath12k_validate_mgmt_tx_params(ar, NULL, preamble, mcs, band))
 			return -EINVAL;
-		}
-		rate_idx = cck_bit_pos[mcs];
-	} else
-		rate_idx = ofdm_bit_pos[mcs];
-
-	if (!(skb_cb->vif->bss_conf.basic_rates & BIT(rate_idx))) {
-		ath12k_err(ar->ab, "Basic rate expected for mgmt packets\n");
-		return -EINVAL;
+		goto fill_tx_param;
 	}
+
+	if (ath12k_validate_mgmt_tx_params(ar, skb_cb->vif, preamble, mcs, band))
+		return -EINVAL;
 
 fill_tx_param:
 	tx_param->nss = nss;
@@ -681,6 +710,12 @@ void ath12k_update_offchan_stats_extn(struct ath12k *ar,
 		return;
 	}
 
+	if (!ch_info) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "failed to update offchan stats, ch_info is NULL");
+		return;
+	}
+
 	if (ch_info->cmd_flags == WMI_CHAN_INFO_START_RESP)
 		ath12k_chan_info_event_extn(&ar->ar_extn, ch_info,
 					    channel_idx);
@@ -871,6 +906,7 @@ static void ath12k_handle_rx_scan_event(struct ath12k *ar,
 	if (!raw_ctx->vif) {
 		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 			   "Operation already completed by timeout handler\n");
+		spin_unlock_bh(&raw_ctx->chan_lock);
 		return;
 	}
 
@@ -1644,6 +1680,8 @@ static int ath12k_gpr_tx(struct ath12k_link_vif *arvif)
 	ret = ath12k_custom_tx_extn(raw_pkt_ctx);
 	if (ret)
 		ath12k_err(ar->ab, "GPR TX: ath12k_custom_tx_extn failed: %d\n", ret);
+	else
+		atomic_inc(&arvif->arvif_extn.gpr_send_count);
 
 	/* Fire-and-forget: release mutex immediately, no completion event needed */
 	mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
@@ -1677,6 +1715,8 @@ static void ath12k_gpr_timer_handler(struct timer_list *t)
 		mod_timer(&arvif->arvif_extn.gpr_timer,
 			  jiffies + msecs_to_jiffies(extn->gpr_period));
 
+	atomic_inc(&extn->gpr_timer_start_count);
+
 	/* Defer actual TX to process context */
 	schedule_work(&arvif->arvif_extn.gpr_work);
 }
@@ -1704,6 +1744,7 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 	u32 transaction_id = 0;
 	u8 num_frames = 0;
 	u8 link_id = 0;
+	u8 gpr_band;
 	bool is_mld = false;
 
 	ret = nla_parse(tb, QCA_VENDOR_ATTR_WLAN_HOME_OFFCHAN_TX_RX_MAX,
@@ -1855,6 +1896,33 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 		}
 		skb_put_data(skb, buf, buf_len);
 
+		/* GPR is a broadcast Probe Response — NSS must be 1 */
+		if (nss != 1) {
+			ath12k_err(NULL,"GPR: nss %u not supported, bcast require nss=1\n",
+				   nss);
+			dev_kfree_skb_any(skb);
+			return -EINVAL;
+		}
+
+		/* Validate TX params at configuration time */
+		{
+			if (arvif->ar->pdev->cap.supported_bands & BIT(NL80211_BAND_5GHZ))
+				gpr_band = BAND_5GHZ;
+			else if (arvif->ar->pdev->cap.supported_bands & BIT(NL80211_BAND_6GHZ))
+				gpr_band = BAND_6GHZ;
+			else
+				gpr_band = BAND_2GHZ;
+
+			ret = ath12k_validate_mgmt_tx_params(arvif->ar,
+							     arvif->ahvif->vif,
+							     preamble, mcs,
+							     gpr_band);
+		}
+		if (ret) {
+			dev_kfree_skb_any(skb);
+			return ret;
+		}
+
 		/* Free any previously stored GPR frame before replacing */
 		if (arvif->arvif_extn.gpr_frame) {
 			dev_kfree_skb_any(arvif->arvif_extn.gpr_frame);
@@ -1863,6 +1931,8 @@ int ath12k_vendor_home_offchan_tx_rx_handler(struct wiphy *wiphy,
 
 		arvif->arvif_extn.gpr_frame = skb;
 		/* period is carried via SCAN_DUR in the NL message for GPR */
+		if (scan_dur != arvif->arvif_extn.gpr_period)
+			atomic_inc(&arvif->arvif_extn.gpr_timer_resize_count);
 		arvif->arvif_extn.gpr_period = scan_dur;
 		arvif->arvif_extn.gpr_nss = nss;
 		arvif->arvif_extn.gpr_preamble = preamble;
@@ -2102,13 +2172,15 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 	/* Send the vendor event */
 	cfg80211_vendor_event(skb, GFP_KERNEL);
 
-	/* Reset context to clean state after event is sent */
-	spin_lock_bh(&raw_pkt_ctx->chan_lock);
-	ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
-	spin_unlock_bh(&raw_pkt_ctx->chan_lock);
+	if (raw_pkt_ctx) {
+		/* Reset context to clean state after event is sent */
+		spin_lock_bh(&raw_pkt_ctx->chan_lock);
+		ath12k_reset_raw_pkt_ctx(raw_pkt_ctx);
+		spin_unlock_bh(&raw_pkt_ctx->chan_lock);
 
-	/* Release the raw_ctx_mutex AFTER context reset to ensure clean state */
-	mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
+		/* Release the raw_ctx_mutex AFTER context reset to ensure clean state */
+		mutex_unlock(&raw_pkt_ctx->raw_ctx_mutex);
+	}
 
 	return 0;
 }
@@ -2210,6 +2282,75 @@ static const struct file_operations ath12k_fops_gpr_timer = {
 };
 
 /**
+ * ath12k_read_gpr_stats - Print GPR statistics to debugfs
+ *
+ * Read: cat link0/gpr_stats
+ * Write 0: echo 0 > link0/gpr_stats  (clears all counters)
+ */
+static ssize_t ath12k_read_gpr_stats(struct file *file,
+				     char __user *user_buf,
+				     size_t count, loff_t *ppos)
+{
+	struct ath12k_link_vif *arvif = file->private_data;
+	struct ath12k_link_vif_extn *extn = &arvif->arvif_extn;
+	char buf[512];
+	int len = 0;
+	u64 expires_ns = 0;
+
+	if (timer_pending(&extn->gpr_timer)) {
+		long remaining = (long)(extn->gpr_timer.expires - jiffies);
+
+		if (remaining > 0)
+			expires_ns = jiffies_to_nsecs((unsigned long)remaining);
+	}
+
+	len += scnprintf(buf + len, sizeof(buf) - len, "------------------------------------\n");
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR on this VAP enabled    - %d   |\n", extn->gpr_timer_enabled ? 1 : 0);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR state                  - %s   |\n", timer_pending(&extn->gpr_timer) ? "Active" : "Dormant");
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR Minimum Period (ms)    - %d   |\n", ATH12K_GPR_MIN_PERIOD_MS);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| Current Timestamp (ns)     - %llu |\n", ktime_get_ns());
+	len += scnprintf(buf + len, sizeof(buf) - len, "| Timer expires in (ns)      - %llu |\n", expires_ns);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer start count      - %u   |\n", atomic_read(&extn->gpr_timer_start_count));
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer resize count     - %u   |\n", atomic_read(&extn->gpr_timer_resize_count));
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer send count       - %u   |\n", atomic_read(&extn->gpr_send_count));
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR timer user period (ms) - %u   |\n", extn->gpr_period);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR NSS                    - %u   |\n", extn->gpr_nss);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR Preamble               - %u   |\n", extn->gpr_preamble);
+	len += scnprintf(buf + len, sizeof(buf) - len, "| GPR MCS                    - %u   |\n", extn->gpr_mcs);
+	len += scnprintf(buf + len, sizeof(buf) - len, "------------------------------------\n");
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+}
+
+static ssize_t ath12k_write_gpr_stats(struct file *file,
+				      const char __user *user_buf,
+				      size_t count, loff_t *ppos)
+{
+	struct ath12k_link_vif *arvif = file->private_data;
+	struct ath12k_link_vif_extn *extn = &arvif->arvif_extn;
+	u8 val;
+
+	if (kstrtou8_from_user(user_buf, count, 0, &val))
+		return -EINVAL;
+
+	if (val != 0)
+		return -EINVAL;
+
+	/* Clear all GPR statistics counters */
+	atomic_set(&extn->gpr_timer_start_count,  0);
+	atomic_set(&extn->gpr_timer_resize_count, 0);
+	atomic_set(&extn->gpr_send_count,         0);
+
+	return count;
+}
+
+static const struct file_operations ath12k_fops_gpr_stats = {
+	.open  = simple_open,
+	.write = ath12k_write_gpr_stats,
+	.read  = ath12k_read_gpr_stats,
+};
+
+/**
  * ath12k_gpr_debugfs_register_extn - Create GPR timer debugfs entry for a link VIF
  * @arvif: link VIF for which to create the entry
  * @link_debugfs: parent debugfs directory (vif->link_debugfs[link_id])
@@ -2220,4 +2361,7 @@ void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
 	arvif->arvif_extn.debugfs_gpr_timer =
 		debugfs_create_file("gpr_timer", 0644, link_debugfs,
 				    arvif, &ath12k_fops_gpr_timer);
+	arvif->arvif_extn.debugfs_gpr_stats =
+		debugfs_create_file("gpr_stats", 0644, link_debugfs,
+				    arvif, &ath12k_fops_gpr_stats);
 }

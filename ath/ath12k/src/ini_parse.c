@@ -116,7 +116,7 @@ static int ini_read_values(char **main_cursor,
 		} else if (key[0] == '[') {
 			size_t len = strlen(key);
 
-			if (key[len - 1] != ']') {
+			if (len < 2 || key[len - 1] != ']') {
 				ath12k_dbg(NULL, ATH12K_DBG_INI, "Invalid *.ini syntax '%s'", key);
 				return -EINVAL;
 			}

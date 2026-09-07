@@ -120,6 +120,15 @@ struct ath12k_link_vif_extn {
 	struct work_struct gpr_work;
 	/* debugfs entry for the gpr_timer enable/disable knob */
 	struct dentry *debugfs_gpr_timer;
+	/* debugfs entry for the gpr_stats print/clear knob */
+	struct dentry *debugfs_gpr_stats;
+	/* GPR statistics counters */
+	/* times timer re-armed periodically */
+	atomic_t gpr_timer_start_count;
+	/* times user changed the period */
+	atomic_t gpr_timer_resize_count;
+	/* frames successfully queued for TX */
+	atomic_t gpr_send_count;
 	/* VHT MCS 10/11 (1024-QAM) support flags.
 	 * vht_mcs10_11_supp: overall enable for this VAP (default: true on HE targets).
 	 * vht_mcs10_11_nq2q_peer_supp: enable for peers that did not advertise
@@ -289,6 +298,47 @@ struct ath12k_sta_extn {
 };
 
 /**
+ * struct ath12k_cotdma_e2e_cache_entry - per-QMID Co-TDMA E2E config cache entry
+ */
+#define ATH12K_MAX_COTDMA_E2E_QMIDS  8
+
+struct ath12k_cotdma_e2e_cache_entry {
+	u8   config_mode;
+	u16  qmid;
+	bool bsta_mac_valid;
+	u8   bsta_mac[ETH_ALEN];
+};
+
+/**
+ * struct ath12k_mapc_peer_cache - per-peer MAPC vendor parameter cache
+ * Populated by Q2Q, TXOP, and E2E vendor handlers; read back by GET_PARAMS.
+ */
+struct ath12k_mapc_peer_cache {
+	u32 mapc_capability_bitmap;
+	u32 apid_to_neighbor_peer;
+	u32 apid_from_neighbor_peer;
+	u32 channel_width;
+	u32 ccfs;
+	u32 disable_subchannel_bitmap;
+	u32 bss_color;
+	u32 rx_txop_return_support;
+	u32 q2q_apid_to_neighbor_peer;
+	u32 q2q_apid_from_neighbor_peer;
+	u32 primary_ac;
+	u32 nbr_ap_prio;
+	u32 service_start_time;
+	u32 service_interval;
+	u32 service_end_time;
+	u32 critical_traffic_dur_thresh_us;
+	u32 max_shared_txop_dur_us;
+	u32 min_shared_txop_dur_us;
+	u32 param_sets_recvd;
+	u32 scheme_enable_bitmap;
+	struct ath12k_cotdma_e2e_cache_entry e2e_entries[ATH12K_MAX_COTDMA_E2E_QMIDS];
+	u8  e2e_entry_count;
+};
+
+/**
  * struct ath12k_link_sta_extn - per-link STA extension state
  * @rssi_assoc: RSSI captured during association for this link; used as the base
  *		RSSI when deriving per-link averages and primary link selection.
@@ -308,6 +358,7 @@ struct ath12k_link_sta_extn {
 	struct sa_sta_extn sa_sta;
 	u8 higher_vhtmcs_supp;
 	u32 he_cap_info_internal;
+	struct ath12k_mapc_peer_cache mapc_cache;
 };
 
 struct wmi_dcs_wlan_interference_stats {
@@ -362,6 +413,9 @@ struct wlan_intf_extn {
  * @vifs_kobj:     Pointer to vifs kernel object.
  * @block_dfs_channels: 1:DFS channels disabled by blockdfslist command,
  *   0: DFS channel are not disabled by blockdfslist command
+ * @blockdfs_disabled_chans: bitmap of sband->channels[] indices that were
+ *   disabled by the blockdfslist logic; used to avoid clearing DISABLED on
+ *   channels that were disabled by regulatory rather than by this feature
  * @cac_timeout_override_ms: Custom CAC timeout override in ms.
  *	NO_CAC_OVERRIDE = no override set (use regulatory domain CAC timeout).
  *	Any positive value = override in ms.
@@ -387,6 +441,7 @@ struct ath12k_extn {
 	struct kobject *radio_kobj;
 	struct kobject *vifs_kobj;
 	bool block_dfs_channels;
+	DECLARE_BITMAP(blockdfs_disabled_chans, 64);
 	s32 cac_timeout_override_ms;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
 	u16 dcs_config_bitmap;

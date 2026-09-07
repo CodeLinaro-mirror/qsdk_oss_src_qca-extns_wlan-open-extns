@@ -385,7 +385,7 @@ static const struct ath12k_cfg_meta *ath12k_cfg_lookup_meta(const char *name)
 		memcpy(param, meta->name, name_len);
 		param[name_len] = '\0';
 		param1 = param;
-		if (sscanf(param1, "%s", ini_name) != 1) {
+		if (sscanf(param1, "%127s", ini_name) != 1) {
 			ath12k_err(NULL,
 				   "Cannot get ini name %s", param1);
 			return NULL;
@@ -396,7 +396,7 @@ static const struct ath12k_cfg_meta *ath12k_cfg_lookup_meta(const char *name)
 		param1 = strpbrk(param, " ");
 		while (param1) {
 			param1++;
-			if (sscanf(param1, "%s ", ini_name) != 1) {
+			if (sscanf(param1, "%127s", ini_name) != 1) {
 				ath12k_err(NULL,
 					   "Invalid ini name %s", meta->name);
 				return NULL;
@@ -458,7 +458,12 @@ ath12k_cfg_store_alloc(const char *path,
 	if (!store)
 		return -ENOMEM;
 
+	INIT_LIST_HEAD(&store->node);
 	store->path = kstrdup(path, GFP_KERNEL);
+	if (!store->path) {
+		vfree(store);
+		return -ENOMEM;
+	}
 	atomic_set(&store->users, 1);
 	spin_lock_bh(&ath12k_cfg_stores_lock);
 	list_add_tail(&store->node, &ath12k_cfg_stores_list);
@@ -1381,9 +1386,12 @@ int ath12k_cfg_init(struct ath12k_base *ab)
 	ath12k_ini_override_runtime_params(ab);
 
 	/* Mark this radio's configuration as initialized */
+	if (ret)
+		return ret;
+
 	ab->cfg_ctx->initialized = true;
 	ath12k_info(ab, "Successfully initialized INI info \n");
-	return ret;
+	return 0;
 }
 
 void ath12k_cfg_deinit(struct ath12k_base *ab)

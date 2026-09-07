@@ -1523,7 +1523,7 @@ void ath12k_peer_assoc_h_mesh_extn(struct ath12k_link_vif *arvif,
 	 *
 	 * Save calculated phymode and nss for peer lookup.
 	 */
-	if (ahvif && ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_MESH) {
+	if (ahvif && QCA_WLAN_VENDOR_VAP_IS_MESH_MODE(ahvif->vap_submode)) {
 		arg->need_ptk_4_way = false;
 		arg->need_gtk_2_way = false;
 		if (link_sta->sta) {
@@ -1862,10 +1862,10 @@ void ath12k_peer_assoc_h_vht_mcs10_11_extn(struct ath12k *ar,
 		arg->tx_mcs_set |= IEEE80211_DISABLE_VHT_MCS_SUPPORT_0_11;
 		arg->tx_mcs_set |= ((u32)peer_higher_mcs << 16) &
 				   IEEE80211_VHT_MCS_SUPPORT_0_11_MASK;
-		ath12k_info(ar->ab,
-			    "VHT MCS10/11: peer %pM tx_mcs_set 0x%08x higher_vhtmcs_supp 0x%02x\n",
-			    arsta->addr, arg->tx_mcs_set,
-			    arsta->arsta_extn.higher_vhtmcs_supp);
+		ath12k_dbg_level(ar->ab, ATH12K_DBG_MAC, ATH12K_DBG_L2,
+				 "VHT MCS10/11: peer %pM tx_mcs_set 0x%08x higher_vhtmcs_supp 0x%02x\n",
+				 arsta->addr, arg->tx_mcs_set,
+				 arsta->arsta_extn.higher_vhtmcs_supp);
 	} else {
 		arg->tx_mcs_set |= IEEE80211_DISABLE_VHT_MCS_SUPPORT_0_11;
 	}

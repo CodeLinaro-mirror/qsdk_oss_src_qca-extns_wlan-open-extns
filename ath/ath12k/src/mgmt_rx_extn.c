@@ -82,7 +82,7 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
 	stats_extn = &ab->mgmt->srng_stats.stats_extn;
 
 	len += scnprintf(buf + len, size - len, "Delivered High-priority packets:\n");
-	for (i = 0; i < ATH12K_SRNG_STATS_EXTN_MGMT_FRM_STYPE_MAX-1; i++)
+	for (i = 0; i < ATH12K_SRNG_STATS_EXTN_MGMT_FRM_STYPE_MAX-1 && len < size; i++)
 		len += scnprintf(buf + len, size - len, "  %s: %u\n",
 				 frm_stype[i], stats_extn->rx_highpri_pkts[i]);
 

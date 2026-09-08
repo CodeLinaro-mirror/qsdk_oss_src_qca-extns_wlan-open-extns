@@ -2730,6 +2730,7 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 	if (!local_requires_rsn && !peer_has_rsn) {
 		/* Both open — clear any stale crypto state */
 		ieee80211_mesh_peer_clear_crypto(peer);
+		peer->cnt_combo_open++;
 		return false;
 	}
 
@@ -2755,11 +2756,13 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 			goto reject;
 		}
 		peer->peer_wpa_versions = NL80211_WPA_VERSION_2;
+		peer->cnt_secured_no_peer_rsn++;
 		return false;
 	}
 
 	if (!local_requires_rsn && peer_has_rsn) {
 		ieee80211_mesh_peer_clear_crypto(peer);
+		peer->cnt_open_peer_rsn++;
 		return false;
 	}
 

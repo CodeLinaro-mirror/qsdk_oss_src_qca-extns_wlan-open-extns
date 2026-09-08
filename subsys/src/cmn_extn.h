@@ -150,6 +150,17 @@ struct mesh_rsn_conf {
 	u16 rsn_caps;          /* RSN Capabilities field, pre-parsed at AP setup time */
 };
 
+/**
+ * struct mesh_akm_cipher_pref - One AKM/cipher combination used for
+ * beacon intersection.
+ * @akm:    AKM suite selector (WLAN_AKM_SUITE_*)
+ * @cipher: Pairwise cipher suite selector (WLAN_CIPHER_SUITE_*)
+ */
+struct mesh_akm_cipher_pref {
+	u32 akm;
+	u32 cipher;
+};
+
 struct mesh_bss_conf {
 	struct ieee80211_ht_cap *ht_cap;
 	struct ieee80211_vht_cap *vht_cap;
@@ -183,6 +194,11 @@ struct mesh_bss_conf {
  * @peer_ucast_cipher: WLAN_CIPHER_SUITE_* selected pairwise cipher from peer RSN IE
  * @peer_mcast_cipher: WLAN_CIPHER_SUITE_* group cipher from peer RSN IE
  * @peer_akm_suite: WLAN_AKM_SUITE_* from peer RSN IE
+ * @cnt_combo_sha256_ccmp256: Number of times PSK-SHA256/CCMP-256 was selected
+ * @cnt_combo_psk_ccmp: Number of times PSK/CCMP was selected
+ * @cnt_legacy_zero_rsn: Number of times the peer's RSN IE had zero pairwise
+ *   cipher count and zero AKM count, triggering the PSK/CCMP legacy fallback
+ * @cnt_no_common_combo: Number of times no common (AKM, cipher) pair existed
  * @peer_mfp_capable: Peer RSN caps MFP enabled bit
  * @peer_mfp_required: Peer RSN caps MFP required bit
  * @peer_rsn_ie: Raw copy of peer RSN IE bytes
@@ -217,6 +233,11 @@ struct mesh_peer_info {
 	u32 peer_ucast_cipher;
 	u32 peer_mcast_cipher;
 	u32 peer_akm_suite;
+	/* AKM-cipher negotiation counters */
+	u32 cnt_combo_sha256_ccmp256;
+	u32 cnt_combo_psk_ccmp;
+	u32 cnt_legacy_zero_rsn;
+	u32 cnt_no_common_combo;
 	bool peer_mfp_capable;
 	bool peer_mfp_required;
 	u8 peer_rsn_ie[MESH_RSN_IE_MAX_LEN]; /* raw RSN IE: tag(1) + len(1) + body(up to 255) */

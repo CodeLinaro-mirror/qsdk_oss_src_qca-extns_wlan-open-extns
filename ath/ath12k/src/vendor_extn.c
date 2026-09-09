@@ -3469,6 +3469,11 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
                 *reload = true;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_MON_FILL_LVL:
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "rx_mon_fill_lvl: set requested val=%u\n", value);
+		ret = ath12k_dp_mon_set_fill_level(&ar->dp, value);
+		break;
 	case PARAM_RADIO_TXCHAINSOFT:
 		ret = ath12k_set_chainmask(ar, value, true);
 		break;
@@ -11321,6 +11326,19 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
                 *value = ar->cfg_rx_chainmask;
                 ret = 0;
                 break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_MON_FILL_LVL: {
+		struct ath12k_pdev_dp *dp_pdev = &ar->dp;
+
+		if (!dp_pdev->dp || !dp_pdev->dp->dp_mon) {
+			ath12k_err(NULL, "rx_mon_fill_lvl: dp_mon not initialized\n");
+			return -EINVAL;
+		}
+		*value = dp_pdev->dp->dp_mon->rxdma_mon_buf_ring.cur_fill_lvl;
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "rx_mon_fill_lvl: get cur_fill_lvl=%llu\n", *value);
+		ret = 0;
+		break;
+	}
 	case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
 		*value = 0;
 		ret = 0;

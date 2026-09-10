@@ -56,7 +56,7 @@ struct notifier_block;
 #define MESH_PEER_MAX_LINKS 3
 
 #define MESH_PEER_TIMEOUT_CNT 3			/* Peer inactivity timeout threshold */
-#define MMESH_TX_META_HDR 16
+#define MMESH_TX_META_HDR	20
 #define MESH_PEER_INACTIVITY_PERIOD 20000	/* Peer inactivity timer in milliseconds */
 
 #define MESH_AID_WORDS ((2008 + 31) / 32)  /* 63 words for 2008 AIDs */

@@ -605,16 +605,6 @@ struct hal_mon_ppdu_info_extn {
 	struct ath12k_wifi6_phyrx_abort_info *phyrx_abort_info;
 };
 
-struct ath12k_dp_rx_scan_radio_stats {
-	u64 rx_ok_bytes;
-	u64 rx_err_bytes;
-	u32 rx_ok_pkts;
-	u32 rx_err_pkts;
-	u32 rx_mgmt_pkts;
-	u32 rx_ctrl_pkts;
-	u32 rx_data_pkts;
-};
-
 /* PHY error reason codes 0-53 are valid; codes 54-63 are reserved */
 #define ATH12K_WIFI6_PHYRX_ERR_MAX	64
 /* Bit shift to position the upper 32-bit half of the 64-bit PHY error mask */
@@ -638,14 +628,12 @@ struct ath12k_wifi6_undecoded_metadata {
 
 /**
  * struct ath12k_pdev_mon_dp_extn - Per-pdev monitor datapath extension
- * @rx_scan_radio_stats: Scan radio RX statistics
  * @rx_tlv_log: RX TLV logger instance; NULL if logging is disabled
  * @tx_tlv_log: TX TLV logger instance; NULL if logging is disabled
  * @undecoded_meta: Undecoded metadata capture state; NULL when feature is disabled
  * @phyrx_abort_info: PHY abort and SIG field metadata for the current PPDU; NULL when feature is disabled
  */
 struct ath12k_pdev_mon_dp_extn {
-	struct ath12k_dp_rx_scan_radio_stats rx_scan_radio_stats;
 	struct ath12k_dp_mon_tlv_logger *rx_tlv_log;
 	struct ath12k_dp_mon_tlv_logger *tx_tlv_log;
 	struct ath12k_wifi6_undecoded_metadata *undecoded_meta;

@@ -108,7 +108,11 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		msdu->protocol = eth_type_trans(msdu, peer->dev);
 		dp->device_stats.fast_rx[ring_id][device_id]++;
 		prefetch(skb_shinfo(msdu));
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+		napi_gro_receive(napi, msdu);
+#else
 		netif_receive_skb(msdu);
+#endif
 	} else {
 		struct ieee80211_sta *pubsta = NULL;
 		struct ath12k_hal *hal = dp_pdev->dp->hal;

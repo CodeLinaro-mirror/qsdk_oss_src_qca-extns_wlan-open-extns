@@ -149,6 +149,10 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.pktlog_config = NULL,
 	.htt_rx_filter_rxmon_cfg = NULL,
 	.htt_rx_phy_err_filter_cfg = ath12k_wifi6_dp_mon_rx_htt_phy_err_filter_cfg,
+	.ext_mon_alloc = ath12k_dp_ext_mon_alloc,
+	.ext_mon_free = ath12k_dp_ext_mon_free,
+	.ext_mon_validate_request = ath12k_wifi6_dp_ext_mon_validate_request,
+	.ext_mon_set_rx_filter = ath12k_wifi6_dp_ext_mon_set_rx_filter,
 };
 
 static int ath12k_wifi6_dp_mon_rx_buf_replenish(struct ath12k_dp *dp);
@@ -2194,4 +2198,215 @@ void ath12k_wifi6_dp_mon_rx_monitor_mode_reset(struct ath12k_pdev_dp *dp_pdev)
 	if (mon_dp_extn->undecoded_meta)
 		ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter(dp_pdev);
 	ath12k_wifi6_dp_mon_rx_mon_mode_reset_filter(dp_pdev);
+}
+
+int ath12k_wifi6_dp_ext_mon_validate_request(struct ath12k_pdev_dp *dp_pdev,
+					     const struct ath12k_ext_mon_config *req)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev;
+	const struct ath12k_ext_mon_peer_info *peer = NULL;
+	int i = 0;
+
+	dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	if (!dp_mon_pdev) {
+		ath12k_warn(dp_pdev->dp, "monitor pdev is null");
+		return -EINVAL;
+	}
+
+	if (req->peer.action == ATH12K_EXT_MON_PEER_ACTION_ADD) {
+		for (i = 0; i < req->peer.count; i++) {
+			peer = &req->peer.peer_info[i];
+			if (peer->ta_info.bitmap != ATH12K_EXT_MON_DEFAULT_PEER_BITMAP) {
+				ath12k_warn(dp_pdev->dp, "invalid bitmap: %02x",
+					    peer->ta_info.bitmap);
+				return -EINVAL;
+			}
+		}
+	}
+
+	/* Only MD (target_neighbor) filter type is supported now.*/
+	if (req->cmd_type == ATH12K_EXT_MON_CMD_TYPE_SET_FILTER &&
+	    !req->filter.disable) {
+		if (ath12k_dp_ext_mon_is_mode_enabled(&req->filter.all_peer) ||
+		    ath12k_dp_ext_mon_is_mode_enabled(&req->filter.all_neighbor) ||
+		    ath12k_dp_ext_mon_is_mode_enabled(&req->filter.target_peer)) {
+			ath12k_warn(dp_pdev->dp,
+				    "only MD (target_neighbor) filter type is supported\n");
+			return -EINVAL;
+		}
+		if (!ath12k_dp_ext_mon_is_mode_enabled(&req->filter.target_neighbor)) {
+			ath12k_warn(dp_pdev->dp,
+				    "no MD (target_neighbor) filter specified\n");
+			return -EINVAL;
+		}
+
+		/* Only full packet length is supported for MD filter now. */
+		if (req->filter.target_neighbor.len[ATH12K_EXT_MON_FRAME_MGMT] !=
+			ATH12K_EXT_MON_LEN_FULL_PKT ||
+		    req->filter.target_neighbor.len[ATH12K_EXT_MON_FRAME_CTRL] !=
+			ATH12K_EXT_MON_LEN_FULL_PKT ||
+		    req->filter.target_neighbor.len[ATH12K_EXT_MON_FRAME_DATA] !=
+			ATH12K_EXT_MON_LEN_FULL_PKT) {
+			ath12k_warn(dp_pdev->dp,
+				    "only full packet length is supported\n");
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static void
+ath12k_wifi6_dp_ext_mon_update_rx_config(struct ath12k_pdev_mon_dp *dp_mon_pdev,
+				   const struct ath12k_ext_mon_filter_config *new_config)
+{
+	struct ath12k_dp_rx_ext_mon *curr_config;
+
+	spin_lock(&dp_mon_pdev->rx_ext_mon_lock);
+	curr_config = dp_mon_pdev->rx_ext_mon_config;
+
+	if (!new_config->disable) {
+		curr_config->level = new_config->level;
+
+		curr_config->fp = new_config->all_peer;
+		curr_config->mo = new_config->all_neighbor;
+		curr_config->fpmo = new_config->target_peer;
+		curr_config->md = new_config->target_neighbor;
+
+		curr_config->fp_enabled =
+			ath12k_dp_ext_mon_is_mode_enabled(&new_config->all_peer);
+		curr_config->mo_enabled =
+			ath12k_dp_ext_mon_is_mode_enabled(&new_config->all_neighbor);
+		curr_config->fpmo_enabled =
+			ath12k_dp_ext_mon_is_mode_enabled(&new_config->target_peer);
+		curr_config->md_enabled =
+			ath12k_dp_ext_mon_is_mode_enabled(&new_config->target_neighbor);
+
+		curr_config->metadata = new_config->meta_data;
+		curr_config->enable = true;
+	} else {
+		curr_config->enable = false;
+		curr_config->level = 0;
+		curr_config->metadata = 0;
+		curr_config->fp_enabled = false;
+		curr_config->mo_enabled = false;
+		curr_config->fpmo_enabled = false;
+		curr_config->md_enabled = false;
+		memset(&curr_config->fp, 0, sizeof(curr_config->fp));
+		memset(&curr_config->mo, 0, sizeof(curr_config->mo));
+		memset(&curr_config->fpmo, 0, sizeof(curr_config->fpmo));
+		memset(&curr_config->md, 0, sizeof(curr_config->md));
+	}
+	spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
+}
+
+static int
+ath12k_wifi6_dp_ext_mon_remove_all_rx_peers(struct ath12k_pdev_dp *dp_pdev)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	struct ath12k_dp_rx_ext_mon *rx_ext_mon;
+	LIST_HEAD(peers_to_drain);
+	int vdev_id;
+
+	if (unlikely(!dp_mon_pdev)) {
+		ath12k_warn(dp_pdev->dp, "monitor pdev is null\n");
+		return -EINVAL;
+	}
+
+	spin_lock(&dp_mon_pdev->rx_ext_mon_lock);
+	rx_ext_mon = dp_mon_pdev->rx_ext_mon_config;
+	if (unlikely(!rx_ext_mon)) {
+		spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
+		ath12k_warn(dp_pdev->dp, "rx_ext_mon_config is null\n");
+		return -EINVAL;
+	}
+
+	list_splice_init(&rx_ext_mon->peer_list, &peers_to_drain);
+	rx_ext_mon->peer_count = 0;
+	rx_ext_mon->ra_peer_count = 0;
+	spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
+
+	vdev_id = ath12k_dp_ext_mon_find_mon_vdev_id(dp_pdev);
+	ath12k_dp_ext_mon_drain_peer_list(dp_pdev, &peers_to_drain, vdev_id);
+
+	return 0;
+}
+
+int
+ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
+				      const struct ath12k_ext_mon_filter_config *new_config)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	struct ath12k_dp_rx_ext_mon *rx_ext_mon;
+	struct ath12k_ext_mon_filter_config rollback_config = {0};
+	int ret = 0;
+
+	if (unlikely(!dp_mon_pdev)) {
+		ath12k_warn(dp_pdev->dp, "monitor pdev is null\n");
+		return -EINVAL;
+	}
+
+	spin_lock(&dp_mon_pdev->rx_ext_mon_lock);
+	rx_ext_mon = dp_mon_pdev->rx_ext_mon_config;
+	if (unlikely(!rx_ext_mon)) {
+		spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
+		ath12k_warn(dp_pdev->dp, "rx_ext_mon_config is null\n");
+		return -EINVAL;
+	}
+
+	if (new_config->disable && !rx_ext_mon->enable) {
+		spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
+		ath12k_warn(dp_pdev->dp, "already disabled\n");
+		return -EINVAL;
+	}
+
+	/* Store current active MD filter for disable rollback. */
+	rollback_config.target_neighbor = rx_ext_mon->md;
+	spin_unlock(&dp_mon_pdev->rx_ext_mon_lock);
+
+	if (new_config->disable) {
+		ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, NULL);
+		ret = ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev);
+		if (ret) {
+			ath12k_warn(dp_pdev->dp,
+				    "failed to update filter for disable: %d\n", ret);
+			/* Revert to the older filter setting */
+			ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev,
+									      &rollback_config);
+			if (ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev))
+				ath12k_warn(dp_pdev->dp,
+					    "failed to re-arm filter on disable rollback\n");
+			return ret;
+		}
+		ath12k_wifi6_dp_ext_mon_update_rx_config(dp_mon_pdev, new_config);
+		ath12k_wifi6_dp_mon_rx_monitor_mode_set(dp_pdev);
+		ret = ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev);
+		if (ret) {
+			ath12k_warn(dp_pdev->dp,
+			    "failed to rollback to monitor mode: %d\n", ret);
+		} else {
+			ath12k_wifi6_dp_ext_mon_remove_all_rx_peers(dp_pdev);
+		}
+	} else {
+		/* Disable monitor mode before enabling ext-mon filters */
+		ath12k_wifi6_dp_mon_rx_monitor_mode_reset(dp_pdev);
+		/* Enabling: arm MD filters from new_config then push to HW */
+		ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, new_config);
+		ret = ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev);
+		if (ret) {
+			ath12k_warn(dp_pdev->dp,
+				    "failed to update ring filter: %d\n", ret);
+			/* Reset EXT_MON slot and restore monitor mode */
+			ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(dp_pdev, NULL);
+			ath12k_wifi6_dp_mon_rx_monitor_mode_set(dp_pdev);
+			if (ath12k_wifi6_dp_mon_rx_update_ring_filter(dp_pdev))
+				ath12k_warn(dp_pdev->dp,
+					    "failed to rollback to monitor mode\n");
+			return ret;
+		}
+		/* Commit config only after HW update succeeds */
+		ath12k_wifi6_dp_ext_mon_update_rx_config(dp_mon_pdev, new_config);
+	}
+
+	return ret;
 }

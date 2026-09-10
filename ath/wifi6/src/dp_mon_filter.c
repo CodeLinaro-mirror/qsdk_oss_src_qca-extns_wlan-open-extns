@@ -96,7 +96,7 @@ int ath12k_wifi6_dp_mon_rx_update_ring_filter(struct ath12k_pdev_dp *dp_pdev)
 	enum dp_mon_filter_srng_type srng_type;
 
 	/* update destination ring */
-        if (ath12k_dp_mon_rxdma1_enable(dp))
+	if (ath12k_dp_mon_rxdma1_enable(dp))
 		srng_type = DP_MON_FILTER_SRNG_TYPE_RXDMA_MON_BUF;
 	else
 		srng_type = DP_MON_FILTER_SRNG_TYPE_RXDMA_BUF;
@@ -107,7 +107,7 @@ int ath12k_wifi6_dp_mon_rx_update_ring_filter(struct ath12k_pdev_dp *dp_pdev)
 	else
 		rx_tlv_filter->rxmon_disable = true;
 	ret = ath12k_dp_mon_rx_config_filters(dp, dp_pdev, srng_type,
-						  rx_tlv_filter);
+					      rx_tlv_filter);
 	if (ret)
 		return ret;
 
@@ -122,7 +122,7 @@ int ath12k_wifi6_dp_mon_rx_update_ring_filter(struct ath12k_pdev_dp *dp_pdev)
 		rx_tlv_filter->rxmon_disable = true;
 
 	ret = ath12k_dp_mon_rx_config_filters(dp, dp_pdev, srng_type,
-						  rx_tlv_filter);
+					      rx_tlv_filter);
 	if (ret)
 		return ret;
 
@@ -194,3 +194,69 @@ ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter(struct ath12k_pdev_dp *dp
 	dp_mon_pdev->rx_filter[mode][srng_type] = rx_filter;
 }
 EXPORT_SYMBOL(ath12k_wifi6_dp_mon_rx_undecoded_metadata_reset_filter);
+
+static void
+ath12k_wifi6_dp_mon_setup_ext_mon_filter(struct dp_mon_rx_filter *filter,
+					 u32 rx_mon_tlv_filter_flags,
+					 const struct ath12k_ext_mon_filter_config *config)
+{
+	struct htt_rx_ring_tlv_filter *tlv_filter = &filter->rx_tlv_filter;
+
+	tlv_filter->offset_valid = false;
+	tlv_filter->rx_filter = rx_mon_tlv_filter_flags;
+	tlv_filter->drop_threshold_valid = true;
+	tlv_filter->rx_drop_threshold = HTT_RX_RING_TLV_DROP_THRESHOLD_VALUE;
+
+	if (config && ath12k_dp_ext_mon_is_mode_enabled(&config->target_neighbor)) {
+		tlv_filter->enable_md = 1;
+		tlv_filter->md_mgmt_filter =
+			config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_MGMT];
+		tlv_filter->md_ctrl_filter =
+			config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_CTRL];
+		tlv_filter->md_data_filter =
+			config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_DATA];
+	} else {
+		tlv_filter->enable_md = 0;
+		tlv_filter->md_mgmt_filter = 0;
+		tlv_filter->md_ctrl_filter = 0;
+		tlv_filter->md_data_filter = 0;
+	}
+}
+
+void ath12k_wifi6_dp_rx_ext_mon_mode_filter_config(
+	struct ath12k_pdev_dp *dp_pdev,
+	const struct ath12k_ext_mon_filter_config *config)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	struct ath12k_dp *dp = dp_pdev->dp;
+	struct dp_mon_rx_filter rx_filter = {0};
+	enum dp_mon_filter_mode mode = DP_MON_FILTER_EXT_MON_MODE;
+	enum dp_mon_filter_srng_type srng_type;
+	u32 rx_mon_tlv_filter_flags = 0;
+	bool enable = !!config;
+
+	/* Configure destination ring (mon-buf or refill-buf depending on HW) */
+	if (ath12k_dp_mon_rxdma1_enable(dp))
+		srng_type = DP_MON_FILTER_SRNG_TYPE_RXDMA_MON_BUF;
+	else
+		srng_type = DP_MON_FILTER_SRNG_TYPE_RXDMA_BUF;
+	rx_mon_tlv_filter_flags = HTT_RX_MON_FILTER_TLV_FLAGS_MON_BUF_RING;
+	rx_filter.valid = enable;
+	ath12k_wifi6_dp_mon_setup_ext_mon_filter(&rx_filter,
+						 rx_mon_tlv_filter_flags,
+						 config);
+	ath12k_dp_mon_rx_display_filters(dp, mode, &rx_filter);
+	dp_mon_pdev->rx_filter[mode][srng_type] = rx_filter;
+
+	/* Configure status ring */
+	memset(&rx_filter, 0, sizeof(struct dp_mon_rx_filter));
+	srng_type = DP_MON_FILTER_SRNG_TYPE_RXDMA_MONITOR_STATUS;
+	rx_mon_tlv_filter_flags = HTT_RX_MON_FILTER_TLV_FLAGS_MON_STATUS_RING;
+	rx_mon_tlv_filter_flags |= HTT_RX_FILTER_TLV_FLAGS_PPDU_START_USER_INFO;
+	rx_filter.valid = enable;
+	ath12k_wifi6_dp_mon_setup_ext_mon_filter(&rx_filter,
+						 rx_mon_tlv_filter_flags,
+						 config);
+	ath12k_dp_mon_rx_display_filters(dp, mode, &rx_filter);
+	dp_mon_pdev->rx_filter[mode][srng_type] = rx_filter;
+}

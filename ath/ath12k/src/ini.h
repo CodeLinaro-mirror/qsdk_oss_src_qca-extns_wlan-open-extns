@@ -420,6 +420,7 @@
 	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
 	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
 	ATH12K_CFG(ATH12K_CFG_RADIO_ORDER) \
+	ATH12K_CFG(ATH12K_CFG_BAND_CHANNEL_FILTER_CONFIG) \
 	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_RADIO_TX_ON_DFS) \
 	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
@@ -596,6 +597,31 @@
 #define ATH12K_CFG_RF_SWITCH_CONFIG \
 	ATH12K_CFG_INI_BOOL("rf_switch_config", false, \
 	"RF path: false=primary/full 5G range (default), true=secondary/high 5G range")
+
+/**
+ * ATH12K_CFG_BAND_CHANNEL_FILTER_CONFIG - Boot-time per-radio SW band filter
+ *
+ * Packs one 5-bit ATH12K_BAND_FILTER_* mask per radio (up to MAX_RADIOS=2),
+ * byte-aligned: radio 0's mask in bits [0:4], radio 1's mask in bits [8:12].
+ * Within each radio's 5-bit mask, bit 0 (LSB) is 2GHz, then 5GHz-low,
+ * 5GHz-high, 6GHz-low, and bit 4 is 6GHz-high:
+ *   bit 0: 2GHz
+ *   bit 1: 5GHz-low
+ *   bit 2: 5GHz-high
+ *   bit 3: 6GHz-low
+ *   bit 4: 6GHz-high
+ * 0 (default) = no filter pre-set, radio boots with full band capability.
+ * The BIT(31) "disable everything" sentinel is not representable in a
+ * per-radio byte slot and is not meaningful as a boot-time default -- use
+ * the runtime BAND_CHANNEL_FILTER vendor command for that case instead.
+ *
+ * Example: 0x00000103 pre-sets radio 0 to mask 0x03 (2GHz + 5GHz-low) and
+ * radio 1 to mask 0x01 (2GHz only).
+ */
+#define ATH12K_CFG_BAND_CHANNEL_FILTER_CONFIG \
+	ATH12K_CFG_INI_UINT("band_channel_filter_config", \
+	0, 0x1F1F, 0, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, "Boot-time per-radio SW band filter, byte-packed per MAX_RADIOS")
 
 /*
  * ATH12K_CFG_RADIO_ORDER: per-SoC pdev band order (4 bits/slot, enum

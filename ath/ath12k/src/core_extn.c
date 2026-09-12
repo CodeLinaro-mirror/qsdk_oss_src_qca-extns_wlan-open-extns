@@ -1938,3 +1938,37 @@ void ath12k_mac_vht_mcs10_11_ratemask_extn(struct ath12k_link_vif *arvif,
 	arg->mask_higher32 |= upper_32_bits(mcs1011_lower64);
 	arg->mask_lower32_2 |= lower_32_bits(mcs1011_higher64);
 }
+
+/**
+ * ath12k_link_sta_find_by_addr_all_radios_extn() - Find arsta by peer MAC across all radios.
+ * @ah:   ath12k_hw instance.
+ * @addr: peer link MAC address to look up.
+ *
+ * Walks all radios in @ah, taking ar->arsta_lock per radio, and returns the
+ * first arsta whose link address matches @addr.
+ *
+ * Returns the arsta on success, NULL if not found.
+ */
+struct ath12k_link_sta *
+ath12k_link_sta_find_by_addr_all_radios_extn(struct ath12k_hw *ah, const u8 *addr)
+{
+	struct ath12k_link_sta *arsta;
+	struct ath12k *ar;
+	int i;
+
+	for_each_ar(ah, ar, i) {
+		spin_lock_bh(&ar->arsta_lock);
+		arsta = ath12k_link_sta_find_by_addr(ar, addr);
+		if (arsta && arsta->is_self_peer)
+			arsta = NULL;
+		spin_unlock_bh(&ar->arsta_lock);
+		if (arsta) {
+			ath12k_dbg(ar->ab, ATH12K_DBG_RTT,
+				   "RTT: peer %pM found on radio %d\n", addr, i);
+			return arsta;
+		}
+	}
+
+	ath12k_err(NULL, "peer %pM not found on any radio", addr);
+	return NULL;
+}

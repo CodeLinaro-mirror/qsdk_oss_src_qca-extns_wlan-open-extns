@@ -9,6 +9,7 @@
 #include <net/mac80211.h>
 #include "../wmi.h"
 #include "../debug.h"
+#include "../ranging.h"
 #include "ath12k_cmn_extn.h"
 #include "ranging_extn.h"
 
@@ -672,4 +673,104 @@ int ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
 		return ath12k_vendor_send_lowi_event_extn(hw, QCA_LOWI_EVT_ERROR,
 							  NULL, 0, 0xff);
 	}
+}
+
+static struct ath12k_link_vif *
+ath12k_find_rtt_arvif_from_wdev(struct wireless_dev *wdev)
+{
+	ath12k_dbg(NULL, ATH12K_DBG_RTT,
+		   "RTT: unassoc PASN ranging vif lookup not implemented yet\n");
+	return NULL;
+}
+
+struct ath12k_link_vif *ath12k_arvif_from_peer_addr_extn(struct wireless_dev *wdev,
+							 const u8 *peer_addr)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	struct ath12k_link_sta *arsta;
+	struct ath12k_vif *ahvif;
+
+	if (!vif)
+		return NULL;
+
+	ath12k_dbg(NULL, ATH12K_DBG_RTT,
+		   "RTT: arvif_from_peer_addr peer=%pM assoc=%d\n",
+		   peer_addr, vif->cfg.assoc);
+
+	if (!vif->cfg.assoc)
+		return ath12k_find_rtt_arvif_from_wdev(wdev);
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+	if (!ahvif || !ahvif->ah)
+		return NULL;
+
+	arsta = ath12k_link_sta_find_by_addr_all_radios_extn(ahvif->ah, peer_addr);
+	if (!arsta)
+		return NULL;
+
+	ath12k_dbg(NULL, ATH12K_DBG_RTT,
+		   "RTT: arvif_from_peer_addr found peer=%pM link_id=%u\n",
+		   peer_addr, arsta->link_id);
+
+	return arsta->arvif;
+}
+
+static int ath12k_wmi_send_ltf_key_seed_link_extn(struct ath12k_link_vif *lvif,
+						   struct ath12k_wmi_ltf_keyseed_arg *arg,
+						   const u8 *peer_addr)
+{
+	int ret;
+
+	ath12k_dbg(lvif->ar->ab, ATH12K_DBG_RTT,
+		   "RTT: ltf_keyseed link_id=%u vdev_id=%u peer=%pM\n",
+		   lvif->link_id, lvif->vdev_id, peer_addr);
+
+	arg->vdev_id = lvif->vdev_id;
+	ret = ath12k_wmi_send_ltf_key_seed(lvif->ar, arg);
+	if (ret)
+		return ret;
+
+	ath12k_pasn_peer_set_ltf_keyseed(lvif, peer_addr, true);
+	return 0;
+}
+
+int ath12k_wmi_send_ltf_key_seed_all_radios_extn(struct wireless_dev *wdev,
+						 struct ath12k_wmi_ltf_keyseed_arg *arg,
+						 const u8 *peer_addr)
+{
+	struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+	struct ath12k_vif *ahvif;
+	struct ath12k_link_vif *lvif;
+	unsigned long links_map;
+	u8 link_id;
+	int ret;
+
+	if (!vif)
+		return -ENOLINK;
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+
+	/* SLO/non-MLO vifs never populate links_map or link[]; the single
+	 * link vdev lives in the preallocated deflink instead.
+	 */
+	if (!ieee80211_vif_is_mld(vif)) {
+		lvif = &ahvif->deflink;
+		if (!lvif->ar || !lvif->is_started)
+			return -ENOLINK;
+
+		return ath12k_wmi_send_ltf_key_seed_link_extn(lvif, arg, peer_addr);
+	}
+
+	links_map = ahvif->links_map;
+	for_each_set_bit(link_id, &links_map, ATH12K_NUM_MAX_LINKS) {
+		lvif = wiphy_dereference(ahvif->ah->hw->wiphy, ahvif->link[link_id]);
+		if (!lvif || !lvif->ar || !lvif->is_started)
+			continue;
+
+		ret = ath12k_wmi_send_ltf_key_seed_link_extn(lvif, arg, peer_addr);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }

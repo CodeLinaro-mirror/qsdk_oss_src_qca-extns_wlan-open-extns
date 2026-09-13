@@ -981,6 +981,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_initialize_default = NULL,
 	.ipa_uc_offload_enable = NULL,
 	.dp_ipa_w2i = ath12k_wifi8_dp_ipa_w2i,
+	.debugfs_register = ath12k_wifi8_debugfs_register_tqm2sw6,
 };
 
 int

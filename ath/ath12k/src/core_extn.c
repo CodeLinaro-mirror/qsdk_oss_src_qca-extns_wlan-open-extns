@@ -1972,3 +1972,62 @@ ath12k_link_sta_find_by_addr_all_radios_extn(struct ath12k_hw *ah, const u8 *add
 	ath12k_err(NULL, "peer %pM not found on any radio", addr);
 	return NULL;
 }
+
+/*
+ * ath12k_mac_op_add_interface_extn - extension hook called at the end of
+ * ath12k_mac_op_add_interface() for each new virtual interface.
+ *
+ * RTT-specific work is delegated to ath12k_add_rtt_interface_extn()
+ * in ranging_extn.c.
+ */
+void ath12k_mac_op_add_interface_extn(struct ieee80211_hw *hw,
+				      struct ieee80211_vif *vif)
+{
+	ath12k_add_rtt_interface_extn(hw, vif);
+}
+EXPORT_SYMBOL(ath12k_mac_op_add_interface_extn);
+
+/*
+ * ath12k_rtt_vdev_assoc_extn - extension hook called at the end of ath12k_bss_assoc().
+ *
+ * When a STA interface becomes fully associated, the dedicated RTT vdev
+ * (rtt_vif) that was pre-created at add_interface time is no longer
+ * needed — the FW will use the real STA vdev for PASN peer-creates instead.
+ * Destroy it now to avoid leaving a stale vdev in the FW.
+ */
+void ath12k_rtt_vdev_assoc_extn(struct ath12k *ar,
+			   struct ath12k_link_vif *arvif)
+{
+	if (arvif->ahvif->vdev_type != WMI_VDEV_TYPE_STA)
+		return;
+
+	if (ar->ar_extn.rtt_vif)
+		ath12k_destroy_rtt_vdev_extn(ar);
+}
+EXPORT_SYMBOL(ath12k_rtt_vdev_assoc_extn);
+
+/*
+ * ath12k_mac_op_remove_interface_extn - extension hook called at the end of
+ * ath12k_mac_op_remove_interface().
+ *
+ * Destroy the RTT vdev if it was not already torn down during association.
+ * This handles cases where the interface is removed before association
+ * completes (e.g. user brings the interface down while scanning).
+ */
+void ath12k_mac_op_remove_interface_extn(struct ieee80211_hw *hw,
+					 struct ieee80211_vif *vif)
+{
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
+	struct ath12k *ar;
+	int i;
+
+	if (ahvif->vdev_type != WMI_VDEV_TYPE_STA)
+		return;
+
+	for_each_ar(ah, ar, i) {
+		if (ar->ar_extn.rtt_vif)
+			ath12k_destroy_rtt_vdev_extn(ar);
+	}
+}
+EXPORT_SYMBOL(ath12k_mac_op_remove_interface_extn);

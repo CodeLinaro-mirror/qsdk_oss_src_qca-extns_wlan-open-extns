@@ -7,6 +7,8 @@
 #include <net/netlink.h>
 #include <net/net_namespace.h>
 #include <net/mac80211.h>
+#include "../core.h"
+#include "../mac.h"
 #include "../wmi.h"
 #include "../debug.h"
 #include "../ranging.h"
@@ -492,6 +494,8 @@ int ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
 	int ret;
 	u8 *data_ptr;
 	int payload_len;
+	struct ieee80211_vif *vif = NULL;
+	struct ath12k_link_vif *arvif = NULL;
 
 	/* If IFINDEX is present in the vendor data, resolve wdev from it. */
 	if (!wdev && tb[QCA_WLAN_VENDOR_ATTR_OEM_DATA_IFINDEX]) {
@@ -567,68 +571,54 @@ int ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
 	case QCA_LOWI_CMD_RTT_START:
 	case QCA_LOWI_CMD_RTT_CANCEL:
 	case QCA_LOWI_CMD_CONFIG_LCI:
+
 		if (!data_ptr || payload_len <= 0) {
 			ath12k_err(NULL, "LOWI: cmd %u missing payload\n",
 				   cmd_type);
 			return -EINVAL;
 		}
-		ar = ath12k_get_ar_from_wdev(wdev, link_id);
-		if (!ar && radio_idx >= 0) {
-			ar = ath12k_ah_to_ar(ah, (u8)radio_idx);
-			ath12k_dbg(NULL, ATH12K_DBG_RTT, "LOWI: ar resolved via radio_idx=%d\n",
-				   radio_idx);
-		}
-		if (!ar) {
-			ath12k_err(NULL, "LOWI: no ar for wdev %p cmd %u link_id=%d radio_idx=%d\n",
-				   wdev, cmd_type, link_id, radio_idx);
-			return -EINVAL;
-		}
-		vdev_id = ath12k_vendor_lowi_get_vdev_id_extn(wdev, link_id);
-		pdev_id = ar->pdev ? ar->pdev->pdev_id : -1;
 
-		{
-			struct ath12k_link_vif *arvif = NULL;
-			bool is_started = false;
+		vif = wdev_to_ieee80211_vif(wdev);
 
-			if (vdev_id >= 0) {
-				rcu_read_lock();
-				arvif = ath12k_mac_get_arvif(ar, vdev_id);
-				if (arvif)
-					is_started = arvif->is_started;
-				rcu_read_unlock();
+		/* AP & STA assoc case */
+		if (wdev->iftype == NL80211_IFTYPE_AP ||
+		    (wdev->iftype == NL80211_IFTYPE_STATION && vif->cfg.assoc)) {
+			ar = ath12k_get_ar_from_wdev(wdev, link_id);
+			if (!ar && radio_idx >= 0) {
+				ar = ath12k_ah_to_ar(ah, (u8)radio_idx);
+				ath12k_dbg(NULL, ATH12K_DBG_RTT, "LOWI: ar resolved via radio_idx=%d\n",
+						radio_idx);
 			}
-			ath12k_dbg(NULL, ATH12K_DBG_RTT, "LOWI RTT_START/CANCEL vdev=%d pdev=%u link_id=%d allocated_vdev_map=0x%llx is_started=%d\n",
-				   vdev_id, pdev_id, link_id,
-				   ar->allocated_vdev_map, is_started);
-
-			if (!ar->allocated_vdev_map) {
-				ath12k_dbg(NULL, ATH12K_DBG_RTT, "RANGING REQUEST FAILED as no active Vdev\n");
+			if (!ar) {
+				ath12k_err(NULL, "LOWI: no ar for wdev %p cmd %u link_id=%d radio_idx=%d\n",
+						wdev, cmd_type, link_id, radio_idx);
 				return -EINVAL;
 			}
+			vdev_id = ath12k_vendor_lowi_get_vdev_id_extn(wdev, link_id);
+			pdev_id = ar->pdev ? ar->pdev->pdev_id : -1;
+		} else {
+			/* STA Un assoc case */
+			ar = ath12k_ah_to_ar(ah, (u8)radio_idx);
+			ath12k_info(NULL, "LOWI: STA Un Assoc case ar resolved via radio_idx=%d wdev=%p netdev=%s\n",
+					radio_idx, wdev,
+					(wdev && wdev->netdev) ? wdev->netdev->name : "<none>");
 
-			/* Send initiator role WMI param only once per vdev lifetime. */
-			if (cmd_type == QCA_LOWI_CMD_RTT_START && vdev_id >= 0) {
-				if (arvif && arvif->arvif_extn.rtt_initiator_role) {
-					ath12k_dbg(NULL, ATH12K_DBG_RTT, "LOWI: RTT initiator role already set for vdev=%d, skipping\n",
-						    vdev_id);
-				} else {
-					ath12k_dbg(NULL, ATH12K_DBG_RTT, "LOWI RTT Role vdev=%d pdev=%u link_id=%d\n",
-						   vdev_id, pdev_id, link_id);
-					ret = ath12k_wmi_vdev_set_param_cmd(ar, vdev_id,
+			if (ar->ar_extn.rtt_vif) {
+				arvif = ar->ar_extn.rtt_vif;
+				vdev_id = arvif->vdev_id;
+				ath12k_wmi_vdev_set_param_cmd(ar, vdev_id,
 						WMI_VDEV_PARAM_ENABLE_DISABLE_RTT_INITIATOR_ROLE,
 						1);
-					if (ret)
-						return ret;
-					if (arvif) {
-						rcu_read_lock();
-						arvif = ath12k_mac_get_arvif(ar, vdev_id);
-						if (arvif)
-							arvif->arvif_extn.rtt_initiator_role = true;
-						rcu_read_unlock();
-					}
-				}
+			} else {
+				ath12k_err(NULL, "LOWI:  Un Assoc case no rtt_vif return error\n");
+				return -EINVAL;
 			}
 		}
+
+		ath12k_info(NULL, "LOWI RTT_START/CANCEL vdev=%d pdev=%u, "
+				"link_id=%d allocated_vdev_map=0x%llx\n",
+				vdev_id, pdev_id, link_id,
+				ar->allocated_vdev_map);
 
 		ret = ath12k_wmi_send_lowi_oem_data_extn(ar, pdev_id,
 						    payload_len, data_ptr);
@@ -774,3 +764,303 @@ int ath12k_wmi_send_ltf_key_seed_all_radios_extn(struct wireless_dev *wdev,
 
 	return 0;
 }
+
+/* --- RTT vdev helpers (LOWI, unassociated STA) ---
+ * Bare STA vdev created solely for WMI_VDEV_PARAM_ENABLE_DISABLE_RTT_INITIATOR_ROLE
+ * and the RTT OEM data blob. Not registered with mac80211; kept off ar->arvifs list.
+ */
+int ath12k_create_rtt_vdev_extn(struct ath12k *ar, const u8 *sta_mac)
+{
+	struct ath12k_base *ab = ar->ab;
+	struct ath12k_link_vif *arvif;
+	struct ath12k_wmi_vdev_create_arg arg = {};
+	u8 mac_addr[ETH_ALEN];
+	int vdev_id, ret;
+
+	if (ath12k_scan_radio_supported(ar->pdev)) {
+		ath12k_warn(ab, "LOWI: cannot create RTT vdev on scan radio\n");
+		return -ENODEV;
+	}
+
+	arvif = kzalloc(sizeof(*arvif), GFP_KERNEL);
+	if (!arvif)
+		return -ENOMEM;
+
+	arvif->ar         = ar;
+	arvif->arvif_extn.is_rtt_vif = true;
+	INIT_LIST_HEAD(&arvif->list); /* stays off ar->arvifs */
+
+	spin_lock_bh(&ab->base_lock);
+	if (!ab->free_vdev_map) {
+		spin_unlock_bh(&ab->base_lock);
+		ath12k_warn(ab, "LOWI: no free vdev_id for RTT vdev\n");
+		kfree(arvif);
+		return -ENOSPC;
+	}
+	vdev_id = __ffs64(ab->free_vdev_map);
+	ab->free_vdev_map &= ~(1LL << vdev_id);
+	spin_unlock_bh(&ab->base_lock);
+
+	arvif->vdev_id      = vdev_id;
+	arvif->vdev_subtype = WMI_VDEV_SUBTYPE_NONE;
+
+	/* Use the STA interface MAC so PASN Auth frames carry a valid SA
+	 * that cfg80211_mlme_mgmt_tx accepts. Fall back to random if not
+	 * provided (e.g. pre-creation during scan before association).
+	 */
+	if (sta_mac && !is_zero_ether_addr(sta_mac))
+		ether_addr_copy(mac_addr, sta_mac);
+	else
+		eth_random_addr(mac_addr);
+	ether_addr_copy(arvif->bssid, mac_addr);
+	ether_addr_copy(arvif->addr,  mac_addr);
+
+	arg.if_id        = vdev_id;
+	arg.type         = WMI_VDEV_TYPE_STA;
+	arg.subtype      = WMI_VDEV_SUBTYPE_NONE;
+	arg.pdev_id      = ar->pdev->pdev_id;
+	arg.mbssid_flags = WMI_VDEV_MBSSID_FLAGS_NON_MBSSID_AP;
+	arg.if_stats_id  = ATH12K_INVAL_VDEV_STATS_ID;
+
+	if (ar->pdev->cap.supported_bands & WMI_HOST_WLAN_2GHZ_CAP) {
+		arg.chains[NL80211_BAND_2GHZ].tx = ar->num_tx_chains;
+		arg.chains[NL80211_BAND_2GHZ].rx = ar->num_rx_chains;
+	}
+	if (ar->pdev->cap.supported_bands & WMI_HOST_WLAN_5GHZ_CAP) {
+		arg.chains[NL80211_BAND_5GHZ].tx = ar->num_tx_chains;
+		arg.chains[NL80211_BAND_5GHZ].rx = ar->num_rx_chains;
+	}
+
+	ret = ath12k_wmi_vdev_create(ar, mac_addr, &arg);
+	if (ret) {
+		ath12k_warn(ab, "LOWI: failed to create RTT vdev %d: %d\n",
+			    vdev_id, ret);
+		spin_lock_bh(&ab->base_lock);
+		ab->free_vdev_map |= 1LL << vdev_id;
+		spin_unlock_bh(&ab->base_lock);
+		kfree(arvif);
+		return ret;
+	}
+
+	ar->num_created_vdevs++;
+	ar->allocated_vdev_map |= 1LL << vdev_id;
+	arvif->is_created = true;
+	ar->ar_extn.rtt_vif = arvif;
+
+	/* rtt_vif has no ahvif/vif so ath12k_mac_init_arvif_extn() cannot be
+	 * called directly. Initialise only the RTT/PASN context it needs.
+	 */
+	ath12k_rtt_init_link_vif(arvif);
+	ath12k_info(ab, "LOWI: RTT vdev created vdev_id=%d pdev=%u\n",
+		    vdev_id, ar->pdev->pdev_id);
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_create_rtt_vdev_extn);
+
+/*
+ * ath12k_destroy_rtt_vdev_extn - destroy the dedicated RTT vdev.
+ *
+ * Tears down the FW PASN peers, cleans SW tracking, resets RTT state,
+ * deletes the WMI vdev, and frees host memory. Safe to call when
+ * ar->ar_extn.rtt_vif is NULL (no-op).
+ */
+void ath12k_destroy_rtt_vdev_extn(struct ath12k *ar)
+{
+
+        struct ath12k_link_vif *arvif = ar->ar_extn.rtt_vif;
+        int ret;
+
+        if (!arvif)
+                return;
+
+        /* Delete all FW PASN peers, cancel pending work, and free SW list.
+         * ath12k_rtt_deinit_link_vif() handles peer_delete_all + cleanup.
+         */
+        ath12k_rtt_deinit_link_vif(arvif);
+
+        arvif->arvif_extn.rtt_initiator_role = false;
+
+        ath12k_info(ar->ab,
+                   "[radio_idx:%u] rtt_vdev destroy: vdev_id=%u is_started=%d allocated_map=0x%llx\n",
+                   ar->radio_idx, arvif->vdev_id, arvif->is_started,
+                   ar->allocated_vdev_map);
+
+        /* FW vdev state machine requires STOP → DELETE, but only if
+         * the vdev was actually started. Sending WMI_VDEV_STOP_CMDID to a
+         * vdev in INIT state causes the FW to not send VDEV_STOPPED_EVENTID,
+         * which would make ath12k_mac_vdev_setup_sync() time out for 5s.
+         */
+        if (arvif->is_started) {
+                reinit_completion(&ar->vdev_setup_done);
+                ret = ath12k_wmi_vdev_stop(ar, arvif->vdev_id);
+                if (ret) {
+                        ath12k_warn(ar->ab, "LOWI: failed to stop RTT vdev %d: %d\n",
+                                    arvif->vdev_id, ret);
+                } else {
+                        ret = ath12k_mac_vdev_setup_sync(ar);
+                        if (ret)
+                                ath12k_warn(ar->ab,
+                                            "LOWI: failed to sync RTT vdev %d stop: %d\n",
+                                            arvif->vdev_id, ret);
+                }
+                ar->num_started_vdevs--;
+                arvif->is_started = false;
+        }
+
+
+        reinit_completion(&ar->vdev_delete_done);
+        ret = ath12k_wmi_vdev_delete(ar, arvif->vdev_id);
+        if (ret) {
+                ath12k_warn(ar->ab, "LOWI: failed to delete RTT vdev %d: %d\n",
+                            arvif->vdev_id, ret);
+        } else {
+                unsigned long time_left;
+
+                time_left = wait_for_completion_timeout(&ar->vdev_delete_done,
+                                                    ATH12K_VDEV_DELETE_TIMEOUT_HZ);
+                if (time_left == 0)
+                        ath12k_warn(ar->ab,
+                                    "LOWI: timeout waiting for RTT vdev %d delete response\n",
+                                    arvif->vdev_id);
+        }
+
+        spin_lock_bh(&ar->ab->base_lock);
+        ar->ab->free_vdev_map |= 1LL << arvif->vdev_id;
+        spin_unlock_bh(&ar->ab->base_lock);
+
+        ar->allocated_vdev_map &= ~(1LL << arvif->vdev_id);
+        ar->num_created_vdevs--;
+
+        ath12k_info(ar->ab, "LOWI: RTT vdev destroyed vdev_id=%d\n",
+                    arvif->vdev_id);
+        kfree(arvif);
+        ar->ar_extn.rtt_vif = NULL;
+}
+EXPORT_SYMBOL(ath12k_destroy_rtt_vdev_extn);
+
+/*
+ * ath12k_get_rtt_vif_by_vdev_id_extn - find the rtt_vif matching a vdev_id.
+ *
+ * ath12k_mac_get_arvif_by_vdev_id() only searches mac80211-registered vdevs.
+ * The rtt_vif is a bare WMI vdev not registered with mac80211, so it cannot
+ * be found that way. Walk all active pdevs and match via ar_extn.rtt_vif.
+ *
+ * Called with rcu_read_lock held. Returns NULL if no match is found.
+ */
+struct ath12k_link_vif *
+ath12k_get_rtt_vif_by_vdev_id_extn(struct ath12k_base *ab, u32 vdev_id)
+{
+	struct ath12k_link_vif *arvif = NULL;
+	struct ath12k_pdev *pdev;
+	struct ath12k *ar;
+	int i;
+
+	/* rtt_vif is not registered with mac80211 so
+	 * ath12k_mac_get_arvif_by_vdev_id() cannot find it. Walk
+	 * pdevs and match via ar_extn.rtt_vif instead.
+	 */
+	for (i = 0; i < ab->num_radios; i++) {
+		pdev = rcu_dereference(ab->pdevs_active[i]);
+		if (!pdev)
+			continue;
+		ar = pdev->ar;
+		if (!ar || !ar->ar_extn.rtt_vif)
+			continue;
+		if (ar->ar_extn.rtt_vif->vdev_id == vdev_id) {
+			arvif = ar->ar_extn.rtt_vif;
+			ath12k_dbg(ab, ATH12K_DBG_RTT,
+				   "RTT: found rtt_vif vdev_id=%u radio_idx=%u\n",
+				   vdev_id, ar->radio_idx);
+			break;
+		}
+	}
+
+	return arvif;
+}
+EXPORT_SYMBOL(ath12k_get_rtt_vif_by_vdev_id_extn);
+
+/*
+ * ath12k_ar_has_ap_vdev - return true if radio @ar has at least one AP vdev.
+ *
+ * Must be called with ar->data_lock held.
+ */
+static bool ath12k_ar_has_ap_vdev(struct ath12k *ar)
+{
+	struct ath12k_link_vif *arvif;
+
+	list_for_each_entry(arvif, &ar->arvifs, list) {
+		if (!arvif->ahvif)
+			continue;
+		if (arvif->ahvif->vdev_type == WMI_VDEV_TYPE_AP)
+			return true;
+	}
+	return false;
+}
+
+/*
+ * ath12k_add_rtt_interface_extn - RTT vdev lifecycle at add_interface time.
+ *
+ * Called from ath12k_mac_op_add_interface_extn() for each new vif.
+ *
+ * has_ap_vap reflects the whole ah group, not a single radio: an AP vdev
+ * on ANY radio means unassociated-STA LOWI ranging can use that real AP
+ * vdev as context, so the dedicated RTT vdev is redundant EVERYWHERE, not
+ * just on the radio that happens to host the AP.
+ *
+ * has_ap_vap true (AP vif being added, or an AP vdev already exists on
+ * some radio):
+ *   Destroy the RTT vdev on every radio that still has one.
+ *
+ * has_ap_vap false (STA vif being added and no radio has an AP vdev):
+ *   Create the RTT vdev on every radio so unassociated LOWI ranging has a
+ *   vdev context.
+ */
+void ath12k_add_rtt_interface_extn(struct ieee80211_hw *hw,
+				   struct ieee80211_vif *vif)
+{
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(vif);
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+	struct ath12k *ar;
+	const u8 *sta_mac;
+	bool has_ap_vap;
+	int i;
+
+	sta_mac = (wdev && wdev->netdev) ? wdev->netdev->dev_addr : NULL;
+
+	ath12k_dbg(NULL, ATH12K_DBG_RTT,
+		   "RTT: add_interface vdev_type=%u mac=%pM\n",
+		   ahvif->vdev_type, vif->addr);
+
+	/* Pass 1: determine has_ap_vap across ALL radios before deciding
+	 * anything, so pass 2 applies the same decision uniformly.
+	 */
+	has_ap_vap = (ahvif->vdev_type == WMI_VDEV_TYPE_AP);
+
+	if (!has_ap_vap) {
+		for_each_ar(ah, ar, i) {
+			spin_lock_bh(&ar->data_lock);
+			if (ath12k_ar_has_ap_vdev(ar))
+				has_ap_vap = true;
+			spin_unlock_bh(&ar->data_lock);
+			if (has_ap_vap)
+				break;
+		}
+	}
+
+	/* Pass 2: apply has_ap_vap uniformly to every radio. */
+	for_each_ar(ah, ar, i) {
+		ath12k_info(NULL,
+			   "RTT: add_interface radio_idx=%u vdev_type=%u has_ap_vap=%d rtt_vif=%s\n",
+			   ar->radio_idx, ahvif->vdev_type, has_ap_vap,
+			   ar->ar_extn.rtt_vif ? "present" : "absent");
+
+		if (has_ap_vap) {
+			if (ar->ar_extn.rtt_vif)
+				ath12k_destroy_rtt_vdev_extn(ar);
+		} else if (ahvif->vdev_type == WMI_VDEV_TYPE_STA) {
+			ath12k_create_rtt_vdev_extn(ar, sta_mac);
+		}
+	}
+}
+EXPORT_SYMBOL(ath12k_add_rtt_interface_extn);

@@ -1173,7 +1173,7 @@ int ath12k_mac_setup_vdev_create_arg_scan_radio_extn(struct ath12k_link_vif *arv
 		return 0;
 
 	/* Has user requested to configure scan radio? */
-	if (ahvif->vap_submode == QCA_WLAN_VENDOR_VAP_SUBMODE_SCAN) {
+	if (ahvif->vap_submode == QCA_WLAN_VENDOR_ATTR_VAP_SUBMODE_SCAN) {
 		/* Reject request if firmware does not support scan radio */
 		if (!ath12k_scan_radio_supported(ar->pdev)) {
 			ath12k_err(ar->ab,

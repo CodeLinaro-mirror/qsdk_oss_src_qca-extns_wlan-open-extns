@@ -424,7 +424,29 @@ static int ath12k_validate_offchan_operation(struct ath12k *ar,
 	return 0;
 }
 
-void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb, void *ptr)
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+static int ath12k_wmi_parse_mon_mhdr(struct sk_buff *skb, u32 *mcs, u32 *nss,
+				     u32 *preamble, u8 *retries)
+{
+	struct meta_hdr_s *mhdr;
+
+	if (!skb || !skb->data)
+		return -EINVAL;
+
+	if (skb_headroom(skb) < MMESH_TX_META_HDR)
+		return -EINVAL;
+
+	mhdr = (struct meta_hdr_s *)(skb->data - MMESH_TX_META_HDR);
+	*mcs = mhdr->rate_info[0].mcs;
+	*nss = mhdr->rate_info[0].nss;
+	*preamble = mhdr->rate_info[0].preamble_type;
+	*retries = mhdr->retries;
+
+	return 0;
+}
+#endif
+
+void ath12k_wmi_prepare_tx_params_extn(struct sk_buff *skb, struct ath12k_skb_cb *skb_cb, void *ptr)
 {
 	struct ath12k *ar = skb_cb->u.ar;
 	struct ath12k_skb_tx_param *tx_param = &ar->ar_extn.raw_pkt_ctx.tx_param;
@@ -434,11 +456,28 @@ void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb, void *ptr)
 	u32 mcs = tx_param->mcs;
 	u32 nss = tx_param->nss;
 	u32 preamble = tx_param->preamble;
+	u8 retries = 0;
+	int ret;
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	if (skb_cb->flags & ATH12K_SKB_MONRAW_TX) {
+		ret = ath12k_wmi_parse_mon_mhdr(skb, &mcs, &nss, &preamble, &retries);
+		if (ret)
+			return;
+		tx_param = &ar->ar_extn.monraw_pkt_ctx.tx_param;
+		tx_param->tx_param_configured = true;
+		tx_param->retry = retries;
+		tx_param->is_data = true;
+		goto monparams;
+	}
+#endif
 
 	if (!ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN(ar) ||
-	    !ATH12K_IS_CUSTOM_PKT(skb_cb))
+	    !ATH12K_IS_CUSTOM_PKT(skb_cb)) {
 		return;
+	}
 
+monparams:
 	ath12k_process_rate_params(&mcs, &nss, preamble);
 
 	/* Set power in dword0 [7:0] */

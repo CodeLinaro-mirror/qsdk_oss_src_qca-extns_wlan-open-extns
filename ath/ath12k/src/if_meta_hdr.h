@@ -43,8 +43,11 @@ struct meta_hdr_s {
 
 	uint8_t band; /* Operating band */
 
-	uint8_t unused[3];
+	uint8_t mac_addr_valid;
+	uint8_t mac_addr[MAC_ADDR_SIZE];
 };
+
+static_assert(sizeof(struct meta_hdr_s) == 20, "size mismatch: meta_hdr_s");
 
 #define MAX_CRYPTO_KEY_SIZE 48
 struct mesh_recv_hdr_s {

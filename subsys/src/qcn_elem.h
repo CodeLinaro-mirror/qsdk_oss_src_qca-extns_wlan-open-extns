@@ -12,6 +12,10 @@
 #define WLAN_OUI_QCN_ATTR_VER                  1
 #define WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP     0x0B
 #define WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA      0x0C
+#define WLAN_OUI_QCN_ATTR_CCK_SUPPORT          0x0F
+#define WLAN_OUI_QCN_CCK_RX_5G_ENABLED_POS     0
+#define WLAN_OUI_QCN_CCK_TX_5G_ENABLED_POS     1
+#define WLAN_OUI_QCN_CCK_SUPPORT_ATTRIB_LEN    1
 
 /* QCN attribute ID for VHT MCS 10/11 (1024-QAM) support.
  * Payload: 1 byte, value 1 = supported, 0 = not supported.
@@ -37,4 +41,3 @@ struct ieee80211_qcn_version_vendor_elem_extn {
 }__packed;
 
 #endif /* QCN_ELEM_H */
-

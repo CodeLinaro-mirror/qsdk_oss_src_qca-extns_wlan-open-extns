@@ -1452,7 +1452,7 @@ void ath12k_mac_dfs_violation_recovery_extn(struct ath12k_link_vif *arvif,
 	if (dfs_required <= 0)
 		return;
 
-	arvif->pending_csa_up = false;
+	arvif->pending_tx_vdev_up = false;
 
 	ath12k_warn(ar->ab,
 		    "dfs violation on vdev %d for freq %u, marking target unavailable\n",
@@ -1490,7 +1490,7 @@ void ath12k_mac_setnol_recovery_extn(struct ath12k_link_vif *arvif,
 	if (dfs_required <= 0)
 		return;
 
-	arvif->pending_csa_up = false;
+	arvif->pending_tx_vdev_up = false;
 	radar_bitmap = ath12k_mac_dfs_violation_radar_bitmap_extn(hw->wiphy,
 								  chandef);
 

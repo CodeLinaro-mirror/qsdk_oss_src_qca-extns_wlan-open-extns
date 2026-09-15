@@ -7944,18 +7944,15 @@ static int ath12k_vendor_get_he_mcs_12_13_cap(struct ath12k_hw *ah, struct nlatt
 
 /**
  * ath12k_vendor_set_he_mcs_12_13_peer_cap - Store intersected peer HE MCS 12/13
- * NSS capability, split into TX and RX fields.
+ * NSS capability for the AP.
  *
  * @wiphy:       wiphy pointer
  * @wifi_params: parsed generic command parameters
  *
- * Stores the intersected peer capability with the radio's own hardware capab
- * for use during the WMI peer-assoc command.
- *
- * Results are stored as:
- *   he_mcs_12_13_peer_rx_cap = radio_cap & peer_cap (all platforms)
- *   he_mcs_12_13_peer_tx_cap = radio_cap & peer_cap (platforms that can RX MCS 12/13)
- *                            = 0 (platforms that cannot RX MCS 12/13, eg: IPQ5332)
+ * hostapd parses the associating STA's Association Request QCN vendor IE and
+ * pushes the result down via NL vendor command. Stores the intersected peer
+ * capability with the radio's own hardware capability for use during the
+ * WMI peer-assoc command.
  *
  * Returns 0 on success, negative error code on failure.
  */
@@ -7967,7 +7964,6 @@ static int ath12k_vendor_set_he_mcs_12_13_peer_cap(struct wiphy *wiphy,
 	struct ath12k *ar;
 	u8 radio_idx = wifi_params->radio_idx;
 	__le16 peer_cap_le;
-	u16 peer_cap_supp;
 
 	if (radio_idx >= ah->num_radio) {
 		ath12k_err(NULL, "HE MCS 12/13 SET: invalid radio index %u\n", radio_idx);
@@ -7980,31 +7976,36 @@ static int ath12k_vendor_set_he_mcs_12_13_peer_cap(struct wiphy *wiphy,
 		return -EINVAL;
 	}
 	memcpy(&peer_cap_le, wifi_params->data, sizeof(peer_cap_le));
-	peer_cap_supp = ar->ar_extn.he_mcs_12_13_radio_cap & le16_to_cpu(peer_cap_le);
-	ar->ar_extn.he_mcs_12_13_peer_rx_cap = peer_cap_supp;
-	if (ar->ab->hw_rev == ATH12K_HW_IPQ5332_HW10) {
-		ar->ar_extn.he_mcs_12_13_peer_tx_cap = 0;
-	} else {
-		ar->ar_extn.he_mcs_12_13_peer_tx_cap = peer_cap_supp;
-	}
+	ar->ar_extn.he_mcs_12_13_peer_cap =
+		ar->ar_extn.he_mcs_12_13_radio_cap & le16_to_cpu(peer_cap_le);
 
 	ath12k_dbg(ar->ab, ATH12K_DBG_CFG,
-		   "HE MCS 12/13: peer tx capability = 0x%04x peer rx capability = 0x%04x radio_idx=%u\n",
-		   ar->ar_extn.he_mcs_12_13_peer_tx_cap,
-		   ar->ar_extn.he_mcs_12_13_peer_rx_cap,
-		   radio_idx);
+		   "HE MCS 12/13: peer capability = 0x%04x radio_idx=%u\n",
+		   ar->ar_extn.he_mcs_12_13_peer_cap, radio_idx);
 
 	return 0;
 }
 
 void ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
-					   struct ath12k_wmi_peer_assoc_arg *arg)
+					   struct ath12k_wmi_peer_assoc_arg *arg,
+					   struct ieee80211_link_sta *link_sta)
 {
-	u16 rx_cap = ar->ar_extn.he_mcs_12_13_peer_rx_cap;
-	u16 tx_cap = ar->ar_extn.he_mcs_12_13_peer_tx_cap;
-	u32 rx_packed = WMI_HE_EXTRA_MCS_PACK(rx_cap);
-	u32 tx_packed = WMI_HE_EXTRA_MCS_PACK(tx_cap);
+	u16 radio_cap, peer_cap, intersected, rx_cap, tx_cap;
+	u32 rx_packed, tx_packed;
 	int i;
+
+	if (!link_sta->he_mcs_12_13_peer_cap_valid) {
+		link_sta->he_mcs_12_13_peer_cap = ar->ar_extn.he_mcs_12_13_peer_cap;
+		link_sta->he_mcs_12_13_peer_cap_valid = true;
+	}
+
+	radio_cap = ar->ar_extn.he_mcs_12_13_radio_cap;
+	peer_cap = link_sta->he_mcs_12_13_peer_cap;
+	intersected = radio_cap & peer_cap;
+	rx_cap = intersected;
+	tx_cap = (ar->ab->hw_rev == ATH12K_HW_IPQ5332_HW10) ? 0 : intersected;
+	rx_packed = WMI_HE_EXTRA_MCS_PACK(rx_cap);
+	tx_packed = WMI_HE_EXTRA_MCS_PACK(tx_cap);
 
 	for (i = 0; i < arg->peer_he_mcs_count; i++) {
 		arg->peer_he_rx_mcs_set[i] &=

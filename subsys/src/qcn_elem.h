@@ -10,6 +10,7 @@
 #define WLAN_OUI_QCN_TYPE_1                    1
 #define WLAN_OUI_QCN_HEADER_LEN                4 /* WLAN_OUI_QCN + type */
 #define WLAN_OUI_QCN_ATTR_VER                  1
+#define WLAN_OUI_QCN_ATTR_HE_MCS_12_13_SUPP    0x09
 #define WLAN_OUI_QCN_ATTR_5GHZ_240MHZ_SUPP     0x0B
 #define WLAN_OUI_QCN_ATTR_5GHZ_320MHZ_CSA      0x0C
 #define WLAN_OUI_QCN_ATTR_CCK_SUPPORT          0x0F

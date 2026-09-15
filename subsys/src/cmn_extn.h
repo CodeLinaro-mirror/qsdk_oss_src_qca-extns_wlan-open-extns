@@ -306,6 +306,8 @@ struct ieee802_11_elems_extn {
 	 * Non-zero if peer supports 2xLTF in 160/80+80 MHz HE PPDUs.
 	 */
 	u8 he_2xltf_160_80p80_supp;
+	u16 he_mcs_12_13_peer_cap;
+	bool he_mcs_12_13_peer_cap_present;
 };
 
 struct ieee80211_bss_extn {

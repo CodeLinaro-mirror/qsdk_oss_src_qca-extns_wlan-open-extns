@@ -2107,3 +2107,60 @@ u32 ath12k_wmi_mgmt_get_freq_extn(struct ath12k *ar)
 	return get_ranging_pasn_auth_freq(ar);
 }
 EXPORT_SYMBOL(ath12k_wmi_mgmt_get_freq_extn);
+
+void *ath12k_hal_dma_alloc_noncoherent(struct device *dev, size_t size,
+				       dma_addr_t *paddr,
+				       enum dma_data_direction dir,
+				       gfp_t flag)
+{
+	void *vaddr = NULL;
+
+#if !defined(CONFIG_IO_COHERENCY) || defined(PLATFORM_SDX)
+	vaddr = dma_alloc_noncoherent(dev, size, paddr, dir, flag);
+#else
+	vaddr = kzalloc(size, flag);
+	*paddr = (dma_addr_t)virt_to_phys(vaddr);
+#endif
+
+	return vaddr;
+}
+EXPORT_SYMBOL(ath12k_hal_dma_alloc_noncoherent);
+
+void *ath12k_hal_dma_alloc_coherent(struct device *dev, size_t size,
+				    dma_addr_t *paddr, gfp_t flag)
+{
+	void *vaddr = NULL;
+
+#if !defined(CONFIG_IO_COHERENCY) || defined(PLATFORM_SDX)
+	vaddr = dma_alloc_coherent(dev, size, paddr, flag);
+#else
+	vaddr = kzalloc(size, flag);
+	*paddr = (dma_addr_t)virt_to_phys(vaddr);
+#endif
+
+	return vaddr;
+}
+EXPORT_SYMBOL(ath12k_hal_dma_alloc_coherent);
+
+void ath12k_hal_dma_free_noncoherent(struct device *dev, size_t size,
+				     void *vaddr, dma_addr_t paddr,
+				     enum dma_data_direction dir)
+{
+#if !defined(CONFIG_IO_COHERENCY) || defined(PLATFORM_SDX)
+	dma_free_noncoherent(dev, size, vaddr, paddr, dir);
+#else
+	kfree(vaddr);
+#endif
+}
+EXPORT_SYMBOL(ath12k_hal_dma_free_noncoherent);
+
+void ath12k_hal_dma_free_coherent(struct device *dev, size_t size,
+				  void *vaddr, dma_addr_t paddr)
+{
+#if !defined(CONFIG_IO_COHERENCY) || defined(PLATFORM_SDX)
+	dma_free_coherent(dev, size, vaddr, paddr);
+#else
+	kfree(vaddr);
+#endif
+}
+EXPORT_SYMBOL(ath12k_hal_dma_free_coherent);

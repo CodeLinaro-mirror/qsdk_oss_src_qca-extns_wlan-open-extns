@@ -207,6 +207,13 @@ int ath12k_wifi6_dp_ext_mon_validate_request(struct ath12k_pdev_dp *dp_pdev,
 					     const struct ath12k_ext_mon_config *req);
 int ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
 					  const struct ath12k_ext_mon_filter_config *new_config);
+int
+ath12k_wifi6_ext_mon_handle_rx_peer(struct ath12k_pdev_dp *dp_pdev,
+				    const struct ath12k_ext_mon_peer_info *peer_info,
+				    enum ath12k_ext_mon_peer_action action, u32 vdev_id,
+				    struct list_head *peers_to_wmi,
+				    struct ath12k_ext_mon_wmi_entry *entry,
+				    struct ath12k_dp_ext_mon_peer *peer);
 
 /* HTT FP_PHY_ERR_BUF_SRC: bits [14:13] of info2 */
 #define ATH12K_WIFI6_FP_PHY_ERR_BUF_SRC_SW2RXDMA	2

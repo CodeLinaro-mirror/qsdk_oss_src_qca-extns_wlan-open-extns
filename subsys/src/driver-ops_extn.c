@@ -281,6 +281,93 @@ bool ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdat
 }
 EXPORT_SYMBOL(ieee80211_diagnostic_sta_blocks_bss_extn);
 
+/**
+ * ieee80211_diagnostic_sta_active_extn - checks if any diagnostic-STA vif on
+ * @target_radio_idx authing, associating, or associated
+ * @local: mac80211 local state
+ * @target_radio_idx: radio index
+ *
+ * Used by ieee80211_start_ap() to decide to reject a radio's first AP-VAP
+ * bring-up while a co-radio diagnostic STA-VAP is connecting/connected.
+ */
+bool ieee80211_diagnostic_sta_active_extn(struct ieee80211_local *local,
+					  int target_radio_idx)
+{
+	struct ieee80211_sub_if_data *sdata;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	list_for_each_entry(sdata, &local->interfaces, list) {
+		struct ieee80211_chanctx_conf *chanctx_conf;
+
+		if (sdata->vif.type != NL80211_IFTYPE_STATION ||
+		    !sdata->vif.diagnostic_sta)
+			continue;
+
+		if (!sdata->u.mgd.auth_data && !sdata->u.mgd.assoc_data &&
+		    !sdata->u.mgd.associated)
+			continue;
+
+		chanctx_conf = sdata_dereference(sdata->deflink.conf->chanctx_conf,
+						 sdata);
+
+		if (!chanctx_conf)
+			continue;
+
+		if (chanctx_conf->radio_idx == target_radio_idx)
+			return true;
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(ieee80211_diagnostic_sta_active_extn);
+
+/**
+ * ieee80211_any_ap_mon_vap_up_extn - checks if any AP/Meraki-mesh/Monitor vif on
+ * target_radio_idx is operating and up or not
+ * @local: mac80211 local state
+ * @target_radio_idx: radio index
+ *
+ */
+bool ieee80211_any_ap_mon_vap_up_extn(struct ieee80211_local *local,
+				      int target_radio_idx)
+{
+	struct ieee80211_chanctx *ctx;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	list_for_each_entry(ctx, &local->chanctx_list, list) {
+		struct ieee80211_link_data *link;
+
+		if (target_radio_idx != ctx->conf.radio_idx)
+			continue;
+
+		list_for_each_entry(link, &ctx->assigned_links,
+				    assigned_chanctx_list) {
+			if (link->sdata->vif.type == NL80211_IFTYPE_MONITOR) {
+				if (ieee80211_sdata_running(link->sdata))
+					return true;
+				continue;
+			}
+
+			if (link->sdata->vif.type != NL80211_IFTYPE_AP &&
+			    link->sdata->vif.type != NL80211_IFTYPE_P2P_GO
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+			    && link->sdata->wdev.vap_submode !=
+			       IEEE80211_EXTN_VAP_SUBMODE_MESH
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+			   )
+				continue;
+
+			if (sdata_dereference(link->u.ap.beacon, link->sdata))
+				return true;
+		}
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(ieee80211_any_ap_mon_vap_up_extn);
+
 static const char *
 ieee80211_diagnostic_sta_disconnect_reason_str(enum ieee80211_diagnostic_sta_disconnect_reason reason)
 {

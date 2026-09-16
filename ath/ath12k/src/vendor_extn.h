@@ -940,6 +940,25 @@ int ath12k_vendor_mapc_peer_get_params_extn(struct wiphy *wiphy,
 int ath12k_vendor_cotdma_e2e_config_extn(struct wiphy *wiphy,
 					 struct wireless_dev *wdev,
 					 const void *data, int data_len);
+/**
+ * ath12k_vendor_suspend_device_extn - Suspend or resume a single ath12k_base.
+ *
+ * Controls power state of all radios belonging to the ab identified by
+ * @params->radio_idx.  @params->value selects the operation:
+ *   1 - suspend: calls ath12k_mac_stop() on each radio of the ab
+ *   0 - resume:  calls ath12k_mac_start() on each radio of the ab
+ *
+ * The caller must hold the wiphy mutex (lockdep_assert_wiphy is enforced
+ * inside the implementation).
+ *
+ * @wiphy:  wiphy pointer
+ * @params: generic vendor params; radio_idx selects the target ab,
+ *          value selects the operation (1=suspend, 2=resume)
+ *
+ * Return: 0 on success, negative error code on failure.
+ */
+int ath12k_vendor_suspend_device_extn(struct wiphy *wiphy,
+				     struct ath12k_wifi_generic_params *params);
 
 #endif /* CPTCFG_QCN_EXTN */
 

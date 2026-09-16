@@ -14081,6 +14081,10 @@ void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 		}
 
 		ar = &ah->radio[radio_idx];
+		if (ar->ab->is_bypassed) {
+			ath12k_info(ar->ab, "Device is bypassed!");
+			return;
+		}
 		pdev_idx = ar->pdev_idx;
 		if (pdev_idx < 0 || pdev_idx >= MAX_RADIOS) {
 			ath12k_err(NULL, "Invalid pdev index %d for radio index %u\n",
@@ -14119,6 +14123,10 @@ void ath12k_vendor_get_wiphy_config_handler_extn(struct wiphy *wiphy,
 		}
 
 		ar = &ah->radio[radio_idx];
+		if (ar->ab->is_bypassed) {
+			ath12k_info(ar->ab, "Device is bypassed!");
+			return;
+		}
 		adfs_capable = test_bit(ar->cfg_rx_chainmask,
 					&ar->pdev->cap.adfs_chain_mask) ? 1 : 0;
 

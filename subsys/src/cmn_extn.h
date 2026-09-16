@@ -233,6 +233,16 @@ struct ieee80211_mesh_peer_info {
 	u16 puncture_bitmaps;
 } __packed;
 
+/**
+ * struct ath12k_mesh_rada_params - RA→DA mapping entry for RADA test framework.
+ * @da: Destination address as seen in the Ethernet header.
+ * @ra: Next-hop RA to embed in the mesh meta header for this DA.
+ */
+struct ath12k_mesh_rada_params {
+	u8 da[ETH_ALEN];
+	u8 ra[ETH_ALEN];
+} __packed;
+
 struct ieee80211_mesh_config_params_extn {
 	u8 cmd_type;
 	u16 num_links;
@@ -240,6 +250,7 @@ struct ieee80211_mesh_config_params_extn {
 	struct ieee80211_mesh_peer_info peers[MESH_PEER_MAX_LINKS];
 	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
 	bool peer_cleanup_timer_enable;
+	struct ath12k_mesh_rada_params rada;
 } __packed;
 
 /**

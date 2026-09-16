@@ -984,6 +984,10 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
 {
 	/* Protects the extensions data update for an interface*/
 	spin_lock_init(&ahvif->ath12k_vif_extn.data_lock);
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	spin_lock_init(&ahvif->vif->rada_lock);
+	ahvif->vif->rada_table = NULL;
+#endif
 
 	INIT_LIST_HEAD(&ahvif->ath12k_vif_extn.peer_240mhz_list_extn);
 
@@ -1000,6 +1004,12 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
 void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
 {
 	ath12k_gpr_arvif_deinit(arvif);
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	if (arvif->ahvif && arvif->ahvif->vif) {
+		kfree(arvif->ahvif->vif->rada_table);
+		arvif->ahvif->vif->rada_table = NULL;
+	}
+#endif
 }
 
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)

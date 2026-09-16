@@ -350,7 +350,10 @@ int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb, struct ath12k_vif *ahvif, 
 				bool *checkhdr)
 {
 	struct ath12k_vif_mesh_params params = {0};
+	const u8 *da = (skb) ? skb->data : NULL;
+	struct ieee80211_vif *vif = ahvif->vif;
 	int status = 0;
+	int i;
 
 	if (mmeshsim && !ahvif->dp_vif.dp_extn.mhdr) {
 		*checkhdr = false;
@@ -360,6 +363,20 @@ int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb, struct ath12k_vif *ahvif, 
 	params.mhdr = ahvif->dp_vif.dp_extn.mhdr;
 	params.mhdr_len = ahvif->dp_vif.dp_extn.mhdr_len;
 	params.mdbg = ahvif->dp_vif.dp_extn.mdbg;
+
+	spin_lock_bh(&vif->rada_lock);
+	if (vif->rada_table) {
+		for (i = 0; i < MESH_RADA_MAX_ENTRIES; i++) {
+			if (vif->rada_table[i].valid &&
+			    ether_addr_equal(vif->rada_table[i].da, da)) {
+				memcpy(params.mac_addr, vif->rada_table[i].ra,
+				       MAC_ADDR_SIZE);
+				params.mac_addr_valid = true;
+				break;
+			}
+		}
+	}
+	spin_unlock_bh(&vif->rada_lock);
 
 	status = add_mesh_meta_hdr(skb, &params);
 

@@ -37,6 +37,10 @@ enum ath12k_extn_mesh_conf_cmd_type {
 	ATH12K_EXTN_MESH_CONF_SET_PEER_TIMEOUT_CNT = 4,
 	ATH12K_EXTN_MESH_CONF_PEER_TIMEOUT_EN = 5,
 	ATH12K_EXTN_MESH_CONF_PEER_DUMP = 6,
+	ATH12K_EXTN_MESH_CONF_SET_RADA = 7,
+	ATH12K_EXTN_MESH_CONF_DEL_RADA = 8,
+	ATH12K_EXTN_MESH_CONF_CLR_RADA = 9,
+	ATH12K_EXTN_MESH_CONF_PRINT_RADA = 10,
 };
 
 /* Per-peer binary payload for the mesh peer_dump vendor reply. */
@@ -75,6 +79,8 @@ struct ath12k_vif_mesh_params {
 	u_int32_t mhdr;
 	u_int32_t mdbg;
 	u_int8_t mhdr_len;
+	bool mac_addr_valid;
+	uint8_t mac_addr[MAC_ADDR_SIZE];
 };
 
 static inline int add_mesh_meta_hdr(struct sk_buff *skb, struct ath12k_vif_mesh_params *params)
@@ -104,6 +110,10 @@ static inline int add_mesh_meta_hdr(struct sk_buff *skb, struct ath12k_vif_mesh_
 	mhdr->keyix = (dbg_mhdr >> MESH_DBG_KEYIX_OFFSET) & MESH_NIBBLE_MASK;
 	mhdr->flags = (dbg_mhdr >> MESH_DBG_FLAGS_OFFSET) & MESH_BYTE_MASK;
 	params->mhdr &= ~(METAHDR_FLAG_INFO_UPDATED << MESH_DBG_FLAGS_OFFSET);
+
+	if (params->mac_addr_valid)
+		memcpy(mhdr->mac_addr, params->mac_addr, MAC_ADDR_SIZE);
+	mhdr->mac_addr_valid = params->mac_addr_valid;
 
 	return 0;
 }

@@ -16568,6 +16568,7 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 	struct ieee80211_vif *vif = NULL;
 	struct ieee80211_mesh_config_params_extn *mesh_params = NULL;
 	int ret = -1;
+	int i;
 
 	lockdep_assert_wiphy(wiphy);
 
@@ -16617,6 +16618,81 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 		ret = ath12k_vendor_mesh_peer_dump(wiphy, vif,
 						   is_zero_ether_addr(mesh_params->peer_mld_mac) ?
 						   NULL : mesh_params->peer_mld_mac);
+		break;
+	case ATH12K_EXTN_MESH_CONF_SET_RADA:
+		spin_lock_bh(&vif->rada_lock);
+		if (!vif->rada_table) {
+			vif->rada_table = kcalloc(MESH_RADA_MAX_ENTRIES,
+						  sizeof(*vif->rada_table),
+						  GFP_ATOMIC);
+			if (!vif->rada_table) {
+				spin_unlock_bh(&vif->rada_lock);
+				ret = -ENOMEM;
+				break;
+			}
+		}
+		ret = -ENOSPC;
+		for (i = 0; i < MESH_RADA_MAX_ENTRIES; i++) {
+			if (!vif->rada_table[i].valid ||
+			    ether_addr_equal(vif->rada_table[i].da,
+					     mesh_params->rada.da)) {
+				memcpy(vif->rada_table[i].da, mesh_params->rada.da, ETH_ALEN);
+				memcpy(vif->rada_table[i].ra, mesh_params->rada.ra, ETH_ALEN);
+				vif->rada_table[i].valid = true;
+				ret = 0;
+				break;
+			}
+		}
+		spin_unlock_bh(&vif->rada_lock);
+		if (ret)
+			ath12k_err(NULL, "RADA table full (max %d entries)\n",
+				   MESH_RADA_MAX_ENTRIES);
+		break;
+	case ATH12K_EXTN_MESH_CONF_DEL_RADA:
+		ret = -ENOENT;
+		spin_lock_bh(&vif->rada_lock);
+		if (!vif->rada_table) {
+			spin_unlock_bh(&vif->rada_lock);
+			break;
+		}
+		for (i = 0; i < MESH_RADA_MAX_ENTRIES; i++) {
+			if (vif->rada_table[i].valid &&
+			    ether_addr_equal(vif->rada_table[i].da,
+					     mesh_params->rada.da)) {
+				memset(&vif->rada_table[i], 0,
+				       sizeof(vif->rada_table[i]));
+				ret = 0;
+				break;
+			}
+		}
+		spin_unlock_bh(&vif->rada_lock);
+		if (ret)
+			ath12k_err(NULL, "RADA: DA %pM not found\n", mesh_params->rada.da);
+		break;
+	case ATH12K_EXTN_MESH_CONF_CLR_RADA:
+		spin_lock_bh(&vif->rada_lock);
+		if (vif->rada_table)
+			memset(vif->rada_table, 0,
+			       MESH_RADA_MAX_ENTRIES * sizeof(*vif->rada_table));
+		spin_unlock_bh(&vif->rada_lock);
+		ret = 0;
+		break;
+	case ATH12K_EXTN_MESH_CONF_PRINT_RADA:
+		spin_lock_bh(&vif->rada_lock);
+		if (vif->rada_table) {
+			int i;
+
+			for (i = 0; i < MESH_RADA_MAX_ENTRIES; i++) {
+				if (vif->rada_table[i].valid)
+					pr_info("RADA[%d]: DA=%pM -> RA=%pM\n",
+						i, vif->rada_table[i].da,
+						vif->rada_table[i].ra);
+			}
+		} else {
+			pr_info("RADA table is empty\n");
+		}
+		spin_unlock_bh(&vif->rada_lock);
+		ret = 0;
 		break;
 	default:
 		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);

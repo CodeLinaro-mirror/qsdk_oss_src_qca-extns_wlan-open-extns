@@ -12567,6 +12567,29 @@ static int ath12k_vendor_display_eht_chan_caps(enum nl80211_band band,
 	return cap_len;
 }
 
+static int ath12k_vendor_display_uhr_chan_caps(enum nl80211_band band,
+					       const struct ath12k_vendor_chan_caps *caps,
+					       char cap[],
+					       int cap_len)
+{
+	cap_len += scnprintf(cap + cap_len,
+			     ATH12K_VENDOR_CAP_BUF_LEN - cap_len, " U");
+	cap_len = ath12k_vendor_append_ht40_caps(band, caps, "UU", "UL",
+						 cap, cap_len);
+
+	if (caps->has_80 && caps->center80)
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " U80-%3u", caps->center80);
+
+	if (caps->has_160 && caps->center160)
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " U160-%3u", caps->center160);
+
+	return cap_len;
+}
+
 static int ath12k_vendor_display_320mhz_caps(enum nl80211_band band,
 					     const struct ath12k_vendor_chan_caps *caps,
 					     bool has_eht,
@@ -12578,6 +12601,16 @@ static int ath12k_vendor_display_320mhz_caps(enum nl80211_band band,
 		cap_len += scnprintf(cap + cap_len,
 				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
 				     " E320-%3u", caps->center320_1);
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     ", %3u", caps->center320_2);
+	}
+
+	if (caps->has_uhr && caps->has_320 && band == NL80211_BAND_6GHZ &&
+	    caps->center320_1) {
+		cap_len += scnprintf(cap + cap_len,
+				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
+				     " U320-%3u", caps->center320_1);
 		cap_len += scnprintf(cap + cap_len,
 				     ATH12K_VENDOR_CAP_BUF_LEN - cap_len,
 				     ", %3u", caps->center320_2);
@@ -12690,6 +12723,7 @@ static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
 					       enum nl80211_band band,
 					       bool has_he,
 					       bool has_eht,
+					       bool has_uhr,
 					       u32 range_start_mhz,
 					       u32 range_end_mhz,
 					       const struct ieee80211_chanctx_conf *chanctx)
@@ -12716,11 +12750,16 @@ static void ath12k_vendor_display_channel_caps(struct ath12k *ar,
 		ath12k_vendor_fill_chan_caps(band, chan, &chan_caps);
 		cap_len = ath12k_vendor_display_pre_he_chan_caps(band, &chan_caps, cap);
 
+		chan_caps.has_uhr = has_uhr;
+
 		if (has_he)
 			cap_len = ath12k_vendor_display_he_chan_caps(band, &chan_caps,
 								     cap, cap_len);
 		if (has_eht)
 			cap_len = ath12k_vendor_display_eht_chan_caps(band, &chan_caps,
+								      cap, cap_len);
+		if (has_uhr)
+			cap_len = ath12k_vendor_display_uhr_chan_caps(band, &chan_caps,
 								      cap, cap_len);
 		cap_len = ath12k_vendor_display_320mhz_caps(band, &chan_caps, has_eht,
 							    cap, cap_len);
@@ -12746,6 +12785,7 @@ static int ath12k_vendor_display_band_chans(struct ath12k *ar)
 	bool use_freq_range = false;
 	bool has_he;
 	bool has_eht;
+	bool has_uhr;
 	struct ieee80211_chanctx_conf *chanctx;
 
 	if (!ar || !ar->ah || !ar->ah->hw || !ar->ah->hw->wiphy)
@@ -12778,6 +12818,9 @@ static int ath12k_vendor_display_band_chans(struct ath12k *ar)
 	has_eht = ieee80211_get_eht_iftype_cap(sband, NL80211_IFTYPE_AP) ||
 		  ieee80211_get_eht_iftype_cap(sband, NL80211_IFTYPE_STATION);
 
+	has_uhr = ieee80211_get_uhr_iftype_cap(sband, NL80211_IFTYPE_AP) ||
+		  ieee80211_get_uhr_iftype_cap(sband, NL80211_IFTYPE_STATION);
+
 	if (ar->freq_range.start_freq && ar->freq_range.end_freq &&
 	    ar->freq_range.end_freq >= ar->freq_range.start_freq) {
 		range_start_mhz = KHZ_TO_MHZ(ar->freq_range.start_freq);
@@ -12794,7 +12837,7 @@ static int ath12k_vendor_display_band_chans(struct ath12k *ar)
 
 	chanctx = ath12k_mac_get_first_active_arvif_chanctx(ar);
 	ath12k_vendor_display_channel_caps(ar, sband, band, has_he, has_eht,
-					   range_start_mhz, range_end_mhz,
+					   has_uhr, range_start_mhz, range_end_mhz,
 					   chanctx);
 
 	return 0;

@@ -68,6 +68,7 @@ struct ath12k_vendor_chan_caps {
 	bool has_80;
 	bool has_160;
 	bool has_320;
+	bool has_uhr;
 	bool ht40_plus;
 	bool ht40_minus;
 	char dir;

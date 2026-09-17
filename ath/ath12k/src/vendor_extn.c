@@ -2542,6 +2542,13 @@ static int ath12k_vendor_coex_validate_radio(struct ath12k *ar)
 		 ar->pdev_idx;
 
 	reg_cap = &ar->ab->hal_reg_cap[phy_id];
+	if (reg_cap->low_5ghz_chan >= ATH12K_MIN_6GHZ_FREQ) {
+		ath12k_dbg(NULL, ATH12K_DBG_REG,
+			   "chan_coex_disable: Radio %u is a 6 GHz radio\n",
+			   ar->pdev_idx);
+		return -EOPNOTSUPP;
+	}
+
 	if (reg_cap->low_5ghz_chan > ATH12K_MIN_5G_HIGH_BAND_FREQ &&
 	    reg_cap->high_5ghz_chan < ATH12K_5GHZ_MAX_CENTER) {
 		ath12k_dbg(NULL, ATH12K_DBG_REG,

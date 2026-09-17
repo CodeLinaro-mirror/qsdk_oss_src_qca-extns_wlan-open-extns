@@ -81,10 +81,16 @@ int ieee80211_skb_resize(struct ieee80211_sub_if_data *sdata,
 /* bit 14: when set, driver skips auto key-install — consumer manages key installation */
 #define MESH_CAPS_SKIP_KEY_INSTALL 0x4000
 
-/* Key indices for managed mesh.  PTK (pairwise) always at index 0 per
- * 802.11 standard.  GTK (group/broadcast) at index 1. */
-#define MANAGED_MESH_PTK_KEY_IDX	0
-#define MANAGED_MESH_GTK_KEY_IDX	1
+/*
+ * Per-peer key slot mapping for managed mesh.
+ * Two per-peer keys are installed per negotiated combo:
+ *   PSK-SHA256/CCMP-256: VAP source slots 0,1 -> peer slots 2,3
+ *   PSK/CCMP:            VAP source slots 2,3 -> peer slots 2,3
+ */
+#define MANAGED_MESH_PEER_KEY_SLOT_A        2  /* default TX per-peer key slot */
+#define MANAGED_MESH_PEER_KEY_SLOT_B        3  /* RX-only per-peer key slot */
+#define MANAGED_MESH_VAP_CCMP256_KEY_BASE   0  /* VAP source base for PSK-SHA256/CCMP-256 */
+#define MANAGED_MESH_VAP_CCMP_KEY_BASE      2  /* VAP source base for PSK/CCMP */
 
 /* mac80211 set_key accepts link_id = -1 only for pairwise keys (PTK is per-STA). */
 #define MANAGED_MESH_SET_KEY_DEFAULT_LINK_ID	(-1)

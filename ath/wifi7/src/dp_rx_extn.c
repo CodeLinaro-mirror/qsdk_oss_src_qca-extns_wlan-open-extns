@@ -30,7 +30,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	struct ath12k_dp *dp = dp_pdev->dp;
 	u8 *rx_tlv_hdr;
 	u8 tid;
-	bool is_3addr_mcbc = false;
+	bool is_mcbc = false;
 	u8 ring_id = rx_spd->reo.ring_id;
 	u8 device_id = dp->device_id;
 
@@ -111,9 +111,8 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	}
 #endif
 
-	if (rx_msdu_info->da_is_mcbc && (!rx_msdu_info->fr_ds &&
-	    rx_msdu_info->to_ds)) {
-		is_3addr_mcbc = true;
+	if (rx_msdu_info->da_is_mcbc) {
+		is_mcbc = true;
 		stats->sent_to_stack_mcast++;
 		stats->sent_to_stack_mcast_bytes += msdu->len;
 		dp->device_stats.non_fast_mcast_rx[ring_id][device_id]++;
@@ -215,7 +214,7 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		rx_status = IEEE80211_SKB_RXCB(msdu);
 		*rx_status = *status;
 
-		if (!is_3addr_mcbc) {
+		if (!is_mcbc) {
 			stats->sent_to_stack_ucast++;
 			stats->sent_to_stack_ucast_bytes += msdu->len;
 			dp->device_stats.non_fast_unicast_rx[ring_id][device_id]++;
@@ -225,5 +224,3 @@ int ath12k_wifi7_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 	}
 	return 1;
 }
-
-

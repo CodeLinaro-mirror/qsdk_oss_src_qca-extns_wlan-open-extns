@@ -1701,6 +1701,7 @@ int ath12k_vs_action_has_ml_link_info_ie_extn(struct ath12k *ar,
 	return cfg80211_find_ext_elem(WLAN_EID_EXT_MLO_LINK_INFO,
 				      pos, end - pos) ? 1 : 0;
 }
+EXPORT_SYMBOL(ath12k_vs_action_has_ml_link_info_ie_extn);
 
 #define ATH12K_RRM_MEASURE_TYPE_BEACON 5
 
@@ -1720,6 +1721,7 @@ bool ath12k_is_beacon_report_elem(u8 action_code, const u8 *buf, const u8 *end)
 
 	return buf[4] == ATH12K_RRM_MEASURE_TYPE_BEACON;
 }
+EXPORT_SYMBOL(ath12k_is_beacon_report_elem);
 
 /**
  * ath12k_control_beaconing_bootup_cac_check_extn - Check boot-up CAC state

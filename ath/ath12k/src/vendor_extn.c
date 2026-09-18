@@ -13172,14 +13172,226 @@ static inline bool ath12k_is_chan_in_ar(struct ath12k *ar,
 	       chan->center_freq <= ar->chan_info.high_freq;
 }
 
-#define ATH12K_BAND5_START_FREQ_MHZ  5000
-#define ATH12K_BAND5_CHAN_SPACING_MHZ 5
-
-/* Convert a 5 GHz center frequency to IEEE 802.11 channel number */
+/**
+ * ath12k_5g_chan_to_ieee_num(): Convert a 5 GHz center frequency to
+ * IEEE 802.11 channel number,  if the frequency is not within 5Ghz
+ * band then it will return 0.
+ *
+ * @chan: Pointer to ieee80211_channel
+ *
+ * Return: IEEE channel number if found, else 0.
+ */
 static inline u8 ath12k_5g_chan_to_ieee_num(struct ieee80211_channel *chan)
 {
+	if (chan->center_freq < ATH12K_BAND5_START_FREQ_MHZ ||
+	    chan->center_freq > ATH12K_BAND5_END_FREQ_MHZ)
+		return 0;
+
 	return (chan->center_freq - ATH12K_BAND5_START_FREQ_MHZ) /
-	       ATH12K_BAND5_CHAN_SPACING_MHZ;
+		ATH12K_BAND5_CHAN_SPACING_MHZ;
+}
+
+/**
+ * ath12k_convert_5g_freq_to_index() - Convert a 5 GHz IEEE channel
+ * number into a compact channel table index.
+ * @chan: valid IEEE 5 GHz channel.
+ *
+ * The returned index is used to access the driver's per-channel state
+ * array, where one entry is maintained for each supported 5 GHz channel.
+ *
+ * The mapping is derived from the IEEE channel number relative to
+ * FIRST_DFS_CHAN_NUM and uses CHAN_NUM_SPACING as the nominal channel
+ * spacing.
+ *
+ * For valid IEEE 5 GHz channel numbers, this mapping is injective,
+ * i.e. no two valid channel numbers map to the same index. This allows
+ * the driver to use the index as a unique identifier for entries in the
+ * per-channel state table.
+ *
+ * Note that the IEEE 5 GHz channel numbering is not uniformly spaced
+ * across the entire band. In particular, there is a discontinuity
+ * between channels 144 and 149. Despite this gap, all valid channel
+ * numbers still map to distinct indices.
+ *
+ * Invalid channel numbers are not guaranteed to map uniquely. For
+ * example, channel numbers 148 and 149 both map to index 37. Therefore
+ * the caller is expected to provide only valid IEEE 5 GHz channel
+ * numbers.
+ *
+ * Return: Array index corresponding to the channel, or INVALID_INDEX
+ * if the computed index falls outside the supported channel range.
+ */
+static inline int
+ath12k_convert_5g_freq_to_index(struct ieee80211_channel *chan)
+{
+	u8 chan_num = ath12k_5g_chan_to_ieee_num(chan);
+	int8_t tmp_ind = (chan_num - FIRST_DFS_CHAN_NUM) / CHAN_NUM_SPACING;
+
+	return ((tmp_ind >= 0) && (tmp_ind < NUM_DFS_CHANS)) ?
+		tmp_ind : INVALID_INDEX;
+}
+
+void ath12k_dfs_init_chan_state(struct ath12k *ar)
+{
+	struct wiphy *wiphy = ar->ah->hw->wiphy;
+	struct ieee80211_supported_band *sband;
+	int i;
+	struct ath12k_extn *ar_extn;
+
+	sband = wiphy->bands[NL80211_BAND_5GHZ];
+	if (!sband || !sband->channels || !sband->n_channels) {
+		ath12k_err(ar->ab,
+			   "%s: no 5GHz channels for radio %d\n",
+			   __func__, ar->pdev_idx);
+		return;
+	}
+
+	ar_extn = &ar->ar_extn;
+	for (i = 0; i < sband->n_channels; i++) {
+		struct ieee80211_channel *chan = &sband->channels[i];
+		int idx;
+
+		if (!ath12k_is_chan_in_ar(ar, chan))
+			continue;
+
+		idx = ath12k_convert_5g_freq_to_index(chan);
+		if (idx == INVALID_INDEX) {
+			ath12k_err(ar->ab, "Invalid channel index for chan %u\n",
+				   chan->center_freq);
+			continue;
+		}
+
+		if (chan->flags & IEEE80211_CHAN_RADAR)
+			ar_extn->dfs_chan_state[idx] =
+			    ATH12K_DFS_CHAN_STATE_CAC_REQUIRED;
+		else
+			ar_extn->dfs_chan_state[idx] =
+			    ATH12K_DFS_CHAN_STATE_NON_DFS;
+	}
+}
+
+void ath12k_dfs_update_chan_state(struct ath12k *ar,
+				  struct ieee80211_channel *chan,
+				  enum ath12k_dfs_chan_state state)
+{
+	int idx;
+	bool is_non_dfs;
+
+	if (!ar || !chan)
+		return;
+
+	if (!ath12k_is_chan_in_ar(ar, chan))
+		return;
+
+	idx = ath12k_convert_5g_freq_to_index(chan);
+	if (idx == INVALID_INDEX) {
+		ath12k_err(ar->ab, "Invalid channel index for chan %u\n",
+			   chan->center_freq);
+		return;
+	}
+
+	is_non_dfs = !(chan->flags & IEEE80211_CHAN_RADAR);
+	if (is_non_dfs && state != ATH12K_DFS_CHAN_STATE_NON_DFS) {
+		ath12k_err(ar->ab, "Setting state %u for non-dfs chan %d\n",
+			   state, chan->center_freq);
+		return;
+	}
+
+	ar->ar_extn.dfs_chan_state[idx] = state;
+}
+
+static enum ath12k_dfs_chan_state
+ath12k_dfs_get_chan_state(struct ath12k *ar, struct ieee80211_channel *chan,
+			  int idx)
+{
+	enum ath12k_dfs_chan_state stored_state, final_state;
+
+	stored_state = ar->ar_extn.dfs_chan_state[idx];
+	if (!(chan->flags & IEEE80211_CHAN_RADAR)) {
+		final_state = ATH12K_DFS_CHAN_STATE_NON_DFS;
+	} else if (stored_state == ATH12K_DFS_CHAN_STATE_PRECAC_STARTED ||
+		   stored_state == ATH12K_DFS_CHAN_STATE_PRECAC_COMPLETED) {
+		final_state = ar->ar_extn.dfs_chan_state[idx];
+	}  else {
+		s32 rem_cac = ath12k_get_rem_cac_sec_for_chan(ar, chan);
+
+		switch (chan->dfs_state) {
+		case NL80211_DFS_USABLE:
+			final_state = rem_cac >= 0 ?
+				ATH12K_DFS_CHAN_STATE_CAC_STARTED :
+				ATH12K_DFS_CHAN_STATE_CAC_REQUIRED;
+			break;
+		case NL80211_DFS_AVAILABLE:
+			final_state = ATH12K_DFS_CHAN_STATE_CAC_COMPLETED;
+			break;
+		case NL80211_DFS_UNAVAILABLE:
+			final_state = ATH12K_DFS_CHAN_STATE_NOL;
+			break;
+		default:
+			final_state = ATH12K_DFS_CHAN_STATE_CAC_REQUIRED;
+			ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+				   "Setting state %u for chan %u\n",
+				    final_state, chan->center_freq);
+			break;
+		}
+	}
+	return final_state;
+}
+
+/**
+ * ath12k_vendor_list_dfs_chan_state() - Print DFS state for all 5 GHz channels
+ * @ar: Pointer to ath12k radio instance
+ *
+ * Iterates over every 20 MHz 5 GHz channel in the wiphy sband, skips
+ * disabled channels and channels not belonging to this radio, and prints
+ * the current DFS state from ar->ar_extn.dfs_chan_state[] to the kernel log.
+ */
+static void ath12k_vendor_list_dfs_chan_state(struct ath12k *ar)
+{
+	static const char * const dfs_state_str[] = {
+		[ATH12K_DFS_CHAN_STATE_NON_DFS]          = "NON_DFS",
+		[ATH12K_DFS_CHAN_STATE_CAC_REQUIRED]     = "CAC_REQUIRED",
+		[ATH12K_DFS_CHAN_STATE_CAC_STARTED]      = "CAC_STARTED",
+		[ATH12K_DFS_CHAN_STATE_CAC_COMPLETED]    = "CAC_COMPLETED",
+		[ATH12K_DFS_CHAN_STATE_NOL]              = "NOL",
+		[ATH12K_DFS_CHAN_STATE_PRECAC_STARTED]   = "PRECAC_STARTED",
+		[ATH12K_DFS_CHAN_STATE_PRECAC_COMPLETED] = "PRECAC_COMPLETED",
+	};
+	struct wiphy *wiphy = ar->ah->hw->wiphy;
+	struct ieee80211_supported_band *sband;
+	int i;
+
+	sband = wiphy->bands[NL80211_BAND_5GHZ];
+	if (!sband || !sband->channels || !sband->n_channels) {
+		ath12k_err(ar->ab,
+			   "list_chan_state: no 5 GHz channels for pdev %u\n",
+			   ar->pdev_idx);
+		return;
+	}
+
+	ath12k_info(ar->ab, "DFS channel state for pdev %u:\n", ar->pdev_idx);
+	for (i = 0; i < sband->n_channels; i++) {
+		struct ieee80211_channel *chan = &sband->channels[i];
+		enum ath12k_dfs_chan_state state;
+		int idx;
+
+		if (chan->flags & IEEE80211_CHAN_DISABLED)
+			continue;
+		if (!ath12k_is_chan_in_ar(ar, chan))
+			continue;
+
+		idx = ath12k_convert_5g_freq_to_index(chan);
+		if (idx == INVALID_INDEX) {
+			ath12k_info(ar->ab, "  chan %u (%u MHz): no DFS state\n",
+				    chan->hw_value, chan->center_freq);
+			continue;
+		}
+
+		state = ath12k_dfs_get_chan_state(ar, chan, idx);
+		ath12k_info(ar->ab, "  chan %u (%u MHz): %s\n",
+			    chan->hw_value, chan->center_freq,
+			    dfs_state_str[state]);
+	}
 }
 
 /**
@@ -13693,6 +13905,18 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
 			   "pdev stats timer interval for pdev %u: %u ms\n",
 			   ar->pdev_idx, *value);
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_LIST_CHAN_STATE:
+		ath12k_vendor_list_dfs_chan_state(ar);
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_RADIO_PARAM_GET_HW_TXPOWER:
+		ath12k_info(ar->ab,
+			    "HW TX power for pdev %u: min=%u dBm max=%u dBm\n",
+			    ar->pdev_idx,
+			    ar->ab->target_caps.hw_min_tx_power,
+			    ar->ab->target_caps.hw_max_tx_power);
 		ret = 0;
 		break;
 	default:

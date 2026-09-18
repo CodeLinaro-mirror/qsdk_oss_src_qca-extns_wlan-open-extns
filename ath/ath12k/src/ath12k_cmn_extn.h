@@ -404,7 +404,29 @@ struct wlan_intf_extn {
 #define ATH12K_MSEC_PER_SEC		1000
 #define ATH12K_MAX_CAC_TIMEOUT_MS	(24 * 60 * 60 * ATH12K_MSEC_PER_SEC)
 #define ATH12K_MAX_CAC_TIMEOUT_SEC	(ATH12K_MAX_CAC_TIMEOUT_MS / ATH12K_MSEC_PER_SEC)
-#define NO_CAC_OVERRIDE		-1
+#define NO_CAC_OVERRIDE		          -1
+#define ATH12K_MAX_NUM_5GHZ_CHAN          30
+
+/**
+ * enum ath12k_dfs_chan_state - Per-channel DFS state tracked in ath12k
+ *
+ * @ATH12K_DFS_CHAN_STATE_NON_DFS: Channel does not require DFS
+ * @ATH12K_DFS_CHAN_STATE_CAC_REQUIRED: DFS channel, CAC not yet performed
+ * @ATH12K_DFS_CHAN_STATE_CAC_STARTED: CAC is currently running on this channel
+ * @ATH12K_DFS_CHAN_STATE_CAC_COMPLETED: CAC completed, channel is clear
+ * @ATH12K_DFS_CHAN_STATE_NOL: Radar detected, channel is in NOL
+ * @ATH12K_DFS_CHAN_STATE_PRECAC_STARTED: Background CAC running on this channel
+ * @ATH12K_DFS_CHAN_STATE_PRECAC_COMPLETED: Background CAC completed on this channel
+ */
+enum ath12k_dfs_chan_state {
+	ATH12K_DFS_CHAN_STATE_NON_DFS = 0,
+	ATH12K_DFS_CHAN_STATE_CAC_REQUIRED,
+	ATH12K_DFS_CHAN_STATE_CAC_STARTED,
+	ATH12K_DFS_CHAN_STATE_CAC_COMPLETED,
+	ATH12K_DFS_CHAN_STATE_NOL,
+	ATH12K_DFS_CHAN_STATE_PRECAC_STARTED,
+	ATH12K_DFS_CHAN_STATE_PRECAC_COMPLETED,
+};
 
 /**
  * struct ath12k_extn - ath12k driver private extensions
@@ -469,6 +491,20 @@ struct ath12k_extn {
 	 * Not registered with mac80211; kept off ar->arvifs list.
 	 */
 	struct ath12k_link_vif *rtt_vif;
+	/**
+	 * @dfs_chan_state: Per-channel DFS state table indexed by channel.
+	 *
+	 * Tracks the DFS state for all supported 5 GHz channels, including both
+	 * DFS and non-DFS channels.
+	 *
+	 * For DFS channels, the entry contains the current DFS state
+	 * (e.g. usable, available, unavailable, CAC in progress, etc.).
+	 *
+	 * For non-DFS channels, the state is always
+	 * ATH12K_DFS_CHAN_STATE_NON_DFS, which is the only valid DFS state
+	 * for non-DFS channels.
+	 */
+	enum ath12k_dfs_chan_state dfs_chan_state[ATH12K_MAX_NUM_5GHZ_CHAN];
 };
 
 /**

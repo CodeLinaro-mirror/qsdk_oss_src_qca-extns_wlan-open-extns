@@ -41,6 +41,14 @@
 #define ATH12K_SUPER_CHAN_POWER_MODE_STANDARD	2
 #define ATH12K_SUPER_CHAN_POWER_MODE_VLP	3
 
+#define ATH12K_BAND5_START_FREQ_MHZ          5000
+#define ATH12K_BAND5_END_FREQ_MHZ            5885
+#define ATH12K_BAND5_CHAN_SPACING_MHZ           5
+#define FIRST_DFS_CHAN_NUM                     36
+#define CHAN_NUM_SPACING                        4
+#define NUM_DFS_CHANS                          30
+#define INVALID_INDEX                         (-1)
+
 struct ath12k_vendor_nol_bin_hdr {
 	u8 magic[8];
 	__le16 version;
@@ -1120,6 +1128,28 @@ enum srtype {
     SR_TYPE_OBSS_PD,
     SR_TYPE_MAX,
 };
+
+/**
+ * ath12k_dfs_init_chan_state() - Initialise per-channel DFS state array
+ * @ar: Pointer to ath12k radio instance
+ *
+ * Called at radio bring-up after the channel list is finalised.
+ * Sets all DFS channels to CAC_REQUIRED and non-DFS channels to NON_DFS.
+ */
+void ath12k_dfs_init_chan_state(struct ath12k *ar);
+
+/**
+ * ath12k_dfs_update_chan_state() - Update DFS state for a channel
+ * @ar: Pointer to ath12k radio instance
+ * @chan: Pointer to the ieee80211_channel being updated
+ * @state: New DFS state to set
+ *
+ * Called whenever a DFS event fires to update the per-channel
+ * state array for the affected channel.
+ */
+void ath12k_dfs_update_chan_state(struct ath12k *ar,
+				  struct ieee80211_channel *chan,
+				  enum ath12k_dfs_chan_state state);
 
 #define SR_TYPE_LENGTH 16
 #define IEEE80211_HE_LTF_DEFAULT 0x0

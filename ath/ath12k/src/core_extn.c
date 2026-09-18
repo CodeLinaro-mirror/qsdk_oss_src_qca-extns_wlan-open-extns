@@ -1997,3 +1997,32 @@ void ath12k_mac_op_remove_interface_extn(struct ieee80211_hw *hw,
 	}
 }
 EXPORT_SYMBOL(ath12k_mac_op_remove_interface_extn);
+
+/**
+ * ath12k_mac_update_encap_decap_ext() - Update per vap enccap_decap type
+ * @vif: Mac80211 Vap instance
+ * @ahvif: ath12k Vap instance
+ *
+ * Updates the offload_flag bits and encap/decap type based on vap_submode
+ * to support raw mesh mode.
+ *
+ * Return: void
+ */
+void ath12k_mac_update_encap_decap_ext(struct ieee80211_vif *vif,
+				       struct ath12k_vif *ahvif)
+{
+	struct wireless_dev *wdev;
+
+	wdev = ieee80211_vif_to_wdev(vif);
+	if (wdev->vap_submode == IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH) {
+		vif->offload_flags &= ~(IEEE80211_OFFLOAD_ENCAP_ENABLED |
+					IEEE80211_OFFLOAD_DECAP_ENABLED |
+					IEEE80211_OFFLOAD_ENCAP_MCAST |
+					IEEE80211_OFFLOAD_ENCAP_4ADDR);
+		ahvif->dp_vif.tx_encap_type = ATH12K_HW_TXRX_RAW;
+		ahvif->dp_vif.rx_decap_type = ATH12K_HW_TXRX_RAW;
+		ahvif->dp_vif.dp_features |= DP_FEATURE_RAW_MODE;
+
+		ieee80211_set_vif_encap_ops(vif_to_sdata(vif));
+	}
+}

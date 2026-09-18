@@ -173,8 +173,7 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		rx_status = IEEE80211_SKB_RXCB(msdu);
 		*rx_status = *status;
 
-		if (rx_msdu_info->da_is_mcbc && (!rx_msdu_info->fr_ds &&
-		    rx_msdu_info->to_ds)) {
+		if (rx_msdu_info->da_is_mcbc) {
 			stats->sent_to_stack_mcast++;
 			stats->sent_to_stack_mcast_bytes += msdu->len;
 			dp->device_stats.non_fast_mcast_rx[ring_id][device_id]++;

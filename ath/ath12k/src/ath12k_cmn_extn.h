@@ -14,6 +14,7 @@
 #include "rropinfo.h"
 #include "sa_api.h"
 #include "cbs_extn.h"
+#include "extap_extn.h"
 
 struct ath12k_base;
 struct ath12k_hw_blocklist_state;
@@ -80,6 +81,9 @@ struct ath12k_dp_vif_extn {
 	bool mesh_tx; /*  drop disassocition frames if configured */
 #endif
 	bool allow_3addr_mc;
+#ifdef CPTCFG_QCN_EXTN
+	struct extap_extn extap;
+#endif
 };
 
 /**

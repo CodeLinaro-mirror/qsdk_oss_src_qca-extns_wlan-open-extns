@@ -278,6 +278,64 @@ int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 EXPORT_SYMBOL(ath12k_extap_init);
 
 /**
+ * ath12k_extap_info_dump() - print the IP->MAC table to dmesg
+ * @ahvif: ath12k VIF context
+ *
+ * Iterates every active entry in the per-VAP MAC database and prints
+ * the IP address, MAC address, entry type (Unicast/Multicast) and the
+ * number of successful DMAC rewrites for each entry.
+ */
+void ath12k_extap_info_dump(struct ath12k_vif *ahvif)
+{
+	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+	DECLARE_BITMAP(snapshot, MAC_DB_ENTRIES);
+	struct mac_db *db;
+	unsigned long bit;
+
+	rcu_read_lock();
+	db = rcu_dereference(ee->db);
+	if (!db) {
+		rcu_read_unlock();
+		pr_info("EXTAP Info Dump: ExtAP not active on %pM\n",
+				ahvif->vif->addr);
+		return;
+	}
+
+	pr_info("EXTAP Info Dump: %pM\n", ahvif->vif->addr);
+	pr_info("%-26s %-24s %s\n", "IP Address", "MAC Address", "Type");
+
+	/* Snapshot bitmap under the db lock to get a consistent view */
+	spin_lock_bh(&db->lock);
+	bitmap_copy(snapshot, db->data_bmap, MAC_DB_ENTRIES);
+	spin_unlock_bh(&db->lock);
+
+	for_each_set_bit(bit, snapshot, db->max_entries) {
+		struct mac_db_entry *me = mac_db_entry_ref(db, (u16)bit);
+		const char *type = "Unicast";
+
+		if (!me)
+			continue;
+
+		if (is_multicast_ether_addr(me->mac_addr))
+			type = "Multicast";
+
+		if (me->key.is_v6)
+			pr_info("%-26pI6 %-24pM %s\n",
+					&me->key.ip.v6, me->mac_addr, type);
+		else
+			pr_info("%-26pI4 %-24pM %s\n",
+					&me->key.ip.v4, me->mac_addr, type);
+
+		mac_db_entry_deref(me);
+	}
+
+	pr_info("Total RX Hits: %lld\n", atomic64_read(&db->stats.matched));
+
+	rcu_read_unlock();
+}
+EXPORT_SYMBOL(ath12k_extap_info_dump);
+
+/**
  * ath12k_extap_stats_dump() - print aggregate ExtAP counters to dmesg
  * @ahvif: ath12k VIF context
  */

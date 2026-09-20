@@ -319,6 +319,20 @@ static inline void ath12k_vendor_send_event(struct ath12k_base *ab,
 
 }
 
+static inline void
+ath12k_mac_op_notify_diagnostic_sta_disconnect(struct ieee80211_hw *hw,
+					       struct ieee80211_vif *vif,
+					       unsigned int link_id,
+					       enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+}
+
+static inline void
+ath12k_mac_notify_diagnostic_sta_pdev_restart(struct ath12k *ar,
+					      struct ieee80211_vif *vif)
+{
+}
+
 static inline void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 						      struct wmi_scan_event *scan_ev)
 {
@@ -700,6 +714,14 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 
 void ath12k_vendor_send_event(struct ath12k_base *ab,
 			      u8 event_flag);
+
+void ath12k_mac_op_notify_diagnostic_sta_disconnect(struct ieee80211_hw *hw,
+						    struct ieee80211_vif *vif,
+						    unsigned int link_id,
+						    enum ieee80211_diagnostic_sta_disconnect_reason reason);
+
+void ath12k_mac_notify_diagnostic_sta_pdev_restart(struct ath12k *ar,
+						   struct ieee80211_vif *vif);
 
 void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 				       struct wmi_scan_event *scan_ev);

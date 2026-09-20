@@ -32,8 +32,35 @@ struct ieee80211_hw;
 struct ieee80211_sta;
 struct cfg80211_scan_request;
 struct cfg80211_bss;
+struct ieee80211_chanctx;
 extern unsigned int mmeshsim;
 struct notifier_block;
+
+/**
+ * enum ieee80211_diagnostic_sta_disconnect_reason - why a diagnostic-STA
+ *	vif (&struct ieee80211_vif.diagnostic_sta) was disconnected
+ *
+ * @IEEE80211_DIAGNOSTIC_STA_DISCONNECT_CSA: a co-channel-context AP vif (or
+ *	this vif's own Root AP, over the air) initiated a channel switch.
+ * @IEEE80211_DIAGNOSTIC_STA_DISCONNECT_RADAR: DFS radar was detected on the
+ *	co-channel-context AP's operating channel.
+ * @IEEE80211_DIAGNOSTIC_STA_DISCONNECT_AWGN: AWGN/CW interference was
+ *	detected on the co-channel-context AP's operating channel.
+ * @IEEE80211_DIAGNOSTIC_STA_DISCONNECT_USERSPACE_CHANGE: userspace changed
+ *	the co-channel-context AP's channel/bandwidth outside of CSA (e.g.
+ *	NL80211_CMD_SET_CHANNEL).
+ *
+ * Passed to the driver via ieee80211_ops.notify_diagnostic_sta_disconnect()
+ * so it can log/report the reason (e.g. to userspace via a vendor event)
+ * for PRD R_STA_11-style requirements. PDEV-restart/SSR-triggered
+ * disconnects are not covered here -- see the driver's own hw-restart path.
+ */
+enum ieee80211_diagnostic_sta_disconnect_reason {
+	IEEE80211_DIAGNOSTIC_STA_DISCONNECT_CSA,
+	IEEE80211_DIAGNOSTIC_STA_DISCONNECT_RADAR,
+	IEEE80211_DIAGNOSTIC_STA_DISCONNECT_AWGN,
+	IEEE80211_DIAGNOSTIC_STA_DISCONNECT_USERSPACE_CHANGE,
+};
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define MESH_CAPS_VER1 0x8000
@@ -505,6 +532,23 @@ ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
 	return false;
 }
 
+static inline void
+ieee80211_disconnect_diagnostic_sta_on_ctx_extn(struct ieee80211_local *local,
+					        struct ieee80211_chanctx *ctx,
+					        enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	return;
+}
+
+static inline void
+drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
+				     struct ieee80211_sub_if_data *sdata,
+				     unsigned int link_id,
+				     enum ieee80211_diagnostic_sta_disconnect_reason reason)
+{
+	return;
+}
+
 #else
 
 u8 *
@@ -585,6 +629,17 @@ ieee80211_clamp_scan_to_ap_channel_extn(struct ieee80211_sub_if_data *sdata,
 bool
 ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
 					 struct cfg80211_bss *bss);
+
+void
+ieee80211_disconnect_diagnostic_sta_on_ctx_extn(struct ieee80211_local *local,
+						struct ieee80211_chanctx *ctx,
+						enum ieee80211_diagnostic_sta_disconnect_reason reason);
+
+void
+drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
+				     struct ieee80211_sub_if_data *sdata,
+				     unsigned int link_id,
+				     enum ieee80211_diagnostic_sta_disconnect_reason reason);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);

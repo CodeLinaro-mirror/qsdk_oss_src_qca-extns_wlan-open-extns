@@ -81,10 +81,6 @@ static int __proc_ipv6_na_rx(struct extap_extn *ee, struct sk_buff *skb, void *h
 	struct nd_opt_hdr *noh = hdr;
 	struct mac_hash_key k;
 
-	/* Only learn from multicast targets or when override flag is set */
-	if (!ipv6_addr_is_multicast(&nm->target) && !nm->icmph.icmp6_override)
-		return -EINVAL;
-
 	if ((noh->nd_opt_len * 8) < NA_HDR_LEN) {
 		ath12k_err(ee->ab, "extap: invalid NA option header\n");
 		return -EINVAL;

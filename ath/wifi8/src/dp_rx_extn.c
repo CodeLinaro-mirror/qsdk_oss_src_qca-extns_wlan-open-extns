@@ -96,10 +96,22 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			offload_ops = rcu_dereference(peer->dev->offload_ops);
 			if ((flow_metadata & ATH12K_RX_FSE_FLOW_MATCH_USE_PPE)) {
 				dp->device_stats.fast_rx[ring_id][device_id]++;
+#ifdef CPTCFG_QCN_EXTN
 				if (static_branch_unlikely(&extap_enabled)) {
-					if (ath12k_vif_has_extap(ath12k_vif_to_ahvif(peer->vif)))
-						ath12k_extap_rx(ath12k_vif_to_ahvif(peer->vif), msdu);
+					struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(peer->vif);
+
+					if (ahvif && ath12k_vif_has_extap(ahvif)) {
+						if (ath12k_extap_rx(ahvif, msdu) > 0) {
+							struct ath12k_link_vif *arvif =
+								rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
+							if (arvif)
+								arvif->link_stats.rx_dropped++;
+							dev_kfree_skb_any(msdu);
+							return;
+						}
+					}
 				}
+#endif
 				if (offload_ops && offload_ops->recv &&
 				    offload_ops->recv(peer->dev, msdu)) {
 					return;
@@ -110,10 +122,22 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		stats->sent_to_stack_ucast_fast++;
 		stats->sent_to_stack_ucast_fast_bytes += msdu->len;
 
+#ifdef CPTCFG_QCN_EXTN
 		if (static_branch_unlikely(&extap_enabled)) {
-			if (ath12k_vif_has_extap(ath12k_vif_to_ahvif(peer->vif)))
-				ath12k_extap_rx(ath12k_vif_to_ahvif(peer->vif), msdu);
+			struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(peer->vif);
+
+			if (ahvif && ath12k_vif_has_extap(ahvif)) {
+				if (ath12k_extap_rx(ahvif, msdu) > 0) {
+					struct ath12k_link_vif *arvif =
+						rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
+					if (arvif)
+						arvif->link_stats.rx_dropped++;
+					dev_kfree_skb_any(msdu);
+					return;
+				}
+			}
 		}
+#endif
 
 		msdu->protocol = eth_type_trans(msdu, peer->dev);
 
@@ -165,10 +189,22 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 
 		msdu->priority = rx_mpdu_info->tid;
 
+#ifdef CPTCFG_QCN_EXTN
 		if (static_branch_unlikely(&extap_enabled)) {
-			if (ath12k_vif_has_extap(ath12k_vif_to_ahvif(peer->vif)))
-				ath12k_extap_rx(ath12k_vif_to_ahvif(peer->vif), msdu);
+			struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(peer->vif);
+
+			if (ahvif && ath12k_vif_has_extap(ahvif)) {
+				if (ath12k_extap_rx(ahvif, msdu) > 0) {
+					struct ath12k_link_vif *arvif =
+						rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
+					if (arvif)
+						arvif->link_stats.rx_dropped++;
+					dev_kfree_skb_any(msdu);
+					return;
+				}
+			}
 		}
+#endif
 
 		/* Convert 802.3 frame to 802.11 so mac80211 can handle it correctly.
 		 * For 4addr frames, this is needed to support APVLAN interface creation.

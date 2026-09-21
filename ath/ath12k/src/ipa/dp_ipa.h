@@ -337,7 +337,8 @@ struct ath12k_ipa_arch_ops {
 	void (*ipa_iface_setup_set_metadata)(struct ipa_wdi_reg_intf_in_params *in);
 	void (*ipa_iface_setup_set_vp_num)(u8 link_id,
 					   struct ipa_wdi_reg_intf_in_params *in);
-	void (*ipa_iface_cleanup_vp_num)(const char *dev_name, u8 link_id);
+	void (*ipa_iface_cleanup_vp_num)(const char *dev_name, u8 link_id,
+					 u8 ahvif_id, struct ath12k_base *ab);
 	void (*ipa_iface_setup_set_intf_idx)(struct ipa_wdi_reg_intf_in_params *in,
 					     int intf_idx);
 	int (*ipa_client_connect_ex)(struct ath12k_ipa *ipa_ctx,
@@ -873,6 +874,23 @@ struct ath12k_ipa {
 	u8 instance_id;
 	bool handle_initialized;
 	ipa_wdi_hdl_t hdl;
+	/* IPA offload TX capabilities reported by ipa_wdi_init_per_inst().
+	 * offload_supported: true when IPA HW supports ULSO/segmentation offload
+	 *   and ipa_wdi_offload_tx_dp_per_inst() may be used.
+	 * offload_headroom:  bytes to reserve in dev->needed_headroom for the
+	 *   QMAP extension header prepended by ipa_wdi_offload_tx_dp_per_inst().
+	 * offload_features:  netdev HW feature flags to OR into hw_features.
+	 * offload_gso_max_size: value to assign to netdev->gso_max_size.
+	 * offload_max_pkts:  high watermark for in-flight offload TX packets;
+	 *   stop the TX queue at this level, restart at offload_max_pkts/2.
+	 */
+	bool offload_supported;
+	u32  offload_headroom;
+	netdev_features_t offload_features;
+	u32  offload_gso_max_size;
+	u32  offload_max_pkts;
+	atomic_t tx_outstanding;
+	atomic_t queues_stopped; /* 1 when netdev TX queues are stopped by IPA */
 	u8 curr_bw_level;
 	struct uc_op_work_struct uc_op_work[ATH12K_IPA_UC_OPCODE_MAX];
 	u8 *vdev_to_iface;
@@ -989,6 +1007,17 @@ void ath12k_wlan_ipa_msg_free_fn(void *buff, u32 len, u32 type);
 void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *arvif,
 			    const u8 mac[ETH_ALEN], bool is_mlo);
 
+void ath12k_dp_ipa_apvlan_connect(struct ieee80211_hw *hw,
+				  struct ath12k_vif *apvlan_ahvif,
+				  struct ath12k_vif *vlan_master_ahvif,
+				  struct ieee80211_vif *vlan_master_vif,
+				  struct ieee80211_vif *vif);
+
+void ath12k_dp_ipa_apvlan_disconnect(struct ath12k_vif *apvlan_ahvif,
+				     struct ath12k_link_vif *parent_arvif,
+				     struct ieee80211_vif *vif,
+				     struct ieee80211_vif *vlan_master_vif);
+
 bool ath12k_wlan_ipa_is_sta_only_offload_enabled(void);
 
 bool ath12k_ipa_config_is_enabled(void);
@@ -1077,19 +1106,52 @@ ath12k_dp_ipa_arch_op_ipa_iface_setup_set_vp_num(struct ath12k_ipa *ipa_ctx,
 						 struct ipa_wdi_reg_intf_in_params *in)
 {
 	if (ipa_ctx && ipa_ctx->arch_ops &&
-	    ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num)
+	    ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_ctx=%p arch_ops=%p"
+		       " fn=%p netdev=%s link_id=%u -- CALLING\n",
+		       __func__, ipa_ctx, ipa_ctx->arch_ops,
+		       (void *)ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num,
+		       in->netdev_name ? in->netdev_name : "NULL", link_id);
 		ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num(link_id, in);
+	} else {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: NOT CALLING -- ipa_ctx=%p"
+		       " arch_ops=%p fn=%p (one or more NULL) netdev=%s"
+		       " link_id=%u -- VP alloc SKIPPED entirely\n",
+		       __func__, ipa_ctx, ipa_ctx ? ipa_ctx->arch_ops : NULL,
+		       (ipa_ctx && ipa_ctx->arch_ops) ?
+			       (void *)ipa_ctx->arch_ops->ipa_iface_setup_set_vp_num : NULL,
+		       in->netdev_name ? in->netdev_name : "NULL", link_id);
+	}
 }
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(struct ath12k_ipa *ipa_ctx,
 					       const char *dev_name,
-					       u8 link_id)
+					       u8 link_id, u8 ahvif_id,
+					       struct ath12k_base *ab)
 {
 	if (ipa_ctx && ipa_ctx->arch_ops &&
-	    ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num)
-		ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num(dev_name, link_id);
+	    ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ipa_ctx=%p arch_ops=%p"
+		       " fn=%p netdev=%s link_id=%u ahvif_id=%u ab=%p"
+		       " -- CALLING\n",
+		       __func__, ipa_ctx, ipa_ctx->arch_ops,
+		       (void *)ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num,
+		       dev_name ? dev_name : "NULL", link_id, ahvif_id, ab);
+		ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num(dev_name, link_id,
+							    ahvif_id, ab);
+	} else {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: NOT CALLING -- ipa_ctx=%p"
+		       " arch_ops=%p fn=%p (one or more NULL) netdev=%s"
+		       " link_id=%u ahvif_id=%u ab=%p -- VP dealloc SKIPPED"
+		       " entirely\n",
+		       __func__, ipa_ctx, ipa_ctx ? ipa_ctx->arch_ops : NULL,
+		       (ipa_ctx && ipa_ctx->arch_ops) ?
+			       (void *)ipa_ctx->arch_ops->ipa_iface_cleanup_vp_num : NULL,
+		       dev_name ? dev_name : "NULL", link_id, ahvif_id, ab);
+	}
 }
+
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_intf_idx(struct ath12k_ipa *ipa_ctx,
@@ -1296,5 +1358,15 @@ ath12k_dp_ipa_arch_op_uc_offload_enable(struct ath12k_ipa *ipa_ctx,
 	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->ipa_uc_offload_enable)
 		return ipa_ctx->arch_ops->ipa_uc_offload_enable(ipa_ctx, offload_type, vdev_id, enable);
 }
+
+void ath12k_dp_ipa_peer_notify(struct ath12k *ar,
+			       struct ath12k_dp_link_peer *peer,
+			       struct ath12k_link_vif *arvif,
+			       u32 vdev_id, bool connect);
+void ath12k_dp_ipa_vif_notify(struct ath12k_link_vif *arvif,
+			      bool restart, bool connect);
+int ath12k_dp_ipa_hw_group_init(struct ath12k_base *ab,
+				struct ath12k_dp_hw_group *dp_hw_grp);
+void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp);
 
 #endif

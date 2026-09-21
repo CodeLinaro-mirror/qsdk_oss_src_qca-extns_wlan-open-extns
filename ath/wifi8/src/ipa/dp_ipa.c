@@ -12,7 +12,7 @@
 #include "../../hal.h"
 #include "../../../dp_cmn.h"
 
-void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
+static void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
 {
 	in->is_meta_data_valid = 0;
 }
@@ -20,21 +20,46 @@ void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
 static struct ath12k_vif *get_ahvif_from_dev_name(const char *net_dev_name)
 {
 	struct wireless_dev *wdev;
-	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
 	struct net_device *dev = dev_get_by_name(&init_net, net_dev_name);
 
-	if (!dev)
+	if (!dev) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: dev_get_by_name FAILED for"
+		       " dev=%s (netdev not registered -- already unregistered"
+		       " by the time this ran?)\n", __func__, net_dev_name);
 		goto err;
+	}
 	wdev = dev->ieee80211_ptr;
-	if (!wdev)
+	if (!wdev) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: dev=%s found but"
+		       " ieee80211_ptr (wdev) is NULL\n", __func__, net_dev_name);
 		goto err;
+	}
 
-	vif = wdev_to_ieee80211_vif_vlan(wdev, false);
-	if (!vif)
+	/*
+	 * Use ath12k_ahvif_from_wdev() — the only correct path for ALL types.
+	 *
+	 * Both wdev_to_ieee80211_vif_vlan(wdev, false) and
+	 * wdev_to_ieee80211_vif(wdev) are broken for NL80211_IFTYPE_AP_VLAN:
+	 *  - _vif_vlan(false): hardcoded to return master AP's vif for AP_VLAN
+	 *  - wdev_to_ieee80211_vif: returns NULL for AP_VLAN because
+	 *    IEEE80211_SDATA_IN_DRIVER is not set for AP_VLAN sdata
+	 * Without this fix, phy00-mld0.sta1 returns parent AP's ahvif_id=1
+	 * → VP=64 (same as parent, -EEXIST) instead of ahvif_id=3 → VP=66.
+	 */
+	ahvif = ath12k_ahvif_from_wdev(wdev);
+	if (!ahvif) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: dev=%s wdev=%p found but"
+		       " ath12k_ahvif_from_wdev returned NULL\n",
+		       __func__, net_dev_name, wdev);
 		goto err;
+	}
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: dev=%s -> ahvif=%p ahvif_id=%u OK\n",
+	       __func__, net_dev_name, ahvif, ahvif->dp_vif.ahvif_id);
 
 	dev_put(dev);
-	return ath12k_vif_to_ahvif(vif);
+	return ahvif;
 err:
 	dev_put(dev);
 	return NULL;
@@ -45,7 +70,13 @@ static int get_vp_num_from_dev_name(const char *net_dev_name, struct ath12k_vif 
 	int vp_num;
 	struct net_device *dev = dev_get_by_name(&init_net, net_dev_name);
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: calling ath12k_dp_ipa_alloc_vp_num"
+	       " ahvif=%p ahvif_id=%u dev_name=%s dev=%p\n",
+	       __func__, ahvif, ahvif->dp_vif.ahvif_id, net_dev_name, dev);
 	vp_num = ath12k_dp_ipa_alloc_vp_num(ahvif, dev);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ath12k_dp_ipa_alloc_vp_num RETURNED"
+	       " vp_num=%d ahvif_id=%u dev_name=%s\n",
+	       __func__, vp_num, ahvif->dp_vif.ahvif_id, net_dev_name);
 	dev_put(dev);
 	return vp_num;
 }
@@ -66,6 +97,15 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 		return;
 	}
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: netdev=%s ahvif=%p ahvif_id=%u"
+	       " vif_type=%d [VP will be ahvif_id + VP_MIN - 1 = %u + %d - 1 = %u]\n",
+	       __func__, in->netdev_name, ahvif,
+	       ahvif->dp_vif.ahvif_id,
+	       ahvif->vif ? ahvif->vif->type : -1,
+	       ahvif->dp_vif.ahvif_id,
+	       ATH12K_DP_IPA_VP_MIN,
+	       ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif->dp_vif.ahvif_id));
+
 	vp_num = get_vp_num_from_dev_name(in->netdev_name, ahvif);
 	if (vp_num == -EEXIST) {
 		/*
@@ -76,23 +116,69 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 		 */
 		u8 ahvif_id = ahvif->dp_vif.ahvif_id;
 
+		printk(KERN_ERR "WDS_IPA_DBG: %s: VP already exists (DFS restart)"
+		       " netdev=%s ahvif_id=%u reusing vp_num=%u\n",
+		       __func__, in->netdev_name, ahvif_id,
+		       ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id));
+
 		if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
 		    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
 			return;
 		vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
 	} else if (ATH12K_DP_IPA_VP_NUM_INVALID(vp_num)) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: VP alloc FAILED vp_num=%d"
+		       " netdev=%s ahvif_id=%u\n",
+		       __func__, vp_num, in->netdev_name,
+		       ahvif->dp_vif.ahvif_id);
 		ath12k_ipa_err(NULL, "ipa vp_num setup: invalid vp_num=%d for netdev=%s\n",
 			    vp_num, in->netdev_name);
 		return;
 	}
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ahvif_id=%u -> vp_num=%d (unique VP)"
+	       " netdev=%s\n",
+	       __func__, ahvif->dp_vif.ahvif_id, vp_num, in->netdev_name);
+
 	rcu_read_lock();
 	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
+	/*
+	 * AP_VLAN vdevs (WDS STA, e.g. phy00-mld0.sta1) share the parent AP's
+	 * firmware vdev and have no link[link_id] of their own.  Fall back to
+	 * the parent AP's arvif to get vdev_id and lmac_id for the VP register.
+	 * Without this the VP register is never programmed for WDS STA.
+	 */
+	if (!arvif && ahvif->vif &&
+	    ahvif->vif->type == NL80211_IFTYPE_AP_VLAN &&
+	    ahvif->vlan_iface && ahvif->vlan_iface->parent_vif) {
+		struct ath12k_vif *parent_ahvif =
+			ath12k_vif_to_ahvif(ahvif->vlan_iface->parent_vif);
+
+		printk(KERN_ERR "WDS_IPA_DBG: %s: AP_VLAN arvif NULL for netdev=%s"
+		       " ahvif_id=%u link_id=%u, falling back to parent arvif\n",
+		       __func__, in->netdev_name,
+		       ahvif->dp_vif.ahvif_id, link_id);
+
+		if (parent_ahvif)
+			arvif = ath12k_get_arvif_from_link_id(parent_ahvif, link_id);
+	}
 	if (!arvif) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: arvif NULL after fallback"
+		       " netdev=%s ahvif_id=%u link_id=%u\n",
+		       __func__, in->netdev_name,
+		       ahvif->dp_vif.ahvif_id, link_id);
 		ath12k_ipa_err(NULL, "ipa vp_num setup: arvif not found for link_id=%u netdev=%s\n",
 			    link_id, in->netdev_name);
 		goto err;
 	}
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: netdev=%s ahvif_id=%u vp_num=%d"
+	       " vdev_id=%u lmac_id=%u vif_type=%d"
+	       " dp_vif.is_wds_4addr=%d dp_vif.ast_idx=%u dp_vif.ast_hash=%u\n",
+	       __func__, in->netdev_name, ahvif->dp_vif.ahvif_id, vp_num,
+	       arvif->vdev_id, arvif->ar->lmac_id,
+	       ahvif->vif ? ahvif->vif->type : -1,
+	       ahvif->dp_vif.is_wds_4addr,
+	       ahvif->dp_vif.ast_idx, ahvif->dp_vif.ast_hash);
 
 	dev = dev_get_by_name(&init_net, in->netdev_name);
 	if (!dev) {
@@ -102,25 +188,35 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 	}
 
 	in->vpnum = vp_num;
-	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, dev, arvif);
+	/* Pass ahvif (AP_VLAN's own, not parent's) so set_ppe_vp_entry_config
+	 * reads ast_idx/ast_hash/bank_id from the correct dp_vif. */
+	ath12k_dp_ipa_set_ppe_vp_entry_config(&vp_profile, arvif, ahvif);
 	dev_put(dev);
 
+	printk(KERN_ERR "WDS_IPA_DBG: %s: writing VP register netdev=%s"
+	       " vp_num=%d vdev_id=%u lmac_id=%u"
+	       " search_idx_reg_num=%u cache_set=%u bank_id=%u entry_valid=%d\n",
+	       __func__, in->netdev_name, vp_num,
+	       vp_profile.vdev_id, vp_profile.lmac_id,
+	       vp_profile.search_idx_reg_num, vp_profile.cache_set,
+	       vp_profile.bank_id, vp_profile.entry_valid);
+
 	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, &vp_profile);
+
 err:
 	rcu_read_unlock();
 }
 
-void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
+void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id,
+					      u8 ahvif_id, struct ath12k_base *ab)
 {
 	struct ath12k_vif *ahvif;
-	struct ath12k_link_vif *arvif;
-	struct ath12k_base *ab = NULL;
-	u8 ahvif_id;
+	struct wireless_dev *wdev;
+	struct net_device *dev;
 	int vp_num;
 
-	ahvif = get_ahvif_from_dev_name(dev_name);
-	if (!ahvif)
-		return;
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ENTER dev=%s link_id=%u ahvif_id=%u"
+	       " ab=%p\n", __func__, dev_name, link_id, ahvif_id, ab);
 
 	/*
 	 * Compute VP number directly from ahvif_id — do NOT call
@@ -128,29 +224,93 @@ void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
 	 * (VP still allocated) and the early-return would skip both
 	 * dealloc_vp_num and the hardware VP entry clear.
 	 */
-	ahvif_id = ahvif->dp_vif.ahvif_id;
 	if (ahvif_id == ATH12K_INVALID_AHVIF_ID ||
-	    ahvif_id >= ATH12K_DP_IPA_VP_RANGE)
+	    ahvif_id >= ATH12K_DP_IPA_VP_RANGE) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ahvif_id=%u INVALID or out of"
+		       " range (VP_RANGE=%u) for dev=%s -- CLEANUP ABORTED\n",
+		       __func__, ahvif_id, ATH12K_DP_IPA_VP_RANGE, dev_name);
 		return;
+	}
 	vp_num = ATH12K_DP_IPA_GET_VP_FROM_AHVIFID(ahvif_id);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ahvif_id=%u -> vp_num=%d dev=%s\n",
+	       __func__, ahvif_id, vp_num, dev_name);
 
 	/*
-	 * Retrieve arvif under rcu_read_lock, save the ab pointer, then
-	 * drop the lock before calling dealloc_vp_num: dealloc calls
-	 * synchronize_rcu() which sleeps and must NOT run under
-	 * rcu_read_lock.
+	 * Resolve via our own ref-counted VP pool (ath12k_ipa_vp_to_dev[]),
+	 * NOT get_ahvif_from_dev_name() (dev_get_by_name()): this cleanup
+	 * runs asynchronously on system_unbound_wq, and for AP_VLAN (WDS
+	 * STA) teardown the netdev is frequently already unregistered by
+	 * the time it runs -- confirmed empirically: dev_get_by_name()
+	 * failing here left the dev_hold() reference taken at connect time
+	 * never released, permanently blocking unregister_netdevice() and
+	 * causing .staN's name to never be freed for reuse.
+	 * ath12k_dp_ipa_get_netdev_from_vp() holds its own reference from
+	 * connect time, so this lookup still succeeds.
 	 */
-	rcu_read_lock();
-	arvif = ath12k_get_arvif_from_link_id(ahvif, link_id);
-	if (arvif)
-		ab = arvif->ar->ab;
-	rcu_read_unlock();
+	dev = ath12k_dp_ipa_get_netdev_from_vp(vp_num);
+	if (!dev) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ath12k_dp_ipa_get_netdev_from_vp"
+		       " FAILED for vp_num=%d ahvif_id=%u dev=%s -- CLEANUP"
+		       " ABORTED, nothing will be freed\n",
+		       __func__, vp_num, ahvif_id, dev_name);
+		return;
+	}
 
-	ath12k_dp_ipa_dealloc_vp_num(ahvif);
+	wdev = dev->ieee80211_ptr;
+	ahvif = wdev ? ath12k_ahvif_from_wdev(wdev) : NULL;
+	if (!ahvif) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ath12k_ahvif_from_wdev FAILED"
+		       " wdev=%p dev=%s ahvif_id=%u -- CLEANUP ABORTED\n",
+		       __func__, wdev, dev_name, ahvif_id);
+		dev_put(dev);
+		return;
+	}
 
-	if (ab)
+	printk(KERN_ERR "WDS_IPA_DBG: %s: dev=%s -> ahvif=%p ahvif_id=%u OK\n",
+	       __func__, dev_name, ahvif, ahvif->dp_vif.ahvif_id);
+
+	/*
+	 * ab is passed down from ipa_ctx->ab by the caller instead of being
+	 * re-derived via ahvif->vlan_iface->parent_vif: for AP_VLAN,
+	 * vlan_iface is kfree()'d and NULLed synchronously inside
+	 * ath12k_mac_op_remove_interface(), before this async cleanup ever
+	 * runs, so that fallback always failed here -- it never actually
+	 * cleared the hardware VP entry for AP_VLAN teardown.
+	 *
+	 * ath12k_dp_ipa_dealloc_vp_num() now takes ahvif_id by value (not
+	 * ahvif) for the same reason: ahvif->dp_vif.ahvif_id is reset to
+	 * ATH12K_INVALID_AHVIF_ID synchronously inside
+	 * ath12k_mac_op_remove_interface(), and by the time this async
+	 * cleanup runs that reset has frequently already happened -- so we
+	 * pass the ahvif_id parameter (captured by value at IPA-event-enqueue
+	 * time, immune to that race) directly, instead of letting
+	 * dealloc_vp_num re-read the live, racy field itself.
+	 */
+	printk(KERN_ERR "WDS_IPA_DBG: %s: calling ath12k_dp_ipa_dealloc_vp_num"
+	       " ahvif_id=%u dev=%s\n", __func__, ahvif_id, dev_name);
+	ath12k_dp_ipa_dealloc_vp_num(ahvif_id);
+	printk(KERN_ERR "WDS_IPA_DBG: %s: ath12k_dp_ipa_dealloc_vp_num DONE"
+	       " ahvif_id=%u dev=%s\n", __func__, ahvif_id, dev_name);
+
+	if (ab) {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: clearing HW VP entry"
+		       " ab=%p vp_num=%d dev=%s\n", __func__, ab, vp_num, dev_name);
 		ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(ab, vp_num, NULL);
+		printk(KERN_ERR "WDS_IPA_DBG: %s: HW VP entry CLEARED"
+		       " vp_num=%d dev=%s\n", __func__, vp_num, dev_name);
+	} else {
+		printk(KERN_ERR "WDS_IPA_DBG: %s: ab is NULL -- HW VP entry"
+		       " vp_num=%d for dev=%s was NOT cleared\n",
+		       __func__, vp_num, dev_name);
+	}
+
+	dev_put(dev);
+
+	printk(KERN_ERR "WDS_IPA_DBG: %s: EXIT dev=%s ahvif_id=%u vp_num=%d"
+	       " ab=%p\n", __func__, dev_name, ahvif_id, vp_num, ab);
 }
+
+
 
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
 						  int intf_idx)
@@ -485,6 +645,8 @@ static int ath12k_wifi8_ipa_iface_context_init(struct ath12k_ipa *ipa_ctx)
 	ath12k_ipa_info(ipa_ctx->ab,
 			"WiFi8: iface_context[%u] allocated (cumac), wdi_version=%u",
 			ipa_ctx->max_iface, ipa_ctx->wdi_version);
+
+	ath12k_wifi8_dp_ipa_debugfs_init(ipa_ctx->ab->debugfs_soc, ipa_ctx);
 	return 0;
 
 err_free_vdev_to_iface:
@@ -547,17 +709,240 @@ ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(struct ath12k_ipa *ipa_ctx)
 	return 0;
 }
 
+/* ieee80211_stop/wake_queues() are no-ops for ath12k: HAS_TX_QUEUE is set
+ * unconditionally in ath12k_mac_hw_register(), so mac80211 never sets up
+ * wake_txqs_tasklet and the stop/wake calls never propagate to the netdev.
+ * Use netif_tx_{stop,wake}_all_queues() directly on each vif's netdev so
+ * that real backpressure reaches the kernel qdisc and the TCP stack.
+ */
+
+/* TX path counters exposed via /sys/kernel/debug/ath12k/ipa_tx_stats */
+atomic64_t ipa_tx_ipa_count   = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_sw_count    = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_qstop_count = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_qwake_count = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_pm_wake     = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_busy_count  = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_total_sw_count = ATOMIC64_INIT(0);
+atomic64_t ipa_tx_queue_count[IEEE80211_NUM_ACS];
+
+static void ath12k_wifi8_ipa_vif_netdev_stop(void *data, u8 *mac,
+					     struct ieee80211_vif *vif)
+{
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+
+	if (wdev && wdev->netdev)
+		netif_tx_stop_all_queues(wdev->netdev);
+}
+
+static void ath12k_wifi8_ipa_vif_netdev_wake(void *data, u8 *mac,
+					     struct ieee80211_vif *vif)
+{
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+
+	if (wdev && wdev->netdev)
+		netif_tx_wake_all_queues(wdev->netdev);
+}
+
+static void ath12k_wifi8_dp_ipa_tx_complete(struct ath12k_ipa *ipa_ctx,
+					    struct sk_buff *skb)
+{
+	static atomic_t dbg_complete_total = ATOMIC_INIT(0);
+	struct ath12k_hw_group *ag = ath12k_ab_to_ag(ipa_ctx->ab);
+	int i;
+
+	atomic_inc(&dbg_complete_total);
+	atomic_dec(&ipa_ctx->tx_outstanding);
+
+	/*
+	 * Wake queues only when:
+	 *   1. they were explicitly stopped (queues_stopped == 1), AND
+	 *   2. outstanding has drained to the low watermark (max/2)
+	 * This avoids calling ieee80211_iterate_active_interfaces_atomic on
+	 * every completion — the common case when queues are running fine.
+	 */
+	if (ipa_ctx->offload_max_pkts &&
+	    atomic_read(&ipa_ctx->queues_stopped) &&
+	    atomic_read(&ipa_ctx->tx_outstanding) <=
+			(int)(ipa_ctx->offload_max_pkts / 2) &&
+	    atomic_cmpxchg(&ipa_ctx->queues_stopped, 1, 0)) {
+		atomic64_inc(&ipa_tx_qwake_count);
+		for (i = 0; i < ag->num_hw; i++) {
+			struct ath12k_hw *ah = ath12k_ag_to_ah(ag, i);
+
+			if (ah && ah->hw)
+				ieee80211_iterate_active_interfaces_atomic(
+					ah->hw,
+					IEEE80211_IFACE_ITER_NORMAL,
+					ath12k_wifi8_ipa_vif_netdev_wake,
+					NULL);
+		}
+	}
+
+	dev_kfree_skb_any(skb);
+}
+
+int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
+			      const struct ath12k_skb_cb *skb_cb,
+			      struct ath12k_vif *ahvif,
+			      struct ath12k_sta *ahsta,
+			      struct ath12k_link_vif *arvif,
+			      bool is_mcast)
+{
+	struct ath12k_ipa *ipa_ctx;
+	const char *notelig_reason = "unknown";
+	u16 qmap;
+	int ret;
+
+	rcu_read_lock();
+
+	qmap = skb_get_queue_mapping(skb);
+	if (qmap < IEEE80211_NUM_ACS)
+		atomic64_inc(&ipa_tx_queue_count[qmap]);
+
+	ipa_ctx = IPA_CTX(ar->ab);
+	if (!ipa_ctx) {
+		notelig_reason = "ipa_ctx NULL";
+		goto not_eligible;
+	}
+	if (!READ_ONCE(ipa_ctx->handle_initialized)) {
+		notelig_reason = "handle_initialized=false";
+		goto not_eligible;
+	}
+	if (!ipa_ctx->offload_supported) {
+		notelig_reason = "offload_supported=false";
+		goto not_eligible;
+	}
+
+	/* ---- Per-packet eligibility ---- */
+
+	/* Only Ethernet-encap (HW 802.11 encap) — IPA parses Ethernet frames */
+	if (!(skb_cb->flags & ATH12K_SKB_HW_80211_ENCAP)) {
+		notelig_reason = "no HW_80211_ENCAP";
+		goto not_eligible;
+	}
+
+	/* Unicast only — multicast needs per-link copy and GSN for MLO */
+	if (is_mcast) {
+		notelig_reason = "mcast";
+		goto not_eligible;
+	}
+
+	/* EAPOL must reach firmware for key negotiation */
+	if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
+		notelig_reason = "EAPOL";
+		goto not_eligible;
+	}
+
+	/* 4-addr WDS needs per-peer AST index override in TCL metadata */
+	if (ahsta && ahsta->use_4addr_set) {
+		notelig_reason = "4addr WDS";
+		goto not_eligible;
+	}
+
+	/* NAWDS requires SW multicast-to-unicast conversion */
+	if (arvif->nawds_support) {
+		notelig_reason = "NAWDS";
+		goto not_eligible;
+	}
+
+	/* Raw mode: verbatim 802.11 frames; IPA expects Ethernet */
+	if (test_bit(ATH12K_GROUP_FLAG_RAW_MODE, &ar->ab->ag->flags)) {
+		notelig_reason = "raw mode";
+		goto not_eligible;
+	}
+
+	/* SW-crypto (native 802.11 pre-encrypted by mac80211): hw_key is NULL
+	 * so ATH12K_SKB_HW_80211_ENCAP would not be set — already blocked above.
+	 * ATH12K_SKB_CIPHER_SET on HW-encap frames means hw_key IS present and
+	 * HW will encrypt after TCL; IPA can deliver these frames safely.
+	 * Do NOT check ATH12K_SKB_CIPHER_SET here — it blocks all WPA2/WPA3 data.
+	 */
+
+	/* AP_VLAN (WDS client) and P2P-GO (NOA IE injection) */
+	if (ahvif->vdev_type == WMI_VDEV_TYPE_AP && ahvif->vif->p2p) {
+		notelig_reason = "P2P-GO";
+		goto not_eligible;
+	}
+	if (ahvif->vif->type == NL80211_IFTYPE_AP_VLAN) {
+		notelig_reason = "AP_VLAN";
+		goto not_eligible;
+	}
+
+	/* SAWF/SDWF QoS-tagged frames need TCL per-TID queue steering */
+	if (skb->mark & (SDWF_VALID_MASK | QOS_TAG_MASK)) {
+		notelig_reason = "SAWF/SDWF mark";
+		goto not_eligible;
+	}
+
+	if (ipa_ctx->offload_max_pkts) {
+		int hi = (int)ipa_ctx->offload_max_pkts;
+		int cur = atomic_inc_return(&ipa_ctx->tx_outstanding);
+
+		if (cur > hi) {
+			atomic_dec(&ipa_ctx->tx_outstanding);
+			rcu_read_unlock();
+			atomic64_inc(&ipa_tx_qstop_count);
+			atomic_set(&ipa_ctx->queues_stopped, 1);
+			ieee80211_iterate_active_interfaces_atomic(
+				ar->ah->hw, IEEE80211_IFACE_ITER_NORMAL,
+				ath12k_wifi8_ipa_vif_netdev_stop, NULL);
+			atomic64_inc(&ipa_tx_total_sw_count);
+			dev_kfree_skb_any(skb);
+			return 0;
+		}
+	}
+
+	/* ---- Hand skb to IPA ---- */
+	ret = ipa_wdi_offload_tx_dp_per_inst(ipa_ctx->hdl, skb);
+	rcu_read_unlock();
+
+	if (likely(!ret)) {
+		atomic64_inc(&ipa_tx_ipa_count);
+		return 0;
+	}
+
+	/* Submission failed — undo counter increment */
+	if (ipa_ctx->offload_max_pkts)
+		atomic_dec(&ipa_ctx->tx_outstanding);
+
+	if (ret == -EAGAIN || ret == -ENOSPC) {
+		atomic64_inc(&ipa_tx_busy_count);
+		atomic_set(&ipa_ctx->queues_stopped, 1);
+		ieee80211_iterate_active_interfaces_atomic(
+			ar->ah->hw, IEEE80211_IFACE_ITER_NORMAL,
+			ath12k_wifi8_ipa_vif_netdev_stop, NULL);
+		atomic64_inc(&ipa_tx_total_sw_count);
+		dev_kfree_skb_any(skb);
+		return 0;
+	}
+
+	atomic64_inc(&ipa_tx_total_sw_count);
+	return ret;
+
+not_eligible:
+	rcu_read_unlock();
+	atomic64_inc(&ipa_tx_sw_count);
+	atomic64_inc(&ipa_tx_total_sw_count);
+	return -EINVAL;
+}
+EXPORT_SYMBOL(ath12k_wifi8_dp_ipa_xmit);
+
 /**
- * ath12k_wifi8_dp_ipa_w2i() - IPA exception flow handler (WLAN to IPA)
- * @priv: private context (ath12k_wlan_ipa_priv)
- * @evt: IPA event type
- * @data: event data (typically sk_buff pointer)
+ * ath12k_wifi8_dp_ipa_w2i() - IPA RX-exception and TX-completion handler
+ * @priv: ath12k_ipa context registered at pipe-connect time
+ * @evt:  IPA_WRITE_DONE (TX completion) or IPA_RECEIVE (RX exception)
+ * @data: skb pointer
  *
- * Valid data packets are submitted to mac80211
- * for processing.
+ * IPA_WRITE_DONE: a skb previously submitted via
+ *   ipa_wdi_offload_tx_dp_per_inst() has been consumed by IPA HW.
+ *   Decrement the in-flight counter and wake mac80211 TX queues when
+ *   the counter falls to or below the low watermark.
  *
- * Context: Can be called from process context
- * Return: None
+ * IPA_RECEIVE: an RX exception frame has been delivered by IPA.
+ *   Look up the peer and hand the frame to mac80211.
+ *
+ * Context: softirq (GSI NAPI); must not sleep.
  */
 static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 				    enum ipa_dp_evt_type evt,
@@ -582,6 +967,44 @@ static void ath12k_wifi8_dp_ipa_w2i(void *priv,
 	int i;
 	u16 peer_id;
 	u8 vdev_id, hw_link_id;
+
+	/* IPA_WRITE_DONE: TX completion for a skb previously submitted via
+	 * ipa_wdi_offload_tx_dp_per_inst().  Handle before IPA_RECEIVE to
+	 * keep the TX hot-path branch prediction efficient.
+	 */
+	if (evt == IPA_WRITE_DONE) {
+		ipa_ctx = (struct ath12k_ipa *)priv;
+		if (unlikely(!ipa_ctx)) {
+			ath12k_ipa_err(NULL, "IPA_WRITE_DONE: ipa_ctx is NULL");
+			if (skb)
+				dev_kfree_skb_any(skb);
+			return;
+		}
+
+		if (!skb) {
+			struct ath12k_hw_group *ag = ath12k_ab_to_ag(ipa_ctx->ab);
+			int i;
+
+			if (!atomic_cmpxchg(&ipa_ctx->queues_stopped, 1, 0))
+				return;
+			atomic64_inc(&ipa_tx_pm_wake);
+			for (i = 0; i < ag->num_hw; i++) {
+				struct ath12k_hw *ah = ath12k_ag_to_ah(ag, i);
+
+				if (ah && ah->hw)
+					ieee80211_iterate_active_interfaces_atomic(
+						ah->hw,
+						IEEE80211_IFACE_ITER_NORMAL,
+						ath12k_wifi8_ipa_vif_netdev_wake,
+						NULL);
+			}
+			return;
+		}
+
+		ath12k_wifi8_dp_ipa_tx_complete(ipa_ctx, skb);
+		return;
+	}
+
 	if (!skb) {
 		ath12k_ipa_err(NULL, "skb is NULL");
 		return;

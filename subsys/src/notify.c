@@ -137,71 +137,8 @@ EXPORT_SYMBOL(ieee80211_ext_mon_rx_notifier_call_extn);
  *   MUST call skb_clone() inside the callback and take ownership of the
  *   clone; they must NOT free or hold a reference to the original SKB.
  */
-SRCU_NOTIFIER_HEAD_STATIC(ieee80211_ext_mon_tx_notifier_chain);
-
-/* Listener count for fast has-listeners check in the TX hot path */
-static atomic_t ieee80211_ext_mon_tx_listener_count = ATOMIC_INIT(0);
-/**
- * ieee80211_register_ext_mon_tx_notifier_extn - Register extended monitor TX listener
- * @nb: Notifier block with callback function
- *
- * Registers a listener for ext_mon TX events. Multiple listeners may be
- * registered simultaneously. Each callback is invoked from the txmon
- * workqueue (process) context and may sleep.
- *
- * The driver frees the MPDU SKB after the chain returns. Listeners that
- * need to retain the frame must call skb_clone() and free the clone
- * after use.
- *
- * Return: 0 on success, negative errno on failure
- */
-int ieee80211_register_ext_mon_tx_notifier_extn(struct notifier_block *nb)
-{
-	int ret;
-
-	if (!nb)
-		return -EINVAL;
-
-	pr_debug("ext_mon TX notifier register\n");
-
-	ret = srcu_notifier_chain_register(&ieee80211_ext_mon_tx_notifier_chain, nb);
-	if (ret)
-		return ret;
-
-	atomic_inc(&ieee80211_ext_mon_tx_listener_count);
-	return 0;
-}
-EXPORT_SYMBOL(ieee80211_register_ext_mon_tx_notifier_extn);
-
-/**
- * ieee80211_unregister_ext_mon_tx_notifier_extn - Unregister extended monitor TX listener
- * @nb: Notifier block to remove
- *
- * Return: 0 on success, negative errno on failure
- */
-int ieee80211_unregister_ext_mon_tx_notifier_extn(struct notifier_block *nb)
-{
-	int ret;
-
-	if (!nb)
-		return -EINVAL;
-
-	pr_debug("ext_mon TX notifier unregister\n");
-
-	ret = srcu_notifier_chain_unregister(&ieee80211_ext_mon_tx_notifier_chain, nb);
-	if (!ret) {
-		/*
-		 * Decrement only if positive so an unbalanced or double
-		 * unregister cannot drive the listener count negative and
-		 * corrupt the has-listeners fast path.
-		 */
-		if (atomic_dec_if_positive(&ieee80211_ext_mon_tx_listener_count) < 0)
-			pr_warn("ext_mon TX notifier listener count already zero on unregister\n");
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL(ieee80211_unregister_ext_mon_tx_notifier_extn);
+SRCU_NOTIFIER_HEAD(ieee80211_ext_mon_tx_notifier_chain);
+EXPORT_SYMBOL_GPL(ieee80211_ext_mon_tx_notifier_chain);
 
 /**
  * ieee80211_ext_mon_tx_notifier_has_listeners_extn - Check for active TX ext_mon listeners
@@ -213,7 +150,7 @@ EXPORT_SYMBOL(ieee80211_unregister_ext_mon_tx_notifier_extn);
  */
 bool ieee80211_ext_mon_tx_notifier_has_listeners_extn(void)
 {
-	return atomic_read(&ieee80211_ext_mon_tx_listener_count) > 0;
+	return rcu_access_pointer(ieee80211_ext_mon_tx_notifier_chain.head) != NULL;
 }
 EXPORT_SYMBOL(ieee80211_ext_mon_tx_notifier_has_listeners_extn);
 /**

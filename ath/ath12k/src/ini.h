@@ -1206,8 +1206,8 @@
  */
 #define ATH12K_CFG_CUMAC_BAND_PRIORITY \
 	ATH12K_CFG_INI_STRING("cumac_band_priority", \
-	0, 31, "", \
-	"CUMAC chip selection band priority (space-separated: \"2GHz 5GHz 6GHz\")")
+	0, 63, "", \
+	"CUMAC chip selection band priority (space-separated: \"2GHz 5GHz_L 5GHz_H 5GHz 6GHz_L 6GHz_H 6GHz\")")
 
 #define ATH12K_CFG_NUM_VDEVS_MIN	1
 #define ATH12K_CFG_NUM_VDEVS_MAX	17

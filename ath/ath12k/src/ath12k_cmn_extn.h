@@ -189,6 +189,8 @@ struct ath12k_link_vif_extn {
 	bool vht_mcs10_11_nq2q_peer_supp;
 	bool rtt_initiator_role;
 	bool is_rtt_vif;
+	/* When true, post vap up disable beacon. */
+	bool non_beacon_bss;
 };
 
 struct sta_240mhz_info {

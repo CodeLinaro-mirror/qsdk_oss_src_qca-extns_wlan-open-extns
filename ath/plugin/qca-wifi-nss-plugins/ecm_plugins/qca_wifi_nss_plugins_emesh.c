@@ -85,7 +85,8 @@ static inline uint32_t qca_wifi_nss_plugins_emesh_sawf_get_mark_data(struct ecm_
 			     metadata.sawf_param.sawf_rule_type,
 			     metadata.sawf_param.pcp, metadata.sawf_param.dscp, metadata.sawf_param.service_id,
 			     metadata.sawf_param.rule_id, metadata.sawf_param.valid_flag, metadata.sawf_param.mcast_flag,
-			     metadata.sawf_param.netdev->name, metadata.sawf_param.peer_mac);
+			     metadata.sawf_param.netdev ? metadata.sawf_param.netdev->name : "null",
+			     metadata.sawf_param.peer_mac);
 
 	result = ath_get_metadata_info(&metadata);
 

@@ -215,6 +215,11 @@ static void qca_wifi_nss_plugins_nl_vendor_cmd_handle(struct nlmsghdr *nlh)
 		goto free_mem;
 	}
 
+	if (!tb[NL80211_ATTR_VENDOR_SUBCMD]) {
+		qca_wifi_nss_plugins_warning("%px: Not able to parse vendor subcmd attribute.\n", nlh);
+		goto free_mem;
+	}
+
 	subcmd = (int *) nla_data(tb[NL80211_ATTR_VENDOR_SUBCMD]);
 	qca_wifi_nss_plugins_info("Netlink parsed sub command: %u\n", *subcmd);
 
@@ -238,6 +243,13 @@ static void qca_wifi_nss_plugins_nl_vendor_cmd_handle(struct nlmsghdr *nlh)
 			goto free_mem;
 		}
 
+		if (!tb2[QCA_WLAN_VENDOR_ATTR_PRI_LINK_MIGR_NEW_PRI_LINK_ID] ||
+		    !tb2[QCA_WLAN_VENDOR_ATTR_PRI_LINK_MIGR_MLD_MAC_ADDR]) {
+			qca_wifi_nss_plugins_warning("%px: Missing primary link migrate attributes.\n", nlh);
+			kfree(tb2);
+			goto free_mem;
+		}
+
 		newlink = nla_get_u8(tb2[QCA_WLAN_VENDOR_ATTR_PRI_LINK_MIGR_NEW_PRI_LINK_ID]);
 		memcpy(mac, nla_data(tb2[QCA_WLAN_VENDOR_ATTR_PRI_LINK_MIGR_MLD_MAC_ADDR]), ETH_ALEN);
 		ecm_interface_node_connections_defunct_by_mac_addr((uint8_t *)mac);
@@ -257,6 +269,12 @@ static void qca_wifi_nss_plugins_nl_vendor_cmd_handle(struct nlmsghdr *nlh)
 		len = nla_len(tb[NL80211_ATTR_VENDOR_DATA]);
 		if (nla_parse(tb2, QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_MAX, (struct nlattr *) data, len, NULL, NULL)) {
 			qca_wifi_nss_plugins_warning("%px: Error in parsing the Wi-Fi event \n", nlh);
+			kfree(tb2);
+			goto free_mem;
+		}
+
+		if (!tb2[QCA_WLAN_VENDOR_ATTR_SCS_RULE_CONFIG_DST_MAC_ADDR]) {
+			qca_wifi_nss_plugins_warning("%px: Missing SCS rule config destination MAC attribute.\n", nlh);
 			kfree(tb2);
 			goto free_mem;
 		}
@@ -477,7 +495,6 @@ struct nlmsghdr *qca_wifi_nss_plugins_nl_construct_message(struct sk_buff *skb)
 	nlh = nlmsg_put(skb, 0, 0, GENL_ID_CTRL, GENL_HDRLEN, 0);
 	if (!nlh) {
 		qca_wifi_nss_plugins_warning("%px: Error in constructing nl header !\n", skb);
-		nlmsg_free(skb);
 		return NULL;
 	}
 
@@ -698,6 +715,7 @@ int qca_wifi_nss_plugins_nl_event_start(void)
 	__ewn.thread = kthread_run((void *)qca_wifi_nss_plugins_nl_event_thread, NULL, "ECM_wifi_event");
 	if (IS_ERR(__ewn.thread)) {
 		qca_wifi_nss_plugins_err("Unable to start kernel thread\n");
+		__ewn.thread = NULL;
 		return -ENOMEM;
 	}
 

@@ -897,18 +897,6 @@ struct ieee80211_ext_mon_tx_event_extn {
 	struct ieee80211_sub_if_data *sdata;
 };
 #ifndef CPTCFG_QCN_EXTN
-static inline int
-ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb)
-{
-	return -1;
-}
-
-static inline int
-ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb)
-{
-	return -1;
-}
-
 static inline bool
 ieee80211_ext_mon_rx_notifier_has_listeners_extn(void)
 {
@@ -955,8 +943,7 @@ ieee80211_subif_start_xmit_raw_mesh(struct ieee80211_sub_if_data *sdata,
 }
 #else
 extern struct srcu_notifier_head ieee80211_ext_mon_tx_notifier_chain;
-int ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb);
-int ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb);
+extern struct srcu_notifier_head ieee80211_ext_mon_rx_notifier_chain;
 bool ieee80211_ext_mon_rx_notifier_has_listeners_extn(void);
 int
 ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn type,

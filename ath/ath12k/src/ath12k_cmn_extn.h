@@ -208,6 +208,11 @@ struct sta_240mhz_info {
 /* Checks whether SKB has custom pkt */
 #define ATH12K_IS_CUSTOM_PKT(cb)	(cb->flags & (ATH12K_SKB_CUSTOM_MGMT_TX |\
 						      ATH12K_SKB_CUSTOM_OFFCHAN_MGMT_TX))
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+#define ATH12K_IS_MONRAW_TXPKT(cb)	(cb->flags & ATH12K_SKB_MONRAW_TX)
+#endif
+
 /* Checks if Tx Params configured by User */
 #define ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN(ar) (ar->ar_extn.raw_pkt_ctx.tx_param.tx_param_configured)
 
@@ -335,6 +340,10 @@ struct ath12k_raw_pkt_ctx {
 	ktime_t ts_scan_done;
 	struct mutex raw_ctx_mutex;
 	u8 frame_id[ATH12K_MAX_CUSTOM_TX_PKT];
+};
+
+struct ath12k_monraw_pkt_ctx {
+	struct ath12k_skb_tx_param tx_param;
 };
 
 #define DCS_TX_MAX_CU          30
@@ -513,6 +522,7 @@ enum ath12k_dfs_chan_state {
 struct ath12k_extn {
 	struct esp_extn esp;
 	struct ath12k_raw_pkt_ctx raw_pkt_ctx;
+	struct ath12k_monraw_pkt_ctx monraw_pkt_ctx;
 
 	/* sysfs entries under ieee80211: radioX */
 	struct kobject *radio_kobj;
@@ -942,7 +952,7 @@ static inline void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 {
 }
 
-static inline void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb,
+static inline void ath12k_wmi_prepare_tx_params_extn(struct sk_buff *skb, struct ath12k_skb_cb *skb_cb,
 						     void *ptr)
 {
 }
@@ -1413,13 +1423,14 @@ int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx);
 
 /*
  * ath12k_wmi_prepare_tx_params_extn() - Prepare tx params for WMI command
+ * @skb: Pointer to the skb
  * @skb_cb: Pointer to the skb_cb
  * @ptr: Pointer to the WMI buffer
  *
  * This function prepares the tx params for the WMI command by:
  * Setting the appropriate fields in the tx_param_dword0 and tx_param_dword1 values
  */
-void ath12k_wmi_prepare_tx_params_extn(struct ath12k_skb_cb *skb_cb, void *ptr);
+void ath12k_wmi_prepare_tx_params_extn(struct sk_buff *skb, struct ath12k_skb_cb *skb_cb, void *ptr);
 
 /**
  * ath12k_custom_tx_free_extn() - Free custom management TX skb and

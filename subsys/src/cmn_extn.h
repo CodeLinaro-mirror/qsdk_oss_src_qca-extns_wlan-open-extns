@@ -63,6 +63,7 @@ enum ieee80211_diagnostic_sta_disconnect_reason {
 };
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+#define MMESH_MON_RAW_TX_MAGIC 0x74
 #define MESH_CAPS_VER1 0x8000
 #define MESH_CAPS_BW_OFFSET 0
 #define MESH_CAPS_NSS_OFFSET 4

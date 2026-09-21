@@ -1346,6 +1346,31 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 		return ret;
 	}
 
+	/* TX function - block transmission on NO_IR and DISABLED channels */
+	if (func != QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
+		if (is_home_channel) {
+			if (!cfg80211_chandef_usable(wdev->wiphy, &ctx->def,
+					IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_IR)) {
+				rcu_read_unlock();
+				ath12k_err(NULL, "Homechannel TX is disallowed\n");
+				return -EINVAL;
+			}
+		} else {
+			struct ieee80211_channel *off_chan =
+				ieee80211_get_channel(wdev->wiphy, freq);
+			enum ieee80211_channel_flags flags =
+				off_chan ? off_chan->flags : IEEE80211_CHAN_DISABLED;
+			if (flags & (IEEE80211_CHAN_NO_IR | IEEE80211_CHAN_DISABLED)) {
+				rcu_read_unlock();
+				ath12k_err(NULL,
+					"Offchannel TX is disallowed on %s freq=%d\n",
+					(flags & IEEE80211_CHAN_NO_IR) ?
+					"NO_IR" : "DISABLED", freq);
+				return -EINVAL;
+			}
+		}
+	}
+
 	rcu_read_unlock();
 
 	/* Acquire mutex to serialize operations - hold until user event arrives.

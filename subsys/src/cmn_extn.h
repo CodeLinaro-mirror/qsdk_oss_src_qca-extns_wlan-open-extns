@@ -824,16 +824,6 @@ ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn t
 {
 	return -1;
 }
-static inline int
-ieee80211_register_ext_mon_tx_notifier_extn(struct notifier_block *nb)
-{
-	return -1;
-}
-static inline int
-ieee80211_unregister_ext_mon_tx_notifier_extn(struct notifier_block *nb)
-{
-	return -1;
-}
 static inline bool
 ieee80211_ext_mon_tx_notifier_has_listeners_extn(void)
 {
@@ -861,14 +851,13 @@ ieee80211_set_ext_tx_mon_evt_typ(struct ieee80211_vif *vif,
 {
 }
 #else
+extern struct srcu_notifier_head ieee80211_ext_mon_tx_notifier_chain;
 int ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb);
 int ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb);
 bool ieee80211_ext_mon_rx_notifier_has_listeners_extn(void);
 int
 ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn type,
 					struct ieee80211_ext_mon_rx_event_extn *event);
-int ieee80211_register_ext_mon_tx_notifier_extn(struct notifier_block *nb);
-int ieee80211_unregister_ext_mon_tx_notifier_extn(struct notifier_block *nb);
 bool ieee80211_ext_mon_tx_notifier_has_listeners_extn(void);
 int
 ieee80211_ext_mon_tx_notify(struct ieee80211_hw *hw,

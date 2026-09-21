@@ -93,4 +93,12 @@ struct mesh_recv_hdr_s {
 #define MESH_FILTER_OUT_RA      (1<<3) /* filter packets with RA matching own RA */
 #define MESH_FILTER_OUT_TA      (1<<4) /* filter packets with TA matching own TA */
 
+#define MESH_RADA_MAX_ENTRIES	32
+
+struct mesh_rada_entry {
+	uint8_t da[MAC_ADDR_SIZE];
+	uint8_t ra[MAC_ADDR_SIZE];
+	bool valid;
+};
+
 #endif

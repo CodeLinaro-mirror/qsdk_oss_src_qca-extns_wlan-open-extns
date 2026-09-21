@@ -30,65 +30,9 @@
  *   MUST call skb_clone() inside the callback and take ownership of the
  *   clone; they must NOT free or hold a reference to the original SKB.
  */
-SRCU_NOTIFIER_HEAD_STATIC(ieee80211_ext_mon_rx_notifier_chain);
+SRCU_NOTIFIER_HEAD(ieee80211_ext_mon_rx_notifier_chain);
 
-/* Listener count for fast has-listeners check in the RX hot path */
-static atomic_t ieee80211_ext_mon_rx_listener_count = ATOMIC_INIT(0);
-
-/**
- * ieee80211_register_ext_mon_rx_notifier_extn - Register extended monitor RX listener
- * @nb: Notifier block with callback function
- *
- * Registers a listener for ext_mon_event_type events. Multiple
- * listeners may be registered simultaneously. Each callback is invoked
- * from the rxmon workqueue (process) context and may sleep.
- *
- * The driver frees the MPDU SKB after the chain returns. Listeners that
- * need to retain the frame must call skb_clone() and free the clone
- * after use.
- *
- * Return: 0 on success, negative errno on failure
- */
-int ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb)
-{
-	int ret;
-
-	if (!nb)
-		return -EINVAL;
-
-	pr_debug("ext_mon RX notifier register\n");
-
-	ret = srcu_notifier_chain_register(&ieee80211_ext_mon_rx_notifier_chain, nb);
-	if (ret)
-		return ret;
-
-	atomic_inc(&ieee80211_ext_mon_rx_listener_count);
-	return 0;
-}
-EXPORT_SYMBOL(ieee80211_register_ext_mon_rx_notifier_extn);
-
-/**
- * ieee80211_unregister_ext_mon_rx_notifier_extn - Unregister extended monitor RX listener
- * @nb: Notifier block to remove
- *
- * Return: 0 on success, negative errno on failure
- */
-int ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb)
-{
-	int ret;
-
-	if (!nb)
-		return -EINVAL;
-
-	pr_debug("ext_mon RX notifier unregister\n");
-
-	ret = srcu_notifier_chain_unregister(&ieee80211_ext_mon_rx_notifier_chain, nb);
-	if (!ret)
-		atomic_dec(&ieee80211_ext_mon_rx_listener_count);
-
-	return ret;
-}
-EXPORT_SYMBOL(ieee80211_unregister_ext_mon_rx_notifier_extn);
+EXPORT_SYMBOL_GPL(ieee80211_ext_mon_rx_notifier_chain);
 
 /**
  * ieee80211_ext_mon_rx_notifier_has_listeners_extn - Check for active RX ext_mon listeners
@@ -100,7 +44,7 @@ EXPORT_SYMBOL(ieee80211_unregister_ext_mon_rx_notifier_extn);
  */
 bool ieee80211_ext_mon_rx_notifier_has_listeners_extn(void)
 {
-	return atomic_read(&ieee80211_ext_mon_rx_listener_count) > 0;
+	return rcu_access_pointer(ieee80211_ext_mon_rx_notifier_chain.head) != NULL;
 }
 EXPORT_SYMBOL(ieee80211_ext_mon_rx_notifier_has_listeners_extn);
 
@@ -120,7 +64,7 @@ ieee80211_ext_mon_rx_notifier_call_extn(enum ieee80211_ext_mon_event_type_extn t
 	return srcu_notifier_call_chain(&ieee80211_ext_mon_rx_notifier_chain,
 					type, event);
 }
-EXPORT_SYMBOL(ieee80211_ext_mon_rx_notifier_call_extn);
+EXPORT_SYMBOL_GPL(ieee80211_ext_mon_rx_notifier_call_extn);
 
 /*
  * Extended monitor TX notifier chain.

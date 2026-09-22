@@ -333,6 +333,12 @@ ath12k_mac_notify_diagnostic_sta_pdev_restart(struct ath12k *ar,
 {
 }
 
+static inline bool
+ath12k_mac_diagnostic_sta_vap_exists_extn(struct ath12k_hw *ah)
+{
+	return false;
+}
+
 static inline void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 						      struct wmi_scan_event *scan_ev)
 {
@@ -722,6 +728,8 @@ void ath12k_mac_op_notify_diagnostic_sta_disconnect(struct ieee80211_hw *hw,
 
 void ath12k_mac_notify_diagnostic_sta_pdev_restart(struct ath12k *ar,
 						   struct ieee80211_vif *vif);
+
+bool ath12k_mac_diagnostic_sta_vap_exists_extn(struct ath12k_hw *ah);
 
 void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
 				       struct wmi_scan_event *scan_ev);

@@ -17187,6 +17187,48 @@ void ath12k_mac_notify_diagnostic_sta_pdev_restart(struct ath12k *ar,
 }
 EXPORT_SYMBOL(ath12k_mac_notify_diagnostic_sta_pdev_restart);
 
+/**
+ * ath12k_mac_diagnostic_sta_vap_exists_extn() - check for an existing
+ * diagnostic client serving STA VAP anywhere in this vif's hw group
+ * @ah: this interface's ath12k_hw
+ *
+ * Return: true if such a vif already exists, false otherwise
+ */
+bool ath12k_mac_diagnostic_sta_vap_exists_extn(struct ath12k_hw *ah)
+{
+	struct ath12k_hw_group *ag = ah->ag;
+	struct ath12k_link_vif *arvif;
+	struct ath12k_hw *cur_ah;
+	struct ath12k *ar;
+	u8 i, j;
+	bool found = false;
+
+	for (i = 0; i < ag->num_hw; i++) {
+		cur_ah = ag->ah[i];
+		if (!cur_ah)
+			continue;
+
+		ar = cur_ah->radio;
+		for (j = 0; j < cur_ah->num_radio; j++, ar++) {
+			spin_lock_bh(&ar->data_lock);
+			list_for_each_entry(arvif, &ar->arvifs, list) {
+				if (arvif->ahvif && arvif->ahvif->vif &&
+				    arvif->ahvif->vif->type == NL80211_IFTYPE_STATION &&
+				    arvif->ahvif->vif->diagnostic_sta) {
+					found = true;
+					break;
+				}
+			}
+			spin_unlock_bh(&ar->data_lock);
+			if (found)
+				return true;
+		}
+	}
+
+	return false;
+}
+EXPORT_SYMBOL(ath12k_mac_diagnostic_sta_vap_exists_extn);
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 /**
  * ath12k_vendor_mesh_peer_dump - Send mesh peer info as a binary vendor reply.

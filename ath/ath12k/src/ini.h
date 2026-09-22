@@ -431,6 +431,7 @@
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
+	ATH12K_CFG(ATH12K_CFG_REG_ENABLE_NON_COUNTRY_CHNLS_ON_SCAN_RADIO) \
 
 #define ATH12K_CFG_DP \
 	ATH12K_CFG(ATH12K_INI_DP_UMAC_RESET_TIMEOUT) \
@@ -537,6 +538,11 @@
 #define ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE \
 	ATH12K_CFG_INI_BOOL("reg_6ghz_low_power_hw_blocklist_enable", true, \
 	"Enable Host support for 6GHz low power hardware blocklist")
+
+#define ATH12K_CFG_REG_ENABLE_NON_COUNTRY_CHNLS_ON_SCAN_RADIO \
+	ATH12K_CFG_INI_BOOL("reg_enable_non_country_channels_on_scan_radio", \
+	false, \
+	"Enable non-country channels on scan radio")
 
 #define ATH12K_CFG_MAX_DESC \
 	ATH12K_CFG_INI_UINT("max_descs", \

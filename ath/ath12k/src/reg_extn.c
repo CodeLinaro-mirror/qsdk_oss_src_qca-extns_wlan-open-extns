@@ -2358,3 +2358,147 @@ void ath12k_afc_scan_radio_update_extn(struct ath12k *ar, bool retail_mode_only)
 		   ar->pdev->pdev_id, retail_mode_only);
 }
 EXPORT_SYMBOL(ath12k_afc_scan_radio_update_extn);
+
+/**
+ * ath12k_reg_add_noncountry_rule() - Append a single non-country reg rule
+ *				      to regd.
+ * @ab:         ath12k base structure
+ * @regd:       regdomain to extend; caller must have pre-allocated space
+ * @rule_start: rule start frequency in MHz
+ * @rule_end:   rule end frequency in MHz
+ * @max_bw:     max bandwidth advertised for the band in mac_cap
+ *
+ * Appends one reg rule covering [@rule_start, @rule_end] with flags
+ * NL80211_RRF_NO_IR and mode set to NL80211_REG_NO_POWER_MODE.
+ */
+static void
+ath12k_reg_add_noncountry_rule(struct ath12k_base *ab,
+			       struct ieee80211_regdomain *regd,
+			       u32 rule_start,
+			       u32 rule_end,
+			       u32 max_bw)
+{
+	struct ieee80211_reg_rule *rule;
+	u32 max_bw_in_mhz;
+
+	if (rule_start >= rule_end)
+		return;
+
+	max_bw_in_mhz = ath12k_reg_hw_blocklist_bw_to_mhz_extn(max_bw);
+	rule = &regd->reg_rules[regd->n_reg_rules++];
+	memset(rule, 0, sizeof(*rule));
+	rule->freq_range.start_freq_khz    = MHZ_TO_KHZ(rule_start);
+	rule->freq_range.end_freq_khz      = MHZ_TO_KHZ(rule_end);
+	rule->freq_range.max_bandwidth_khz = MHZ_TO_KHZ(min(max_bw_in_mhz,
+					     rule_end - rule_start));
+	rule->flags = NL80211_RRF_NO_IR;
+	rule->mode = NL80211_REG_NO_POWER_MODE;
+	ath12k_dbg(ab, ATH12K_DBG_REG,
+		   "scan radio: non-country rule [%u, %u] max_bw=%u flags=%x\n",
+		   rule_start, rule_end, max_bw, rule->flags);
+}
+
+/**
+ * ath12k_reg_build_noncountry_rules() - Append non-country rules for all
+ * supported bands
+ * @ab:       ath12k base structure
+ * @regd:     regdomain to extend; caller must pre-allocate space for up
+ *            to 3 additional rules (2 GHz, 5 GHz, 6 GHz)
+ * @pdev_cap: pdev capabilities (supported bands, max bandwidth per band)
+ * @reg_cap:  hardware frequency range
+ *
+ * For each supported band, computes the frequency range and max bandwidth, then
+ * appends a non-country rule via ath12k_reg_add_noncountry_rule().
+ */
+static void
+ath12k_reg_build_noncountry_rules(struct ath12k_base *ab,
+				  struct ieee80211_regdomain *regd,
+				  struct ath12k_pdev_cap *pdev_cap,
+				  struct ath12k_wmi_hal_reg_capabilities_ext_arg *reg_cap)
+{
+	u32 hw_low, hw_high, max_bw;
+
+	ath12k_dbg(ab, ATH12K_DBG_REG,
+		   "reg_extn hw_caps: 2g=[%u,%u] 5g=[%u,%u]\n",
+		   reg_cap->low_2ghz_chan, reg_cap->high_2ghz_chan,
+		   reg_cap->low_5ghz_chan, reg_cap->high_5ghz_chan);
+
+	if (pdev_cap->supported_bands & WMI_HOST_WLAN_2GHZ_CAP) {
+		hw_low  = max_t(u32, reg_cap->low_2ghz_chan,
+				ATH12K_2GHZ_MIN_CENTER - ATH12K_HALF_20MHZ_BW);
+		hw_high = min_t(u32, reg_cap->high_2ghz_chan,
+				ATH12K_2GHZ_MAX_CENTER + ATH12K_HALF_20MHZ_BW);
+		max_bw = pdev_cap->band[NL80211_BAND_2GHZ].max_bw_supported;
+		ath12k_reg_add_noncountry_rule(ab, regd, hw_low, hw_high, max_bw);
+	}
+
+	/* 5G and 6G */
+	if (pdev_cap->supported_bands & WMI_HOST_WLAN_5GHZ_CAP) {
+		hw_low  = max_t(u32, reg_cap->low_5ghz_chan, ATH12K_MIN_5GHZ_FREQ);
+		hw_high = min_t(u32, reg_cap->high_5ghz_chan, ATH12K_MAX_5GHZ_FREQ);
+		max_bw = pdev_cap->band[NL80211_BAND_5GHZ].max_bw_supported;
+		ath12k_reg_add_noncountry_rule(ab, regd, hw_low, hw_high, max_bw);
+
+		hw_low  = max_t(u32, reg_cap->low_5ghz_chan, ATH12K_MIN_6GHZ_FREQ);
+		hw_high = min_t(u32, reg_cap->high_5ghz_chan, ATH12K_MAX_6GHZ_FREQ);
+		max_bw = pdev_cap->band[NL80211_BAND_6GHZ].max_bw_supported;
+		ath12k_reg_add_noncountry_rule(ab, regd, hw_low, hw_high, max_bw);
+	}
+}
+
+struct ieee80211_regdomain *
+ath12k_reg_build_for_noncountry(struct ath12k_base *ab,
+				struct ieee80211_regdomain *regd,
+				u8 pdev_idx)
+{
+	struct ieee80211_regdomain *new_regd;
+	int total_rules;
+
+	if (pdev_idx >= ab->num_radios || !regd)
+		return regd;
+	if (!ath12k_scan_radio_non_country_supported(&ab->pdevs[pdev_idx]))
+		return regd;
+	if (!ath12k_cfg_get(ab,
+		ATH12K_CFG_REG_ENABLE_NON_COUNTRY_CHNLS_ON_SCAN_RADIO))
+		return regd;
+
+	total_rules = regd->n_reg_rules + MAX_NON_COUNTRY_RULES;
+	new_regd = krealloc(regd,
+			    sizeof(*regd) +
+			    total_rules * sizeof(*regd->reg_rules),
+			    GFP_ATOMIC);
+	if (!new_regd) {
+		ath12k_warn(ab,
+			    "scan radio: failed to allocate new regdomain with non-country rules\n");
+		return regd;
+	}
+
+	regd = new_regd;
+	ath12k_reg_build_noncountry_rules(ab, regd,
+					  &ab->pdevs[pdev_idx].cap,
+					  &ab->hal_reg_cap[pdev_idx]);
+	return regd;
+}
+EXPORT_SYMBOL(ath12k_reg_build_for_noncountry);
+
+void ath12k_wmi_set_non_country_host_service_flag_extn(
+		struct ath12k_base *ab,
+		struct ath12k_wmi_resource_config_params *wmi_cfg)
+{
+	int i;
+
+	if (!ath12k_cfg_get(ab,
+		ATH12K_CFG_REG_ENABLE_NON_COUNTRY_CHNLS_ON_SCAN_RADIO))
+		return;
+
+	for (i = 0; i < ab->num_radios; i++) {
+		if (!ath12k_scan_radio_non_country_supported(&ab->pdevs[i]))
+			continue;
+		ath12k_dbg(ab, ATH12K_DBG_WMI,
+			"scan radio non-country enabled on phy_id=%d\n",
+			 ab->fw_pdev[i].phy_id);
+		wmi_cfg->host_service_flags |= cpu_to_le32(1 <<
+			WMI_RSRC_CFG_HOST_SVC_FLAG_NON_COUNTRY_SUPPORT_BIT);
+	}
+}
+EXPORT_SYMBOL(ath12k_wmi_set_non_country_host_service_flag_extn);

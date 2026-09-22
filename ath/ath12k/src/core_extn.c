@@ -1165,15 +1165,19 @@ int ath12k_wmi_tlv_scan_radio_caps_ext2(struct ath12k_base *ab, u16 tag,
 				caps |= ATH12K_SCAN_RADIO_CAP_DFS_ENABLED;
 			if (flags & WMI_SCAN_RADIO_CAP_BLANKING_SUPPORTED)
 				caps |= ATH12K_SCAN_RADIO_CAP_BLANKING;
+			if (flags & WMI_SCAN_RADIO_CAP_NON_COUNTRY)
+				caps |= ATH12K_SCAN_RADIO_CAP_NON_COUNTRY;
 
 			pdev->cap.scan_radio_caps = caps;
 			ath12k_info(ab,
-				    "pdev %d scan-radio caps: 0x%x (supported=%d dfs=%d blanking=%d)\n",
+				    "pdev %d scan-radio caps: 0x%x"\
+				    "(supported=%d dfs=%d blanking=%d non_country=%d)\n",
 				    pdev->pdev_id,
 				    pdev->cap.scan_radio_caps,
 				    !!(caps & ATH12K_SCAN_RADIO_CAP_SUPPORTED),
 				    !!(caps & ATH12K_SCAN_RADIO_CAP_DFS_ENABLED),
-				    !!(caps & ATH12K_SCAN_RADIO_CAP_BLANKING));
+				    !!(caps & ATH12K_SCAN_RADIO_CAP_BLANKING),
+				    !!(caps & ATH12K_SCAN_RADIO_CAP_NON_COUNTRY));
 			break;
 		}
 	}

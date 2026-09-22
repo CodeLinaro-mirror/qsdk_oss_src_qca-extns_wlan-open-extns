@@ -233,6 +233,9 @@ struct sta_240mhz_info {
 	 ATH12K_IS_CUSTOM_PKT(cb))
 #endif
 
+/* One non-country rule per band (2.4 GHz, 5 GHz, and 6 GHz). */
+#define MAX_NON_COUNTRY_RULES		3
+
 /* Band types used in offchan tx */
 enum band_type {
 	BAND_DEFAULT,
@@ -2292,5 +2295,48 @@ ath12k_link_sta_find_by_addr_all_radios_extn(struct ath12k_hw *ah, const u8 *add
  */
 void ath12k_mac_update_encap_decap_ext(struct ieee80211_vif *vif,
 				       struct ath12k_vif *ahvif);
+
+/**
+ * ath12k_wmi_set_non_country_host_service_flag_extn - Set host service flag in
+ * WMI resource config
+ * @ab: Pointer to the ath12k base structure
+ * @wmi_cfg: Pointer to the WMI resource config parameters
+ */
+void ath12k_wmi_set_non_country_host_service_flag_extn(
+		struct ath12k_base *ab,
+		struct ath12k_wmi_resource_config_params *wmi_cfg);
+
+/**
+ * ath12k_reg_build_for_noncountry() - Build non-country rules
+ * @ab:       ath12k base structure
+ * @regd:     regdomain built from country rules
+ * @pdev_idx: pdev index
+ *
+ * For scan radio pdevs with non-country channel support enabled, appends
+ * noncountry rules (up to one per band: 2 GHz, 5 GHz, 6 GHz) covering
+ * hw-supported frequencies to regd. Each rule carries NL80211_RRF_NO_IR and
+ * mode set to NL80211_REG_NO_POWER_MODE so that cfg80211 marks those channels
+ * as RX-only and outside the country's coverage.
+ *
+ * Returns @regd unchanged if the pdev is not a scan radio, the feature is
+ * disabled, or on allocation failure. Otherwise, return new regd which apppends
+ * the non-country rules.
+ */
+struct ieee80211_regdomain *
+ath12k_reg_build_for_noncountry(struct ath12k_base *ab,
+				struct ieee80211_regdomain *regd,
+				u8 pdev_idx);
+
+/**
+ * ath12k_is_rule_non_country() -  Checks whether the given rule is a
+ *				   non-country rule
+ * @rule:       ieee80211_reg_rule structure
+ *
+ * Returns true if the rule is non-country rule, otherwise return false.
+ */
+static inline bool ath12k_is_rule_non_country(struct ieee80211_reg_rule *rule)
+{
+	return rule->mode == NL80211_REG_NO_POWER_MODE;
+}
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* ATH12K_CMN_EXTN_H */

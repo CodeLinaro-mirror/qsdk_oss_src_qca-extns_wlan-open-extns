@@ -1254,6 +1254,57 @@ static int sa_core_ppdu_event_notify(struct notifier_block *nb,
 	}
 }
 
+/**
+ * ath12k_register_ppdu_notifier - Register PPDU event listener
+ * @nb: Notifier block with callback
+ * @event_mask: Bitmask of events (1 << ATH12K_EVENT_PPDU_RX_COMPLETE)
+ *              or (1 << ATH12K_EVENT_PPDU_TX_COMPLETE) or both
+ *
+ * Registers a listener for PPDU completion events. The callback
+ * will be invoked synchronously from atomic context.
+ *
+ * Return: 0 on success, negative on failure
+ */
+static int
+ath12k_register_ppdu_notifier(struct notifier_block *nb, unsigned long event_mask)
+{
+	int ret;
+
+	if (!nb)
+		return -EINVAL;
+
+	ath12k_dbg(NULL, ATH12K_DBG_TELEMETRY,
+		   "PPDU notifier register, mask=0x%lx\n",
+		   event_mask);
+
+	ret = atomic_notifier_chain_register(&ath12k_ppdu_notifier_chain, nb);
+
+	return ret;
+}
+
+/**
+ * ath12k_unregister_ppdu_notifier - Unregister PPDU event listener
+ * @nb: Notifier block to remove
+ * @event_mask: Same bitmask used during registration
+ *
+ * Return: 0 on success, negative on failure
+ */
+static int
+ath12k_unregister_ppdu_notifier(struct notifier_block *nb, unsigned long event_mask)
+{
+	int ret;
+
+	if (!nb)
+		return -EINVAL;
+
+	ath12k_dbg(NULL, ATH12K_DBG_TELEMETRY,
+		   "PPDU notifier unregister, mask=0x%lx\n",
+		   event_mask);
+	ret = atomic_notifier_chain_unregister(&ath12k_ppdu_notifier_chain, nb);
+
+	return ret;
+}
+
 static int sa_core_ppdu_notifier_register(u8 en_mask)
 {
 	unsigned long mask = 0;

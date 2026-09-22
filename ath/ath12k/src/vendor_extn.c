@@ -17461,6 +17461,10 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 		peer_entry->cnt_secured_no_peer_rsn        = peer_info->cnt_secured_no_peer_rsn;
 		peer_entry->cnt_open_peer_rsn         = peer_info->cnt_open_peer_rsn;
 		peer_entry->cnt_combo_open             = peer_info->cnt_combo_open;
+		peer_entry->peer_caps_mfp_capability   = (u8)peer_info->peer_caps_mfp_capability;
+		peer_entry->cnt_mfp_legacy_bypass      = peer_info->cnt_mfp_legacy_bypass;
+		peer_entry->cnt_mfp_beacon_no_mfpc     = peer_info->cnt_mfp_beacon_no_mfpc;
+		peer_entry->cnt_mfp_enabled            = peer_info->cnt_mfp_enabled;
 		peer_entry->key_installed             = (u8)peer_info->key_installed;
 		peer_entry->peer_ucast_cipher         = peer_info->peer_ucast_cipher;
 		peer_entry->peer_akm_suite            = peer_info->peer_akm_suite;

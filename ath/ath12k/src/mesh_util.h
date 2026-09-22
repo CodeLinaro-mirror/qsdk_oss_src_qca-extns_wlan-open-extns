@@ -70,6 +70,11 @@ struct ieee80211_mesh_peer_dump_entry {
 	u32  cnt_secured_no_peer_rsn;
 	u32  cnt_open_peer_rsn;
 	u32  cnt_combo_open;          /* both local and peer are open security */
+	/* MFP intersection counters */
+	u8   peer_caps_mfp_capability; /* MESH_CAPS_PEER_CAP_MFP_CAPABLE set at addlocalpeer time */
+	u32  cnt_mfp_legacy_bypass;   /* #7 */
+	u32  cnt_mfp_beacon_no_mfpc;  /* #8 */
+	u32  cnt_mfp_enabled;         /* #9 */
 	/* Key installation status */
 	u8   key_installed;          /* 1 if pairwise key has been installed */
 	u32  peer_ucast_cipher;      /* WLAN_CIPHER_SUITE_* of installed key; 0 = open */
@@ -77,7 +82,7 @@ struct ieee80211_mesh_peer_dump_entry {
 } __packed;
 
 /* ABI size guard: keep in sync with the userspace definition. */
-static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 96,
+static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 109,
 	      "ieee80211_mesh_peer_dump_entry size mismatch");
 
 #define MESH_BYTE_MASK 0xFF

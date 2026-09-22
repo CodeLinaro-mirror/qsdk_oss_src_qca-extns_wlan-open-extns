@@ -80,6 +80,8 @@ int ieee80211_skb_resize(struct ieee80211_sub_if_data *sdata,
 #define MESH_CAPS_SHORT_PREAMBLE 0x2000
 /* bit 14: when set, driver skips auto key-install — consumer manages key installation */
 #define MESH_CAPS_SKIP_KEY_INSTALL 0x4000
+/* bit 16: When set, indicates the peer is capable of MFP */
+#define MESH_CAPS_PEER_CAP_MFP_CAPABLE 0x10000
 
 /*
  * Per-peer key slot mapping for managed mesh.
@@ -249,6 +251,11 @@ struct mesh_bss_conf {
  *   (no RSN IE on either side — no cipher negotiation performed)
  * @peer_mfp_capable: Peer RSN caps MFP enabled bit
  * @peer_mfp_required: Peer RSN caps MFP required bit
+ * @peer_caps_mfp_capability: MESH_CAPS_PEER_CAP_MFP_CAPABLE set at addlocalpeer time;
+ *   read-only gate — never modified by beacon intersection
+ * @cnt_mfp_legacy_bypass: #7 — peer_caps_mfp_capability clear, MFP off regardless of beacon
+ * @cnt_mfp_beacon_no_mfpc: #8 — peer_caps_mfp_capability set but beacon MFPC absent
+ * @cnt_mfp_enabled: #9 — peer_caps_mfp_capability and beacon MFPC both set, MFP on
  * @peer_rsn_ie: Raw copy of peer RSN IE bytes
  * @peer_rsn_ie_len: Length of peer_rsn_ie (0 if open)
  * @peer_ht_restricted: TKIP pairwise cipher detected with HT-capable peer;
@@ -292,6 +299,12 @@ struct mesh_peer_info {
 	u32 cnt_combo_open;
 	bool peer_mfp_capable;
 	bool peer_mfp_required;
+	bool peer_caps_mfp_capability; /* MESH_CAPS_PEER_CAP_MFP_CAPABLE set at addlocalpeer time;
+	                               * read-only gate — never modified by beacon intersection */
+	/* MFP intersection counters */
+	u32 cnt_mfp_legacy_bypass;   /* #7: peer_caps_mfp_capability clear -> MFP off regardless of beacon */
+	u32 cnt_mfp_beacon_no_mfpc;  /* #8: peer_caps_mfp_capability set, beacon MFPC absent */
+	u32 cnt_mfp_enabled;         /* #9: peer_caps_mfp_capability + beacon MFPC both set -> MFP on */
 	u8 peer_rsn_ie[MESH_RSN_IE_MAX_LEN]; /* raw RSN IE: tag(1) + len(1) + body(up to 255) */
 	u16 peer_rsn_ie_len;  /* total stored length (0 if open) */
 	/* PHY mode cipher restrictions */

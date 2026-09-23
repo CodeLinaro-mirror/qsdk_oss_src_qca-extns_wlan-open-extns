@@ -4965,11 +4965,11 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp = !!value;
 		ret = 0;
 		break;
-	/* PHY_ERR_MASK carries a 64-bit value: lo in data, hi in flags.
-	 */
+	/* PHY_ERR_MASK carries four 32-bit mask words in the data payload. */
 	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_PHY_ERR_MASK: {
 		const struct ath12k_dp_arch_mon_ops *mon_ops;
 		struct ath12k_pdev_dp *dp_pdev;
+		const struct ath12k_undecoded_phy_err_mask_cfg *cfg = data;
 
 		if (!ath12k_scan_radio_supported(ar->pdev)) {
 			ath12k_dbg(NULL, ATH12K_DBG_CFG,
@@ -4982,7 +4982,8 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		mon_ops = ath12k_dp_mon_ops_get(dp_pdev->dp);
 		if (mon_ops && mon_ops->rx_undecoded_phy_err_mask_set)
 			ret = mon_ops->rx_undecoded_phy_err_mask_set(dp_pdev,
-								value, flags);
+								cfg->mask, cfg->mask_cont,
+								cfg->mask_cont2, cfg->mask_cont3);
 		else
 			ret = -EOPNOTSUPP;
 

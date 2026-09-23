@@ -89,7 +89,8 @@ void ath12k_wifi8_dp_mon_rx_undecoded_metadata_reset_filter(struct ath12k_pdev_d
 int  ath12k_wifi8_dp_mon_rx_undecoded_metadata_capture_set(struct ath12k_pdev_dp *dp_pdev,
 							   u32 value);
 int  ath12k_wifi8_dp_mon_rx_undecoded_phy_err_mask_set(struct ath12k_pdev_dp *dp_pdev,
-						       u32 mask, u32 mask_cont);
+						       u32 mask, u32 mask_cont,
+						       u32 mask_cont2, u32 mask_cont3);
 void ath12k_wifi8_dp_mon_rx_htt_phy_err_filter_cfg(void *ptr,
 						   struct htt_rx_ring_tlv_filter *tlv_filter);
 void ath12k_wifi8_dp_mon_rx_prepare_ppdu_info(struct ath12k_pdev_dp *pdev_dp,

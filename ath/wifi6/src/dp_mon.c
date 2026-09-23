@@ -85,7 +85,8 @@ ath12k_wifi6_dp_mon_rx_undecoded_metadata_capture_set(struct ath12k_pdev_dp *dp_
 
 static int
 ath12k_wifi6_dp_mon_rx_undecoded_phy_err_mask_set(struct ath12k_pdev_dp *dp_pdev,
-						  u32 mask, u32 mask_cont)
+						  u32 mask, u32 mask_cont,
+						  u32 mask_cont2, u32 mask_cont3)
 {
 	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
 	const struct ath12k_dp_arch_mon_ops *mon_ops;

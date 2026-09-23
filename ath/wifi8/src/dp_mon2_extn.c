@@ -213,6 +213,8 @@ ath12k_wifi8_dp_mon_rx_undecoded_metadata_config_filter(struct ath12k_pdev_dp *d
 	rx_tlv_filter->fp_phy_err_buf_dest = ATH12K_WIFI8_FP_PHY_ERR_BUF_DEST_RXDMA2SW;
 	rx_tlv_filter->phy_err_mask = mon_dp_extn->undecoded_meta->phyrx_error_mask;
 	rx_tlv_filter->phy_err_mask_cont = mon_dp_extn->undecoded_meta->phyrx_error_mask_cont;
+	rx_tlv_filter->phy_err_mask_cont2 = mon_dp_extn->undecoded_meta->phyrx_error_mask_cont2;
+	rx_tlv_filter->phy_err_mask_cont3 = mon_dp_extn->undecoded_meta->phyrx_error_mask_cont3;
 	rx_tlv_filter->phy_err_filter_valid = true;
 
 	ath12k_dp_mon_rx_display_filters(dp, mode, &rx_filter);
@@ -239,11 +241,15 @@ ath12k_wifi8_dp_mon_rx_undecoded_metadata_reset_filter(struct ath12k_pdev_dp *dp
 	rx_tlv_filter->fp_phy_err_buf_dest = ATH12K_WIFI8_FP_PHY_ERR_BUF_DEST_RELEASING;
 	rx_tlv_filter->phy_err_mask = 0;
 	rx_tlv_filter->phy_err_mask_cont = 0;
+	rx_tlv_filter->phy_err_mask_cont2 = 0;
+	rx_tlv_filter->phy_err_mask_cont3 = 0;
 	rx_tlv_filter->phy_err_filter_valid = true;
 
 	if (mon_dp_extn->undecoded_meta) {
 		mon_dp_extn->undecoded_meta->phyrx_error_mask = 0;
 		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont = 0;
+		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont2 = 0;
+		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont3 = 0;
 	}
 
 	ath12k_dp_mon_rx_display_filters(dp, mode, &rx_filter);
@@ -285,7 +291,8 @@ EXPORT_SYMBOL(ath12k_wifi8_dp_mon_rx_undecoded_metadata_capture_set);
 
 int
 ath12k_wifi8_dp_mon_rx_undecoded_phy_err_mask_set(struct ath12k_pdev_dp *dp_pdev,
-						  u32 mask, u32 mask_cont)
+						  u32 mask, u32 mask_cont,
+						  u32 mask_cont2, u32 mask_cont3)
 {
 	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
 	const struct ath12k_dp_arch_mon_ops *mon_ops;
@@ -302,6 +309,8 @@ ath12k_wifi8_dp_mon_rx_undecoded_phy_err_mask_set(struct ath12k_pdev_dp *dp_pdev
 
 	mon_dp_extn->undecoded_meta->phyrx_error_mask = mask;
 	mon_dp_extn->undecoded_meta->phyrx_error_mask_cont = mask_cont;
+	mon_dp_extn->undecoded_meta->phyrx_error_mask_cont2 = mask_cont2;
+	mon_dp_extn->undecoded_meta->phyrx_error_mask_cont3 = mask_cont3;
 
 	if (!mon_dp_extn->undecoded_meta->undecoded_metadata_capture)
 		return 0;
@@ -336,6 +345,12 @@ ath12k_wifi8_dp_mon_rx_htt_phy_err_filter_cfg(void *ptr,
 					     HTT_RX_RING_SELECTION_CFG_CMD_PHY_ERR_MASK);
 	cmd->phy_err_mask_cont = le32_encode_bits(tlv_filter->phy_err_mask_cont,
 						  HTT_RX_RING_SELECTION_CFG_CMD_PHY_ERR_MASK_CONT);
+	cmd->phy_err_mask_cont2 =
+		le32_encode_bits(tlv_filter->phy_err_mask_cont2,
+				 HTT_RX_RING_SELECTION_CFG_CMD_PHY_ERR_MASK_CONT2);
+	cmd->phy_err_mask_cont3 =
+		le32_encode_bits(tlv_filter->phy_err_mask_cont3,
+				 HTT_RX_RING_SELECTION_CFG_CMD_PHY_ERR_MASK_CONT3);
 }
 EXPORT_SYMBOL(ath12k_wifi8_dp_mon_rx_htt_phy_err_filter_cfg);
 
@@ -358,12 +373,33 @@ ath12k_wifi8_dp_mon_rx_prepare_ppdu_info(struct ath12k_pdev_dp *pdev_dp,
 EXPORT_SYMBOL(ath12k_wifi8_dp_mon_rx_prepare_ppdu_info);
 
 static inline bool
-ath12k_wifi8_dp_rx_is_valid_undecoded_frame(u64 err_mask, u8 err_code)
+ath12k_wifi8_dp_rx_is_valid_undecoded_frame(
+	const struct ath12k_undecoded_metadata *undecoded_meta,
+	u8 err_code)
 {
-	if (err_code < ATH12K_WIFI6_PHYRX_ERR_MAX &&
-	    (err_mask & (1ULL << err_code)))
-		return true;
-	return false;
+	u32 mask;
+
+	if (err_code >= ATH12K_PHYRX_ERR_MAX)
+		return false;
+
+	switch (err_code / ATH12K_PHYRX_ERR_MASK_WORD_BITS) {
+	case ATH12K_PHYRX_ERR_MASK_WORD_0:
+		mask = undecoded_meta->phyrx_error_mask;
+		break;
+	case ATH12K_PHYRX_ERR_MASK_WORD_1:
+		mask = undecoded_meta->phyrx_error_mask_cont;
+		break;
+	case ATH12K_PHYRX_ERR_MASK_WORD_2:
+		mask = undecoded_meta->phyrx_error_mask_cont2;
+		break;
+	case ATH12K_PHYRX_ERR_MASK_WORD_3:
+		mask = undecoded_meta->phyrx_error_mask_cont3;
+		break;
+	default:
+		return false;
+	}
+
+	return mask & BIT(err_code % ATH12K_PHYRX_ERR_MASK_WORD_BITS);
 }
 
 bool
@@ -393,7 +429,6 @@ ath12k_wifi8_dp_rx_ppdu_undecoded_metadata(struct ath12k_pdev_dp *pdev_dp,
 {
 	struct ath12k_pdev_mon_dp *dp_mon_pdev = pdev_dp->dp_mon_pdev;
 	struct ath12k_pdev_mon_dp_extn *mon_dp_extn;
-	u64 mask64;
 	u8 abort_reason;
 
 	if (!dp_mon_pdev)
@@ -401,18 +436,23 @@ ath12k_wifi8_dp_rx_ppdu_undecoded_metadata(struct ath12k_pdev_dp *pdev_dp,
 
 	mon_dp_extn = &dp_mon_pdev->pdev_mon_dp_extn;
 
-	mask64 = ((u64)mon_dp_extn->undecoded_meta->phyrx_error_mask_cont <<
-		  ATH12K_WIFI6_PHYRX_ERR_MASK_CONT_SHIFT) |
-		 mon_dp_extn->undecoded_meta->phyrx_error_mask;
 	abort_reason = ppdu_info->ppdu_info_extn.phyrx_abort_info->phyrx_abort_reason;
 
 	/* wifi8: FW does not gate reasons (phy_err_mask inert) - filter here. */
-	if (!ath12k_wifi8_dp_rx_is_valid_undecoded_frame(mask64, abort_reason))
+	if (!ath12k_wifi8_dp_rx_is_valid_undecoded_frame(
+		    mon_dp_extn->undecoded_meta, abort_reason))
 		return;
 
 	mon_dp_extn->undecoded_meta->rx_undecoded_count++;
-	if (abort_reason < ATH12K_WIFI6_PHYRX_ERR_MAX)
+	if (abort_reason < ATH12K_PHYRX_ERR_MAX) {
 		mon_dp_extn->undecoded_meta->rx_undecoded_error[abort_reason]++;
+		if (ath12k_debug_mask_level >= ATH12K_DBG_L3)
+			ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+				   "undecoded: phyrx_abort_reason=%u count=%u total=%u\n",
+				   abort_reason,
+				   mon_dp_extn->undecoded_meta->rx_undecoded_error[abort_reason],
+				   mon_dp_extn->undecoded_meta->rx_undecoded_count);
+	}
 
 	/* TODO: Report undecoded frame metadata to userspace via cfg80211 vendor
 	 * event or Linux notifier chain. This should include:

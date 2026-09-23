@@ -14510,6 +14510,55 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	if (ahsta)
 		rcu_read_unlock();
 
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_NON_BEACON_BSS]) {
+		struct ath12k_link_vif *arvif_nb;
+		const u8 *netdev_addr;
+		bool found = false;
+		bool val;
+
+		ahvif = ath12k_vif_to_ahvif(vif);
+		if (!ahvif)
+			return -EINVAL;
+
+		if (vif->type != NL80211_IFTYPE_AP)
+			return -EINVAL;
+
+		if (!wdev->netdev)
+			return -EINVAL;
+
+		netdev_addr = wdev->netdev->dev_addr;
+
+		val = !!nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_NON_BEACON_BSS]);
+		/* Find the exact arvif for the interface that received this
+		 * vendor cmd by matching the link whose address matches
+		 * wdev->netdev. For non-MLO this is always deflink (link 0).
+		 * For MLO this correctly identifies mesh0's own link without
+		 * polluting the co-located beaconing link.
+		 */
+		for (link_id = 0; link_id < IEEE80211_MLD_MAX_NUM_LINKS; link_id++) {
+			struct ieee80211_bss_conf *lconf;
+
+			arvif_nb = wiphy_dereference(wiphy, ahvif->link[link_id]);
+			if (!arvif_nb)
+				continue;
+			rcu_read_lock();
+			lconf = rcu_dereference(vif->link_conf[link_id]);
+			if (lconf && ether_addr_equal(lconf->addr, netdev_addr)) {
+				rcu_read_unlock();
+				arvif_nb->arvif_extn.non_beacon_bss = val;
+				found = true;
+				break;
+			}
+			rcu_read_unlock();
+		}
+		if (!found) {
+			/* Fallback to deflink if no address match */
+			arvif_nb = &ahvif->deflink;
+			arvif_nb->arvif_extn.non_beacon_bss = val;
+		}
+		wdev->non_beacon_bss = val;
+	}
+
 	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]) {
 		allow_3addr_mc = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]);
 

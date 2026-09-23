@@ -604,6 +604,11 @@ void ieee80211_free_mesh_vap_caps(struct ieee80211_bss_conf *link_conf)
 	link_conf->bss_conf_extn = NULL;
 }
 
+enum ieee80211_encrypt {
+        ENCRYPT_NO,
+        ENCRYPT_MGMT,
+        ENCRYPT_DATA,
+};
 /**
  * ieee80211_mesh_ap_setup: Mesh AP setup
  * 	Called in ieee80211_start_ap() when bringing up mesh interface
@@ -3011,4 +3016,407 @@ const struct ieee80211_vendor_mesh_ops *ieee80211_get_vendor_mesh_ops(void)
        return &vendor_mesh_ops;
 }
 EXPORT_SYMBOL(ieee80211_get_vendor_mesh_ops);
+
+/**
+ * ieee80211_rawmesh_encap_eth_to_dot11 - encap an Ethernet II frame
+ *	into an 802.11 MPDU, in place
+ * @sdata: sub interface the frame is being sent on
+ * @skb: skb holding a plain Ethernet-II frame (dst(6) + src(6) +
+ *	ethertype/len(2) + payload)
+ * @sta_out: on success, set to the resolved destination STA (or NULL
+ *	for a multicast/broadcast RA, or when no STA is known for a
+ *	unicast RA)
+ * @key_out: on success, set to the resolved TX key (or NULL for an
+ *	unencrypted BSS)
+ *
+ * Used for VAPs configured with %IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH.
+ * mac80211's normal Ethernet->802.11 conversion (ieee80211_build_hdr())
+ * and TX handler processing are entirely bypassed for these VAPs (see
+ * ieee80211_rawmesh_tx()), so this function does the minimal
+ * equivalent of it directly: it resolves the destination STA and TX
+ * key the same way ieee80211_tx_h_select_key() does, strips the
+ * Ethernet header, inserts an RFC1042/bridge-tunnel LLC/SNAP header
+ * carrying the original ethertype, and prepends a 3-address 802.11
+ * header (QoS-Data for unicast, legacy Data for multicast) addressed
+ * according to the VAP's own operating mode (AP/AP_VLAN or managed
+ * station). The Protected bit is set, and IV/PN space reserved ahead
+ * of the LLC/SNAP header, only when a key that actually needs it was
+ * resolved -- matching ieee80211_check_fast_xmit()'s handling of
+ * IEEE80211_KEY_FLAG_GENERATE_IV / IEEE80211_KEY_FLAG_PUT_IV_SPACE.
+ *
+ * This is the mac80211-native equivalent of the proprietary rawsim
+ * module's encap_eth_to_dot11(): unlike that function, it does not
+ * perform A-MSDU aggregation or 4-address mesh addressing -- those
+ * are out of scope here and remain the responsibility of a lower
+ * layer/driver if ever needed.
+ *
+ * Return: the (possibly reallocated) skb on success. On failure the
+ *	skb is freed and NULL is returned.
+ */
+struct sk_buff *
+ieee80211_rawmesh_encap_eth_to_dot11(struct ieee80211_sub_if_data *sdata,
+				     struct sk_buff *skb)
+{
+	struct ieee80211_local *local = sdata->local;
+	struct ieee80211_hdr hdr;
+	struct sta_info *sta;
+	struct ieee80211_key *key;
+	__le16 fc;
+	u16 ethertype, hdrlen;
+	const u8 *encaps_data;
+	int encaps_len, skip_header_bytes;
+	int head_need;
+	unsigned int iv_len = 0;
+	bool gen_iv = false;
+
+	if (unlikely(skb->len < ETH_HLEN)) {
+		sdata_err(sdata,
+			  "ieee80211_rawmesh_encap_eth_to_dot11: skb too short (%u)\n",
+			  skb->len);
+		kfree_skb(skb);
+		return NULL;
+	}
+
+	if (ieee80211_lookup_ra_sta(sdata, skb, &sta)) {
+		kfree_skb(skb);
+		return NULL;
+	}
+	if (IS_ERR(sta))
+		sta = NULL;
+
+	ethertype = (skb->data[12] << 8) | skb->data[13];
+
+	fc = cpu_to_le16(IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA);
+	memset(&hdr, 0, sizeof(hdr));
+
+	switch (sdata->vif.type) {
+	case NL80211_IFTYPE_STATION:
+		fc |= cpu_to_le16(IEEE80211_FCTL_TODS);
+		/* BSSID SA DA */
+		memcpy(hdr.addr1, sdata->vif.cfg.ap_addr, ETH_ALEN);
+		memcpy(hdr.addr2, skb->data + ETH_ALEN, ETH_ALEN);
+		memcpy(hdr.addr3, skb->data, ETH_ALEN);
+		break;
+	case NL80211_IFTYPE_AP:
+	case NL80211_IFTYPE_AP_VLAN:
+	case NL80211_IFTYPE_MESH_POINT:
+		/* DA BSSID SA
+		 *
+		 * NOTE: sdata->vif.addr is the MLD-level address, which for
+		 * this driver differs from the actual over-the-air/netdev
+		 * address once the link is grouped into an MLD (e.g. vif.addr
+		 * 00:03:7f:04:38:11 vs. the real link address
+		 * 02:03:7f:04:38:11 reported by ifconfig/iw -- confirmed vif
+		 * hex dump analysis: TX frames carried addr2=00:.. while the
+		 * peer only knows/authorizes 02:..). Peers only know and
+		 * authorize the real link address, so addr2 (the
+		 * transmitter/BSSID address that the peer's RX path matches
+		 * against via sta_info_get_bss()) MUST be the per-link
+		 * address (sdata->deflink.conf->addr), not the MLD address,
+		 * or every frame we send will have an unrecognized TA and be
+		 * silently dropped by the peer. Fall back to vif.addr if the
+		 * link conf isn't available yet (shouldn't happen once the
+		 * netdev is up and passing traffic).
+		 */
+		memcpy(hdr.addr1, skb->data, ETH_ALEN);
+		memcpy(hdr.addr2, skb->data + ETH_ALEN, ETH_ALEN);
+		if (sdata->deflink.conf)
+			memcpy(hdr.addr3, sdata->deflink.conf->addr, ETH_ALEN);
+		else
+			memcpy(hdr.addr3, sdata->vif.addr, ETH_ALEN);
+		break;
+	default:
+		sdata_err(sdata,
+			  "ieee80211_rawmesh_encap_eth_to_dot11: unsupported vif type %d\n",
+			  sdata->vif.type);
+		kfree_skb(skb);
+		return NULL;
+	}
+
+	/* Resolve the TX key with the same precedence
+	 * ieee80211_tx_h_select_key() uses: per-STA PTK, then GTK for a
+	 * multicast RA, then the default_unicast_key fallback.
+	 *
+	 * For the multicast/GTK case, mirror ieee80211_select_link_key():
+	 * on an MLD vif the default_multicast_key promoted by
+	 * ieee80211_config_default_key() lives on sdata->link[link_id], not
+	 * on &sdata->deflink -- deflink and link[0] are distinct structs
+	 * once the vif has real (even single) MLO links assigned. This
+	 * path has no per-skb MLO link selection (no IEEE80211_TX_CTRL_MLO_LINK
+	 * in control.flags), so derive link_id from vif.active_links
+	 * (falling back to valid_links), same as
+	 * ieee80211_mlo_multicast_tx()'s single-active-link case. On a
+	 * plain non-MLO vif valid_links is 0 and this stays on deflink.
+	 */
+	if (sta && (key = rcu_dereference(sta->ptk[sta->ptk_idx])))
+		;
+	else if (is_multicast_ether_addr(hdr.addr1)) {
+		struct ieee80211_link_data *link = &sdata->deflink;
+		u16 mlo_links = sdata->vif.active_links ?
+				sdata->vif.active_links : sdata->vif.valid_links;
+
+		if (mlo_links) {
+			struct ieee80211_link_data *mlo_link =
+				rcu_dereference(sdata->link[__ffs(mlo_links)]);
+
+			if (mlo_link)
+				link = mlo_link;
+		}
+
+		key = rcu_dereference(link->default_multicast_key);
+	} else
+		key = rcu_dereference(sdata->default_unicast_key);
+
+	if (key) {
+		bool put_iv_spc;
+
+		gen_iv = key->conf.flags & IEEE80211_KEY_FLAG_GENERATE_IV;
+		put_iv_spc = key->conf.flags & IEEE80211_KEY_FLAG_PUT_IV_SPACE;
+
+		if (key->flags & KEY_FLAG_UPLOADED_TO_HARDWARE &&
+		    !(key->flags & KEY_FLAG_TAINTED)) {
+			switch (key->conf.cipher) {
+			case WLAN_CIPHER_SUITE_CCMP:
+			case WLAN_CIPHER_SUITE_CCMP_256:
+				if (gen_iv || put_iv_spc)
+					iv_len = IEEE80211_CCMP_HDR_LEN;
+				break;
+			case WLAN_CIPHER_SUITE_GCMP:
+			case WLAN_CIPHER_SUITE_GCMP_256:
+				if (gen_iv || put_iv_spc)
+					iv_len = IEEE80211_GCMP_HDR_LEN;
+				break;
+			case WLAN_CIPHER_SUITE_TKIP:
+				gen_iv = false;
+				if (put_iv_spc)
+					iv_len = IEEE80211_TKIP_IV_LEN;
+				break;
+			case WLAN_CIPHER_SUITE_WEP40:
+			case WLAN_CIPHER_SUITE_WEP104:
+				gen_iv = false;
+				if (put_iv_spc)
+					iv_len = IEEE80211_WEP_IV_LEN;
+				break;
+			default:
+				gen_iv = false;
+				break;
+			}
+			fc |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
+		} else {
+			key = NULL;
+			gen_iv = false;
+		}
+	}
+
+	/* Always send QoS frames (QoS Control field present) for unicast.
+	 * IV/PN space ahead of the LLC/SNAP header is reserved only when
+	 * the resolved key's driver actually needs it (mirrors
+	 * ieee80211_check_fast_xmit()) -- HW crypto in the common
+	 * (non-RAW) ath12k mode writes PN/MIC transparently and needs no
+	 * extra space at all.
+	 */
+
+	if (is_broadcast_ether_addr(hdr.addr1)) {
+		hdrlen = 24;
+	} else {
+		fc |= cpu_to_le16(IEEE80211_STYPE_QOS_DATA);
+		hdrlen = 24 + 2;
+	}
+	hdr.frame_control = fc;
+	hdr.duration_id = 0;
+	hdr.seq_ctrl = 0;
+
+	/*
+	 * If the skb is shared (e.g. cloned for a TX-status callback or an
+	 * AF_PACKET tap) we must not mutate it in place below via
+	 * skb_pull()/skb_push() -- obtain our own copy first, matching
+	 * ieee80211_build_hdr() and __ieee80211_xmit_fast().
+	 */
+	skb = skb_share_check(skb, GFP_ATOMIC);
+	if (unlikely(!skb))
+		return NULL;
+
+	skip_header_bytes = ETH_HLEN;
+	if (ethertype == ETH_P_AARP || ethertype == ETH_P_IPX) {
+		encaps_data = bridge_tunnel_header;
+		encaps_len = sizeof(bridge_tunnel_header);
+		skip_header_bytes -= 2;
+	} else if (ethertype >= ETH_P_802_3_MIN) {
+		encaps_data = rfc1042_header;
+		encaps_len = sizeof(rfc1042_header);
+		skip_header_bytes -= 2;
+	} else {
+		encaps_data = NULL;
+		encaps_len = 0;
+	}
+
+	skb_pull(skb, skip_header_bytes);
+
+	head_need = hdrlen + iv_len + encaps_len - skb_headroom(skb);
+	head_need += IEEE80211_ENCRYPT_HEADROOM;
+	head_need += local->tx_headroom;
+	head_need = max_t(int, 0, head_need);
+
+	if (ieee80211_skb_resize(sdata, skb, head_need, ENCRYPT_DATA)) {
+		sdata_err(sdata,
+			  "ieee80211_rawmesh_encap_eth_to_dot11: skb resize failed\n");
+		kfree_skb(skb);
+		return NULL;
+	}
+
+	if (encaps_data)
+		memcpy(skb_push(skb, encaps_len), encaps_data, encaps_len);
+
+	if (iv_len) {
+		u8 *crypto_hdr = skb_push(skb, iv_len);
+
+		memset(crypto_hdr, 0, iv_len);
+		if (gen_iv) {
+			u64 pn = atomic64_inc_return(&key->conf.tx_pn);
+
+			crypto_hdr[0] = pn;
+			crypto_hdr[1] = pn >> 8;
+			crypto_hdr[3] = 0x20 | (key->conf.keyidx << 6);
+			crypto_hdr[4] = pn >> 16;
+			crypto_hdr[5] = pn >> 24;
+			crypto_hdr[6] = pn >> 32;
+			crypto_hdr[7] = pn >> 40;
+		}
+	}
+
+	/*
+	 * Maybe we could actually set some fields here, for now just
+	 * initialise to zero to indicate no special operation.
+	 */
+	*(__le16 *)skb_push(skb, 2) = 0;
+	memcpy(skb_push(skb, hdrlen - 2), &hdr, hdrlen - 2);
+
+	skb_reset_mac_header(skb);
+
+	return skb;
+}
+
+/**
+ * ieee80211_rawmesh_tx - transmit a pre-built 802.11 frame directly
+ * @sdata: sub interface the frame is being sent on
+ * @skb: skb containing a fully-formed 802.11 frame (header + payload)
+ * @sta: destination STA resolved by
+ *	ieee80211_rawmesh_encap_eth_to_dot11(), or NULL for a
+ *	multicast/broadcast RA or an unknown unicast RA
+ * @key: TX key resolved by ieee80211_rawmesh_encap_eth_to_dot11(), or
+ *	NULL for an unencrypted BSS
+ *
+ * Used for VAPs configured with %IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH.
+ * By the time this is called, @skb has already been converted from
+ * Ethernet-II to a full 802.11 frame by
+ * ieee80211_rawmesh_encap_eth_to_dot11(), so no further TX handler
+ * processing (crypto, rate control, queue-stop/pending bookkeeping, etc.)
+ * is required here. This mirrors the hardware-encap "fast_xmit" fast path
+ * in __ieee80211_subif_start_xmit_8023() -- build a minimal
+ * ieee80211_tx_info/ieee80211_tx_control and hand the skb straight to
+ * drv_tx(), since the frame is already fully formed and the driver
+ * resolves addressing directly from the 802.11 header.
+ */
+static void ieee80211_rawmesh_tx(struct ieee80211_sub_if_data *sdata,
+                                   struct sk_buff *skb,
+                                   struct sta_info *sta,
+                                   struct ieee80211_key *key)
+{
+	struct ieee80211_local *local = sdata->local;
+	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct ieee80211_tx_control control = {};
+	struct ieee80211_hdr *hdr;
+
+	memset(info, 0, sizeof(*info));
+	prefetch(local->hw.priv);
+	info->control.vif = &sdata->vif;
+	info->control.flags = u32_encode_bits(IEEE80211_LINK_UNSPECIFIED,
+					      IEEE80211_TX_CTRL_MLO_LINK);
+	info->hw_queue = sdata->vif.hw_queue[skb_get_queue_mapping(skb)];
+	if (key && key->flags & KEY_FLAG_UPLOADED_TO_HARDWARE)
+		info->control.hw_key = &key->conf;
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	pr_debug("rawmesh_tx: sdata=%s vif_type=%d fc=0x%04x a1=%pM a2=%pM a3=%pM len=%u hw_queue=%d q_map=%d\n",
+		  sdata->name, sdata->vif.type, le16_to_cpu(hdr->frame_control),
+		  hdr->addr1, hdr->addr2, hdr->addr3, skb->len, info->hw_queue,
+		  skb_get_queue_mapping(skb));
+
+	control.sta = sta ? &sta->sta : NULL;
+	drv_tx(local, &control, skb);
+}
+
+/**
+ * ieee80211_subif_start_xmit_raw_mesh - Send raw 80211 frame to ath12k driver
+ * @sdata: sub interface the frame is being sent on
+ * @skb: SKB buffer
+ *
+ * Used for sending the raw 80211 frame to ath12k driver in case of
+ * RAW_MODE_MESH
+ *
+ * Return: NETDEV_TX_OK in case of success.
+ */
+int ieee80211_subif_start_xmit_raw_mesh(struct ieee80211_sub_if_data *sdata,
+					struct sk_buff *skb)
+{
+	u16 mlo_links;
+	struct sta_info *sta;
+	struct ieee80211_key *key;
+	struct ieee80211_hdr *hdr;
+	struct ieee80211_link_data *link;
+	struct ieee80211_link_data *mlo_link;
+	u8 *da;
+
+	if (unlikely(!ieee80211_sdata_running(sdata))) {
+		kfree_skb(skb);
+		return NETDEV_TX_OK;
+	}
+
+	rcu_read_lock();
+
+	if (mmeshsim)
+		skb = ieee80211_rawmesh_encap_eth_to_dot11(sdata, skb);
+	else
+		skb_pull(skb, sdata->vif.mhdr_len);
+
+	if (!skb) {
+		rcu_read_unlock();
+		return NETDEV_TX_OK;
+	}
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	da = ieee80211_get_DA(hdr);
+
+	if (is_multicast_ether_addr(da))
+		sta = ERR_PTR(-ENOENT);
+	else
+		sta = sta_info_get_bss(sdata, da);
+
+	if (IS_ERR(sta))
+		sta = NULL;
+
+	if (sta) {
+		key = rcu_dereference(sta->ptk[sta->ptk_idx]);
+	} else if (is_multicast_ether_addr(da)) {
+		link = &sdata->deflink;
+		mlo_links = sdata->vif.active_links ? sdata->vif.active_links :
+				sdata->vif.valid_links;
+
+		if (mlo_links) {
+			mlo_link = rcu_dereference(sdata->link[__ffs(mlo_links)]);
+			if (mlo_link)
+				link = mlo_link;
+		}
+
+		key = rcu_dereference(link->default_multicast_key);
+	} else {
+		key = rcu_dereference(sdata->default_unicast_key);
+	}
+
+	ieee80211_rawmesh_tx(sdata, skb, sta, key);
+	rcu_read_unlock();
+
+	return NETDEV_TX_OK;
+}
+EXPORT_SYMBOL(ieee80211_subif_start_xmit_raw_mesh);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

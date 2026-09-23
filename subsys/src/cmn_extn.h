@@ -62,6 +62,12 @@ enum ieee80211_diagnostic_sta_disconnect_reason {
 	IEEE80211_DIAGNOSTIC_STA_DISCONNECT_USERSPACE_CHANGE,
 };
 
+enum ieee80211_encrypt;
+int ieee80211_skb_resize(struct ieee80211_sub_if_data *sdata,
+                         struct sk_buff *skb,
+                         int head_need,
+                         enum ieee80211_encrypt encrypt);
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define MMESH_MON_RAW_TX_MAGIC 0x74
 #define MESH_CAPS_VER1 0x8000
@@ -951,6 +957,12 @@ ieee80211_set_ext_tx_mon_evt_typ(struct ieee80211_vif *vif,
 				 enum ieee80211_ext_mon_event_type_extn type)
 {
 }
+static inline int
+ieee80211_subif_start_xmit_raw_mesh(struct ieee80211_sub_if_data *sdata,
+				    struct sk_buff *skb)
+{
+	return 0;
+}
 #else
 int ieee80211_register_ext_mon_rx_notifier_extn(struct notifier_block *nb);
 int ieee80211_unregister_ext_mon_rx_notifier_extn(struct notifier_block *nb);
@@ -971,6 +983,7 @@ ieee80211_ext_mon_tx_notifier_call_extn_nc(enum ieee80211_ext_mon_event_type_ext
 void ieee80211_set_ext_tx_monitor(struct ieee80211_vif *vif, bool enable);
 void ieee80211_set_ext_tx_mon_evt_typ(struct ieee80211_vif *vif,
 				      enum ieee80211_ext_mon_event_type_extn type);
+int ieee80211_subif_start_xmit_raw_mesh(struct ieee80211_sub_if_data *sdata,
+					struct sk_buff *skb);
 #endif /* CPTCFG_QCN_EXTN */
-
 #endif /* CMN_EXTN_H */

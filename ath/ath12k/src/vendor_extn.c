@@ -14623,6 +14623,35 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	return 0;
 }
 
+int ath12k_vendor_set_wiphy_config_extn(struct wiphy *wiphy, struct nlattr **tb,
+					struct wireless_dev *wdev)
+{
+	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_BOOTUP_CAC_FEATURE]) {
+		u8 enable = nla_get_u8(
+			tb[QCA_WLAN_VENDOR_ATTR_CONFIG_BOOTUP_CAC_FEATURE]);
+		u8 radio_idx = 0;
+
+		if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX])
+			radio_idx = nla_get_u8(
+				tb[QCA_WLAN_VENDOR_ATTR_CONFIG_RADIO_INDEX]);
+
+		if (!wiphy->radio_cfg || radio_idx >= wiphy->n_radio) {
+			ath12k_err(NULL,
+				   "%s: invalid radio_idx=%u for bootup_cac_feature\n",
+				   __func__, radio_idx);
+			return -EINVAL;
+		}
+
+		lockdep_assert_wiphy(wiphy);
+		wiphy->radio_cfg[radio_idx].bootup_cac_feature = !!enable;
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "%s: bootup_cac_feature: set radio_idx=%u enable=%u n_radio=%u\n",
+			   __func__, radio_idx, enable, wiphy->n_radio);
+	}
+
+	return 0;
+}
+
 int ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy,
 					       struct nlattr **tb,
 					       u64 *value)

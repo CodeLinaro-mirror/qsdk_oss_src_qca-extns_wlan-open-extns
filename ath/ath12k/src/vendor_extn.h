@@ -304,6 +304,13 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
     return -1;
 }
 
+static inline
+int ath12k_vendor_set_wiphy_config_extn(struct wiphy *wiphy, struct nlattr **tb,
+					struct wireless_dev *wdev)
+{
+	return 0;
+}
+
 static inline int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 						  struct wireless_dev *wdev,
 						  u8 hw_link_id,
@@ -711,6 +718,8 @@ int ath12k_vendor_get_wiphy_sr_params_extn(struct wiphy *wiphy,
 
 int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				       struct wireless_dev *wdev);
+int ath12k_vendor_set_wiphy_config_extn(struct wiphy *wiphy, struct nlattr **tb,
+					struct wireless_dev *wdev);
 
 int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 				    struct wireless_dev *wdev,

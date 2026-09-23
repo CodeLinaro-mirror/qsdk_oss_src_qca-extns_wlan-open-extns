@@ -10,7 +10,8 @@
 
 #ifndef CPTCFG_QCN_EXTN
 
-static inline bool cfg80211_support_bootup_cac(struct wiphy *wiphy)
+static inline bool cfg80211_support_bootup_cac(struct wiphy *wiphy,
+						int radio_idx)
 {
 	return false;
 }
@@ -35,13 +36,13 @@ bool cfg80211_is_driver_mac80211_hwsim(struct wiphy *wiphy);
 
 /**
  * cfg80211_support_bootup_cac - check if boot-up CAC is supported
+ * @wiphy: the wiphy to check
+ * @radio_idx: physical radio index (must be >= 0)
  *
- * Returns true when the driver supports creating all 5G BSS interfaces
- * during DFS CAC (boot-up CAC feature).  When true, callers may skip
- * cfg80211_reg_can_beacon_relax() rejection for 5G DFS channels so that
- * all BSSes can be started before CAC completes.
+ * Returns true when bootup CAC feature support creating all 5G BSS interfaces
+ * during DFS CAC (boot-up CAC feature) for the given radio is enabled.
  */
-bool cfg80211_support_bootup_cac(struct wiphy *wiphy);
+bool cfg80211_support_bootup_cac(struct wiphy *wiphy, int radio_idx);
 
 /**
  * cfg80211_bootup_cac_is_5g_dfs_chan_extn - check if boot-up CAC applies to

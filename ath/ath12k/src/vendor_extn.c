@@ -2953,17 +2953,46 @@ static int ath12k_set_vdev_bcast_rate(struct ath12k_link_vif *arvif, u32 bitrate
 }
 #endif
 
+static bool ath12k_chainmask_width_supported(u32 supported_caps,
+					     enum nl80211_chan_width width)
+{
+	switch (width) {
+	case NL80211_CHAN_WIDTH_20:
+	case NL80211_CHAN_WIDTH_20_NOHT:
+		return !!(supported_caps & WMI_SUPPORT_CHAN_WIDTH_20);
+	case NL80211_CHAN_WIDTH_40:
+		return !!(supported_caps & WMI_SUPPORT_CHAN_WIDTH_40);
+	case NL80211_CHAN_WIDTH_80:
+		return !!(supported_caps & WMI_SUPPORT_CHAN_WIDTH_80);
+	case NL80211_CHAN_WIDTH_80P80:
+		return !!(supported_caps & WMI_SUPPORT_CHAN_WIDTH_80P80);
+	case NL80211_CHAN_WIDTH_160:
+		return !!(supported_caps & WMI_SUPPORT_CHAN_WIDTH_160);
+	case NL80211_CHAN_WIDTH_320:
+		return !!(supported_caps & WMI_SUPPORT_CHAN_WIDTH_320);
+	default:
+		return true;
+	}
+}
+
 /**
  * ath12k_chainmask_validate - Validate chainmask against capabilities
  * @ar: pointer to ath12k structure
  * @mask: chainmask value to validate
  * @is_tx: true for TX chainmask, false for RX chainmask
+ * @chandef: current channel definition, if available
  *
  * Returns: 0 on success, negative error code on failure
  */
-static int ath12k_chainmask_validate(struct ath12k *ar, u32 mask, bool is_tx)
+static int ath12k_chainmask_validate(struct ath12k *ar, u32 mask, bool is_tx,
+					const struct cfg80211_chan_def *chandef)
 {
 	u32 max_mask;
+	const struct ath12k_chainmask_caps *cap = NULL;
+	struct ieee80211_chanctx_conf *chanctx;
+	u32 band_cap;
+	u32 direction_cap;
+	u32 index;
 
     	if (!ar || !ar->pdev) {
         	ath12k_err(NULL, "Invalid ar or pdev pointer\n");
@@ -2973,14 +3002,51 @@ static int ath12k_chainmask_validate(struct ath12k *ar, u32 mask, bool is_tx)
 	max_mask = is_tx ? ar->pdev->cap.tx_chain_mask :
 			       ar->pdev->cap.rx_chain_mask;
 
-	if (!max_mask) {
-		ath12k_err(ar->ab, "Invalid %s chainmask capability (0x%x)\n",
-			is_tx ? "TX" : "RX", max_mask);
+	if (!mask) {
+		ath12k_err(ar->ab, "Mask should be non-zero\n");
 		return -EINVAL;
 	}
 
-	if (!mask) {
-		ath12k_err(ar->ab, "Mask should be non-zero\n");
+	if (!chandef || !chandef->chan) {
+		chanctx = ath12k_mac_get_first_active_arvif_chanctx(ar);
+		if (chanctx)
+			chandef = &chanctx->def;
+	}
+
+	direction_cap = is_tx ? WMI_SUPPORT_CHAIN_MASK_TX :
+				 WMI_SUPPORT_CHAIN_MASK_RX;
+	for (index = 0; index < ar->pdev->cap.num_chainmask_caps; index++) {
+		cap = &ar->pdev->cap.chainmask_caps[index];
+		if (cap->chainmask != mask ||
+		    !(cap->supported_caps & direction_cap))
+			continue;
+
+		if (chandef && chandef->chan) {
+			band_cap = chandef->chan->band == NL80211_BAND_2GHZ ?
+				   WMI_SUPPORT_CHAIN_MASK_2G :
+				   WMI_SUPPORT_CHAIN_MASK_5G;
+			if (!(cap->supported_caps & band_cap) ||
+			    !ath12k_chainmask_width_supported(cap->supported_caps,
+							      chandef->width))
+				continue;
+		} else if (!((ar->pdev->cap.supported_bands &
+				      WMI_HOST_WLAN_2GHZ_CAP) &&
+				     (cap->supported_caps & WMI_SUPPORT_CHAIN_MASK_2G)) &&
+				   !((ar->pdev->cap.supported_bands &
+				      WMI_HOST_WLAN_5GHZ_CAP) &&
+				     (cap->supported_caps & WMI_SUPPORT_CHAIN_MASK_5G))) {
+			continue;
+		}
+
+		return 0;
+	}
+
+	if (ar->pdev->cap.num_chainmask_caps)
+		return -EINVAL;
+
+	if (!max_mask) {
+		ath12k_err(ar->ab, "Invalid %s chainmask capability (0x%x)\n",
+			is_tx ? "TX" : "RX", max_mask);
 		return -EINVAL;
 	}
 
@@ -2998,14 +3064,16 @@ static int ath12k_chainmask_validate(struct ath12k *ar, u32 mask, bool is_tx)
  * @ar: pointer to ath12k structure
  * @value: chainmask value to set
  * @is_tx: true for TX chainmask, false for RX chainmask
+ * @chandef: current channel definition, if available
  *
  * Returns: 0 on success, negative error code on failure
  */
-static int ath12k_set_chainmask(struct ath12k *ar, u32 value, bool is_tx)
+static int ath12k_set_chainmask(struct ath12k *ar, u32 value, bool is_tx,
+				const struct cfg80211_chan_def *chandef)
 {
 	int ret;
 
-	ret = ath12k_chainmask_validate(ar, value, is_tx);
+	ret = ath12k_chainmask_validate(ar, value, is_tx, chandef);
 
 	if (ret)
         	return ret;
@@ -3566,10 +3634,12 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		ret = ath12k_dp_mon_set_fill_level(&ar->dp, value);
 		break;
 	case PARAM_RADIO_TXCHAINSOFT:
-		ret = ath12k_set_chainmask(ar, value, true);
+		ret = ath12k_set_chainmask(ar, value, true,
+					   &arvif->chanctx.def);
 		break;
-   	case ACFG_PARAM_RADIO_RXCHAINMASK:
-		ret = ath12k_set_chainmask(ar, value, false);
+	case ACFG_PARAM_RADIO_RXCHAINMASK:
+		ret = ath12k_set_chainmask(ar, value, false,
+					   &arvif->chanctx.def);
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_DYN_BW_RTS:
 		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
@@ -5898,10 +5968,10 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		ar->mgmt_tx_retry_limit = value;
 		break;
 	case PARAM_RADIO_TXCHAINSOFT:
-		ret = ath12k_set_chainmask(ar, value, true);
+		ret = ath12k_set_chainmask(ar, value, true, NULL);
 		break;
 	case ACFG_PARAM_RADIO_RXCHAINMASK:
-		ret = ath12k_set_chainmask(ar, value, false);
+		ret = ath12k_set_chainmask(ar, value, false, NULL);
 		break;
 	case QCA_WLAN_VENDOR_RADIO_PARAM_RTS_CTS_RATE:
 		if (value > 4) {

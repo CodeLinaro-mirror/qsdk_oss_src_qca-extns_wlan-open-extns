@@ -3702,7 +3702,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			   value, arvif->vdev_id);
 	break;
 #endif
-	case QCA_WLAN_VENDOR_VDEV_PARAM_BW_NSS_RATE:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_BW_NSS_RATE: {
 		u_int32_t bw, nss, ratemask, max_bw;
 
 		bw = (value & 0xff000000) >> 24;
@@ -3731,6 +3731,7 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_BW_NSS_RATEMASK to firmware");
 		}
 		break;
+	}
 	case QCA_WLAN_VENDOR_VDEV_PARAM_CHWIDTH:
 		if (value > WMI_HOST_CHAN_WIDTH_MAX) {
 			ath12k_err(ar->ab, "Invalid channel width value %u\n", value);
@@ -6407,7 +6408,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 
 	        return 0;
 	}
-	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2:
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ALPHA2: {
 		u8 alpha2[REG_ALPHA2_LEN];
 		bool regdom_changed;
 
@@ -6419,13 +6420,15 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 		if (!ret && regdom_changed)
 			*reload = true;
 		break;
-	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID:
+	}
+	case QCA_WLAN_VENDOR_RADIO_PARAM_COUNTRY_ID: {
 		bool country_changed = ar->country_id != (u16)value;
 
 		ret = ath12k_vendor_set_country_id(ar, value);
 		if (!ret && country_changed)
 			*reload = true;
 		break;
+	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_CAC_TIMEOUT:
 	{
 		s32 cac_timeout_sec = value;
@@ -7617,7 +7620,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 			return -EINVAL;
 		}
 		break;
-         case QCA_WLAN_VENDOR_WIFI_PARAM_GET_NAV_OVERRIDE_CONFIG:
+	case QCA_WLAN_VENDOR_WIFI_PARAM_GET_NAV_OVERRIDE_CONFIG: {
 		struct ath12k_wifi_generic_params dummy = {0};
 		dummy.link_id = INVALID_LINK_ID;
 		ret = ath12k_vendor_get_nav_override_config_extn(wiphy, wdev, &dummy);
@@ -7626,7 +7629,8 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 			return -EINVAL;
 		}
 		break;
-         case QCA_WLAN_VENDOR_WIFI_PARAM_UL_OFDMA_RTD:
+	}
+	case QCA_WLAN_VENDOR_WIFI_PARAM_UL_OFDMA_RTD:
 		if (!wifi_params->data) {
 			ath12k_err(NULL,"Invalid param command received\n");
 			return -EINVAL;
@@ -7640,7 +7644,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 #endif
 	case QCA_NL80211_VENDOR_SUBCMD_HE_MCS_12_13_SUPP:
 		return ath12k_vendor_set_he_mcs_12_13_peer_cap(wiphy, wifi_params);
-	case QCA_WLAN_VENDOR_WIFI_PARAM_ALLOW_SCAN_ON_DFS_CHAN:
+	case QCA_WLAN_VENDOR_WIFI_PARAM_ALLOW_SCAN_ON_DFS_CHAN: {
 		struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 		struct ieee80211_local *local = hw_to_local(hw);
 		bool enable;
@@ -7652,6 +7656,7 @@ int ath12k_vendor_wifi_config_handler_extn(struct wiphy *wiphy, struct wireless_
 		enable = !!*(u8 *)wifi_params->data;
 		ieee80211_set_allow_scan_on_dfs_chan_extn(local, enable);
 		break;
+	}
 	case QCA_WLAN_VENDOR_WIFI_PARAM_BSSID:
 		ret = ath12k_vendor_set_bssid_extn(wdev, wifi_params);
 		if (ret) {
@@ -11215,7 +11220,7 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		}
 		ret = 0;
 		break;
-	case QCA_WLAN_VENDOR_VDEV_PARAM_TLV_LOGGER_MODE:
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TLV_LOGGER_MODE: {
 		struct ath12k_pdev_dp *dp_pdev;
 		struct ath12k_pdev_mon_dp_extn *mon_extn = NULL;
 		bool rx_en, tx_en;
@@ -11240,6 +11245,7 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		}
 		ret = 0;
 		break;
+	}
 	case QCA_WLAN_VENDOR_VDEV_PARAM_GET_MONITOR_VERSION:
 		*value = ath12k_get_monitor_version(ar->ab);
 		ret = 0;
@@ -12877,7 +12883,7 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		}
 		ret = 0;
 		break;
-	case QCA_WLAN_VENDOR_RADIO_PARAM_REGDOMAIN:
+	case QCA_WLAN_VENDOR_RADIO_PARAM_REGDOMAIN: {
 		u32 source_regdomain;
 		u32 regdomain;
 		u32 low_5g;
@@ -12900,6 +12906,7 @@ static int ath12k_vendor_get_radio_params(struct ath12k *ar,
 		*value = regdomain;
 		ret = 0;
 		break;
+	}
 	case QCA_WLAN_VENDOR_RADIO_PARAM_CAC_TIMEOUT:
 		ret = ath12k_get_current_cac_timeout(ar, value);
 		if (ret) {

@@ -747,6 +747,7 @@ void ieee80211_mesh_ap_setup(struct wireless_dev *wdev,
 	       sizeof(sdata->u.ap.if_ap_extn.mesh_peer_aid));
 
 	sdata->u.ap.if_ap_extn.mesh_peer_timeout_cnt = MESH_PEER_TIMEOUT_CNT;
+	sdata->u.ap.if_ap_extn.mesh_default_key_idx = MANAGED_MESH_PEER_KEY_SLOT_A;
 
 	if (ieee80211_mesh_ap_config_save(params, link_conf) < 0) {
 		printk(KERN_ERR "AP config save failed");
@@ -1866,6 +1867,53 @@ int ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy, struct ieee80211_v
 EXPORT_SYMBOL(ieee80211_vendor_mesh_authorize_peer);
 
 /**
+ * ieee80211_vendor_mesh_set_default_key: Mesh set default TX key handler.
+ *
+ * @wiphy: WIPHY pointer
+ * @vif: VIF pointer
+ * @key_idx: MANAGED_MESH_PEER_KEY_SLOT_A (2) or _SLOT_B (3)
+ *
+ * Return: 0 on success, -EINVAL on bad input.
+ */
+int ieee80211_vendor_mesh_set_default_key(struct wiphy *wiphy,
+					  struct ieee80211_vif *vif,
+					  u8 key_idx)
+{
+	struct ieee80211_sub_if_data *sdata;
+
+	if (!vif) {
+		pr_warn_ratelimited("managed_mesh_dbg set_default_key: vif is NULL\n");
+		return -EINVAL;
+	}
+
+	sdata = vif_to_sdata(vif);
+	if (!sdata) {
+		pr_warn_ratelimited("managed_mesh_dbg set_default_key: sdata is NULL\n");
+		return -EINVAL;
+	}
+
+	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode)) {
+		pr_warn_ratelimited("managed_mesh_dbg set_default_key: not a mesh VAP (vap_submode=%u)\n",
+				    sdata->wdev.vap_submode);
+		return -EINVAL;
+	}
+
+	if (key_idx != MANAGED_MESH_PEER_KEY_SLOT_A &&
+	    key_idx != MANAGED_MESH_PEER_KEY_SLOT_B) {
+		pr_warn_ratelimited("managed_mesh_dbg set_default_key: invalid key_idx=%u (must be %u or %u)\n",
+				    key_idx, MANAGED_MESH_PEER_KEY_SLOT_A,
+				    MANAGED_MESH_PEER_KEY_SLOT_B);
+		return -EINVAL;
+	}
+
+	drv_set_default_unicast_key(sdata->local, sdata, key_idx);
+	sdata->u.ap.if_ap_extn.mesh_default_key_idx = key_idx;
+
+	return 0;
+}
+EXPORT_SYMBOL(ieee80211_vendor_mesh_set_default_key);
+
+/**
  * ieee80211_mesh_send_deauth - send a deauth frame to a mesh peer, encrypting
  * it when an MFP PTKSA is established.
  *
@@ -2284,10 +2332,14 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 		return;
 	}
 
-	/* Step 3: Install group keys. */
+	/* Step 3: Tell firmware which peer slot is the active TX key. */
+	drv_set_default_unicast_key(sdata->local, sdata,
+				    sdata->u.ap.if_ap_extn.mesh_default_key_idx);
+
+	/* Step 4: Install group keys. */
 	ieee80211_mesh_install_gtks_for_peer(sdata, sta, link_conf->link_id);
 
-	/* Step 4: Authorize peer */
+	/* Step 5: Authorize peer */
 	ret = ieee80211_vendor_mesh_authorize_peer(wiphy, &sdata->vif, sta->sta.addr);
 	if (ret) {
 		pr_warn_ratelimited("managed_mesh_dbg install_peer_key: authorize failed for %pM (ret=%d)\n",

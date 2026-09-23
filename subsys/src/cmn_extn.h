@@ -324,6 +324,7 @@ struct ieee80211_mesh_config_params_extn {
 	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
 	bool peer_cleanup_timer_enable;
 	struct ath12k_mesh_rada_params rada;
+	u8 default_key_idx; /* Default key index for Mesh Tx */
 } __packed;
 
 /**
@@ -417,6 +418,7 @@ struct ieee80211_if_ap_extn {
 	u32 mesh_peer_aid[MESH_AID_WORDS];  /* Bitmap for AID allocation */
 	u16 mesh_peer_timeout_cnt; /* Configurable peer inactivity timeout threshold */
 	bool mesh_peer_cleanup_timer_enabled; /* Runtime enable/disable of cleanup timer */
+	u8 mesh_default_key_idx;
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 };
 
@@ -749,6 +751,11 @@ int
 ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy,
 				     struct ieee80211_vif *vif,
 				     const u8 *peer_addr);
+
+int
+ieee80211_vendor_mesh_set_default_key(struct wiphy *wiphy,
+				      struct ieee80211_vif *vif,
+				      u8 key_idx);
 
 int
 ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,

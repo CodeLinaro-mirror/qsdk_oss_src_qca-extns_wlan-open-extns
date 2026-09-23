@@ -29,6 +29,7 @@ struct ath12k_dp_tx_msdu_info_s {
  * @ATH12K_EXTN_MESH_CONF_SET_PEER_TIMEOUT_CNT: Configure Peer timeout count
  * @ATH12K_EXTN_MESH_CONF_PEER_TIMEOUT_EN: Configure mesh peer cleanup timer
  * @ATH12K_EXTN_MESH_CONF_PEER_DUMP: Dump mesh peer information
+ * @ATH12K_EXTN_MESH_CONF_SET_DEFAULT_KEY: Set default TX key
  */
 enum ath12k_extn_mesh_conf_cmd_type {
 	ATH12K_EXTN_MESH_CONF_ADD_LOCAL_PEER = 1,
@@ -41,6 +42,7 @@ enum ath12k_extn_mesh_conf_cmd_type {
 	ATH12K_EXTN_MESH_CONF_DEL_RADA = 8,
 	ATH12K_EXTN_MESH_CONF_CLR_RADA = 9,
 	ATH12K_EXTN_MESH_CONF_PRINT_RADA = 10,
+	ATH12K_EXTN_MESH_CONF_SET_DEFAULT_KEY = 11,
 };
 
 /* Per-peer binary payload for the mesh peer_dump vendor reply. */

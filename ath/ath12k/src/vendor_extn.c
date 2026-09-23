@@ -17638,6 +17638,10 @@ int ath12k_vendor_mesh_params_config_extn(struct wiphy *wiphy,
 		spin_unlock_bh(&vif->rada_lock);
 		ret = 0;
 		break;
+	case ATH12K_EXTN_MESH_CONF_SET_DEFAULT_KEY:
+		ret = ieee80211_vendor_mesh_set_default_key(wiphy, vif,
+							    mesh_params->default_key_idx);
+		break;
 	default:
 		ath12k_err(NULL, "Invalid cmd type: %d\n", mesh_params->cmd_type);
 		return -EINVAL;

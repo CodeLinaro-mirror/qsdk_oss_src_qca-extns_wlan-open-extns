@@ -126,7 +126,6 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.mon_pdev_rx_attach = ath12k_dp_mon_pdev_rx_attach,
 	.setup_mon_link_desc = ath12k_wifi6_mon_setup_mon_link_desc,
 	.cleanup_mon_link_desc = ath12k_wifi6_mon_cleanup_mon_link_desc,
-	.mon_pdev_rx_mpdu_list_init = NULL,
 	.mon_rx_srng_process = ath12k_wifi6_dp_mon_rx_quad_ring_process,
 	.update_telemetry_stats = NULL,
 	.rx_filter_alloc = ath12k_dp_mon_rx_filter_alloc,

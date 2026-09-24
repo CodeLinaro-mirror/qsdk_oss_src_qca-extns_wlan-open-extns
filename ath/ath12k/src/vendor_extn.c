@@ -6435,7 +6435,13 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
                          } else {
                                  ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_LIMIT2G to firmware");
                          }
-                 }
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "Skip TXPOWER_LIMIT2G for radio %d band %d freq %d.\n",
+				   ar->radio_idx, band, ar->chan_info.low_freq);
+			ret = 0;
+		}
+
                  break;
         case QCA_WLAN_VENDOR_RADIO_PARAM_TXPOWER_LIMIT5G:
                  band = ath12k_get_band_based_on_freq(ar->chan_info.low_freq);
@@ -6447,10 +6453,14 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
                          } else {
                                  ath12k_err(NULL, "Failed to send WMI_PDEV_PARAM_TXPOWER_LIMIT5G to firmware");
                          }
-                 }
+		} else {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "Skip TXPOWER_LIMIT5G for radio %d band %d freq %d.\n",
+				   ar->radio_idx, band, ar->chan_info.low_freq);
+			ret = 0;
+		}
+
                  break;
-#define ANTENNA_GAIN_2G_MASK    0x0
-#define ANTENNA_GAIN_5G_MASK    0x8000
         case QCA_WLAN_VENDOR_RADIO_PARAM_ANTENNA_GAIN_2G:
                  if (value >= 0 && value <= 30) {
                          ret = ath12k_wmi_pdev_set_param(ar, WMI_PDEV_PARAM_ANTENNA_GAIN,

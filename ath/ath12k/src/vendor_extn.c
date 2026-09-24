@@ -3510,11 +3510,6 @@ static void ath12k_wsi_bypass_workfn(struct work_struct *work)
 
 	ret = ath12k_mac_dynamic_wsi_remap(ab);
 	if (ret) {
-	        struct ath12k_hw_group *ag = ab->ag;
-	        if (ag)
-	                ag->wsi_remap_in_progress = false;
-	        ab->wsi_remap_state = ATH12K_WSI_BYPASS_DEFAULT;
-	        ab->is_bypassed = false;
 	        ath12k_err(ab, "WSI bypass worker failed: %d\n", ret);
 	}
 

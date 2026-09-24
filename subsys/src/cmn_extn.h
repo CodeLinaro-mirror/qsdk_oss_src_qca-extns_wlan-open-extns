@@ -235,6 +235,12 @@ struct mesh_bss_conf {
  * @cnt_legacy_zero_rsn: Number of times the peer's RSN IE had zero pairwise
  *   cipher count and zero AKM count, triggering the PSK/CCMP legacy fallback
  * @cnt_no_common_combo: Number of times no common (AKM, cipher) pair existed
+ * @cnt_secured_no_peer_rsn: Number of times a secured local mesh accepted a peer
+ *   whose beacon had no RSN IE (Day-0 Case 1)
+ * @cnt_open_peer_rsn: Number of times an open local mesh accepted a peer
+ *   whose beacon had an RSN IE (Day-0 Case 3)
+ * @cnt_combo_open: Number of times both local and peer were open security
+ *   (no RSN IE on either side — no cipher negotiation performed)
  * @peer_mfp_capable: Peer RSN caps MFP enabled bit
  * @peer_mfp_required: Peer RSN caps MFP required bit
  * @peer_rsn_ie: Raw copy of peer RSN IE bytes
@@ -274,6 +280,10 @@ struct mesh_peer_info {
 	u32 cnt_combo_psk_ccmp;
 	u32 cnt_legacy_zero_rsn;
 	u32 cnt_no_common_combo;
+	/* Primitive Mesh counters */
+	u32 cnt_secured_no_peer_rsn;
+	u32 cnt_open_peer_rsn;
+	u32 cnt_combo_open;
 	bool peer_mfp_capable;
 	bool peer_mfp_required;
 	u8 peer_rsn_ie[MESH_RSN_IE_MAX_LEN]; /* raw RSN IE: tag(1) + len(1) + body(up to 255) */

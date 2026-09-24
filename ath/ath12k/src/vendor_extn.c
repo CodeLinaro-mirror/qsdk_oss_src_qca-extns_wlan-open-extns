@@ -17445,6 +17445,16 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 		peer_entry->intersect_successes = peer_info->intersect_successes;
 		peer_entry->cap_update_failures  = peer_info->cap_update_failures;
 		peer_entry->rsn_parse_failures   = peer_info->rsn_parse_failures;
+		peer_entry->cnt_combo_sha256_ccmp256 = peer_info->cnt_combo_sha256_ccmp256;
+		peer_entry->cnt_combo_psk_ccmp        = peer_info->cnt_combo_psk_ccmp;
+		peer_entry->cnt_legacy_zero_rsn       = peer_info->cnt_legacy_zero_rsn;
+		peer_entry->cnt_no_common_combo       = peer_info->cnt_no_common_combo;
+		peer_entry->cnt_secured_no_peer_rsn        = peer_info->cnt_secured_no_peer_rsn;
+		peer_entry->cnt_open_peer_rsn         = peer_info->cnt_open_peer_rsn;
+		peer_entry->cnt_combo_open             = peer_info->cnt_combo_open;
+		peer_entry->key_installed             = (u8)peer_info->key_installed;
+		peer_entry->peer_ucast_cipher         = peer_info->peer_ucast_cipher;
+		peer_entry->peer_akm_suite            = peer_info->peer_akm_suite;
 
 		if (peer_mld_mac)
 			break;

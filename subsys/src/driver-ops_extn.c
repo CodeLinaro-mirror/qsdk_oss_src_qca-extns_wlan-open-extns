@@ -23,6 +23,14 @@ MODULE_PARM_DESC(mmeshsim, "mmeshsim");
 
 u8 supported_rates_5g6g[SUPPORTED_RATES_LEN] = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
 u8 supported_rates_2g[SUPPORTED_RATES_LEN] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
+
+/* AKM/cipher pair preference order for managed mesh beacon intersection.
+ * PSK-SHA256/CCMP-256 is preferred; PSK/CCMP is the fallback.
+ */
+static const struct mesh_akm_cipher_pref mesh_combo_pref[] = {
+	{ WLAN_AKM_SUITE_PSK_SHA256, WLAN_CIPHER_SUITE_CCMP_256 },
+	{ WLAN_AKM_SUITE_PSK,        WLAN_CIPHER_SUITE_CCMP     },
+};
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
 
 void ieee80211_set_vif_diagnostic_sta_extn(struct ieee80211_vif *vif, bool diagnostic_sta)
@@ -1240,6 +1248,315 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	return ret;
 }
 
+static bool ieee80211_mesh_bss_is_secured(struct ieee80211_bss_conf *bss_conf)
+{
+	return bss_conf &&
+	       bss_conf->bss_conf_extn &&
+	       bss_conf->bss_conf_extn->mesh_bss_caps.rsn_conf &&
+	       (bss_conf->bss_conf_extn->mesh_bss_caps.rsn_conf->wpa_versions &
+		(NL80211_WPA_VERSION_2 | NL80211_WPA_VERSION_3));
+}
+
+/**
+ * ieee80211_mesh_local_has_suite - Check if a suite is in the local
+ * VAP's configured suite array.
+ * @list:  Local suite array (akm_suites[] or pairwise_ciphers[])
+ * @count: Number of valid entries in @list
+ * @suite: Suite selector to look for
+ */
+static bool
+ieee80211_mesh_local_has_suite(const u32 *list, u8 count, u32 suite)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+		if (list[i] == suite)
+			return true;
+	return false;
+}
+
+/**
+ * ieee80211_mesh_peer_has_suite - Check if a suite is in the peer's
+ * flat RSN IE suite list.
+ * @peer_list:  Peer's flat suite list (array of 4-byte OUI+type entries)
+ * @peer_count: Number of entries in @peer_list
+ * @suite:      Suite selector to look for
+ */
+static bool
+ieee80211_mesh_peer_has_suite(const u8 *peer_list, u16 peer_count, u32 suite)
+{
+	int i;
+
+	if (!peer_list)
+		return false;
+
+	for (i = 0; i < peer_count; i++)
+		if (get_unaligned_be32(peer_list + i * RSN_SUITE_LEN) == suite)
+			return true;
+	return false;
+}
+
+/**
+ * ieee80211_mesh_negotiate_combo - Select an (AKM, cipher) pair using
+ * the fixed preference order.
+ * @rsn_conf:          Local VAP RSN configuration
+ * @peer_akm_list:     Peer's flat AKM suite list (from RSN IE)
+ * @peer_akm_count:    Number of entries in @peer_akm_list
+ * @peer_cipher_list:  Peer's flat pairwise cipher suite list (from RSN IE)
+ * @peer_cipher_count: Number of entries in @peer_cipher_list
+ * @out_akm:           Set to the selected AKM suite on success
+ * @out_cipher:        Set to the selected cipher suite on success
+ * Iterates mesh_combo_pref[] in order.
+ * Returns true and fills *out_akm or *out_cipher on success, false if no
+ * common combination exists.
+ */
+static bool
+ieee80211_mesh_negotiate_combo(const struct mesh_rsn_conf *rsn_conf,
+			       const u8 *peer_akm_list, u16 peer_akm_count,
+			       const u8 *peer_cipher_list, u16 peer_cipher_count,
+			       u32 *out_akm, u32 *out_cipher)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(mesh_combo_pref); i++) {
+		u32 akm    = mesh_combo_pref[i].akm;
+		u32 cipher = mesh_combo_pref[i].cipher;
+
+		if (!ieee80211_mesh_local_has_suite(rsn_conf->akm_suites,
+						    rsn_conf->n_akm_suites, akm) ||
+		    !ieee80211_mesh_local_has_suite(rsn_conf->pairwise_ciphers,
+						    rsn_conf->n_pairwise_ciphers, cipher))
+			continue;
+		if (!ieee80211_mesh_peer_has_suite(peer_akm_list, peer_akm_count, akm) ||
+		    !ieee80211_mesh_peer_has_suite(peer_cipher_list, peer_cipher_count, cipher))
+			continue;
+
+		*out_akm    = akm;
+		*out_cipher = cipher;
+		return true;
+	}
+	return false;
+}
+
+/**
+ * ieee80211_mesh_peer_clear_crypto - Reset a peer's crypto/MFP state.
+ * @peer: Peer info to clear
+ *
+ * Handles primitive mesh RSN handling cases by clearing the peer crypto
+ * accordingly
+ */
+static void
+ieee80211_mesh_peer_clear_crypto(struct mesh_peer_info *peer)
+{
+	peer->peer_ucast_cipher  = 0;
+	peer->peer_mcast_cipher  = 0;
+	peer->peer_akm_suite     = 0;
+	peer->peer_wpa_versions  = 0;
+	peer->peer_mfp_capable   = false;
+	peer->peer_mfp_required  = false;
+	peer->peer_rsn_ie_len    = 0;
+	peer->peer_ht_restricted = false;
+}
+
+/**
+ * ieee80211_mesh_rsn_locate_list - Navigate to a suite list within an RSN IE body.
+ * @rsn_body:     RSN IE body (starting at the version field)
+ * @rsn_body_len: Length of @rsn_body
+ * @list_index:   0 = pairwise cipher list, 1 = AKM suite list
+ * @count_out:    Returns the number of suites in the located list
+ *
+ * Returns a pointer to the first 4-byte suite entry in the requested list,
+ * or NULL if the IE is too short or malformed.
+ */
+static const u8 *
+ieee80211_mesh_rsn_locate_list(const u8 *rsn_body, u8 rsn_body_len,
+			       int list_index, u16 *count_out)
+{
+	const u8 *pos = rsn_body;
+	u16 ie_len = rsn_body_len;
+	u16 count;
+	int idx;
+
+	/* Skip RSN version (2) + group cipher (4) */
+	if (ie_len < RSN_VERSION_LEN + RSN_SUITE_LEN)
+		return NULL;
+	pos   += RSN_VERSION_LEN + RSN_SUITE_LEN;
+	ie_len -= RSN_VERSION_LEN + RSN_SUITE_LEN;
+
+	for (idx = 0; idx <= list_index; idx++) {
+		if (ie_len < RSN_SUITE_COUNT_LEN)
+			return NULL;
+		count  = get_unaligned_le16(pos);
+		pos   += RSN_SUITE_COUNT_LEN;
+		ie_len -= RSN_SUITE_COUNT_LEN;
+		if ((u32)count * RSN_SUITE_LEN > ie_len)
+			return NULL;
+		if (idx == list_index) {
+			*count_out = count;
+			return pos;
+		}
+		pos   += count * RSN_SUITE_LEN;
+		ie_len -= count * RSN_SUITE_LEN;
+	}
+	/* Unreachable: the loop always returns when idx == list_index. */
+	return NULL;
+}
+
+/**
+ * ieee80211_mesh_select_akm_cipher - Select an (AKM, cipher) pair for
+ * the peer using ieee80211_mesh_negotiate_combo(); handles the legacy
+ * zero-count RSN fallback to PSK/CCMP
+ * @mesh_caps: Local mesh BSS capabilities (may be NULL)
+ * @elems:     Parsed peer beacon IEs
+ * @peer:      Peer info; peer_akm_suite/peer_ucast_cipher set on success
+ *
+ * Returns true if a pair was selected, false if none found.
+ */
+static bool
+ieee80211_mesh_select_akm_cipher(struct mesh_bss_conf *mesh_caps,
+				 struct ieee802_11_elems *elems,
+				 struct mesh_peer_info *peer)
+{
+	const u8 *peer_akm_list, *peer_cipher_list;
+	u16 peer_akm_count = 0, peer_cipher_count = 0;
+	u32 sel_akm = 0, sel_cipher = 0;
+
+	if (!mesh_caps || !mesh_caps->rsn_conf)
+		return true;  /* nothing configured locally — leave peer fields as-is */
+
+	peer_cipher_list = ieee80211_mesh_rsn_locate_list(
+			elems->rsn, elems->rsn_len, 0, &peer_cipher_count);
+	peer_akm_list = ieee80211_mesh_rsn_locate_list(
+			elems->rsn, elems->rsn_len, 1, &peer_akm_count);
+
+	if (peer_cipher_count == 0 && peer_akm_count == 0) {
+		if (ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->akm_suites,
+						   mesh_caps->rsn_conf->n_akm_suites,
+						   WLAN_AKM_SUITE_PSK) &&
+		    ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->pairwise_ciphers,
+						   mesh_caps->rsn_conf->n_pairwise_ciphers,
+						   WLAN_CIPHER_SUITE_CCMP)) {
+			sel_cipher = WLAN_CIPHER_SUITE_CCMP;
+			sel_akm    = WLAN_AKM_SUITE_PSK;
+		} else if (ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->akm_suites,
+							  mesh_caps->rsn_conf->n_akm_suites,
+							  WLAN_AKM_SUITE_PSK_SHA256) &&
+			   ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->pairwise_ciphers,
+							  mesh_caps->rsn_conf->n_pairwise_ciphers,
+							  WLAN_CIPHER_SUITE_CCMP_256)) {
+			sel_cipher = WLAN_CIPHER_SUITE_CCMP_256;
+			sel_akm    = WLAN_AKM_SUITE_PSK_SHA256;
+		} else {
+			peer->cnt_no_common_combo++;
+			return false;
+		}
+		peer->cnt_legacy_zero_rsn++;
+	} else if (ieee80211_mesh_negotiate_combo(mesh_caps->rsn_conf,
+						  peer_akm_list, peer_akm_count,
+						  peer_cipher_list, peer_cipher_count,
+						  &sel_akm, &sel_cipher)) {
+		if (sel_akm == WLAN_AKM_SUITE_PSK_SHA256)
+			peer->cnt_combo_sha256_ccmp256++;
+		else
+			peer->cnt_combo_psk_ccmp++;
+	} else {
+		peer->cnt_no_common_combo++;
+		return false;
+	}
+
+	peer->peer_akm_suite    = sel_akm;
+	peer->peer_ucast_cipher = sel_cipher;
+	return true;
+}
+
+/**
+ * ieee80211_mesh_vap_gtk_installed - Check all required GTK source key slots
+ * are installed for the configured AKM/cipher combos.
+ * @sdata:    sub-interface data
+ * @link_id:  link ID to check (from addlocalpeer command)
+ * @rsn_conf: local VAP RSN configuration
+ *
+ * For PSK-SHA256/CCMP-256: slots 0 and 1 must both be present.
+ * For PSK/CCMP: slots 2 and 3 must both be present.
+ * Returns true only when all required slots for the configured combos are
+ * populated, false otherwise.
+ */
+static bool ieee80211_mesh_vap_gtk_installed(struct ieee80211_sub_if_data *sdata,
+					     int link_id,
+					     const struct mesh_rsn_conf *rsn_conf)
+{
+	struct ieee80211_link_data *link;
+	bool need_ccmp256, need_ccmp;
+
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+
+	link = wiphy_dereference(sdata->local->hw.wiphy, sdata->link[link_id]);
+	if (!link)
+		return false;
+
+	need_ccmp256 =
+		ieee80211_mesh_local_has_suite(rsn_conf->akm_suites,
+					       rsn_conf->n_akm_suites,
+					       WLAN_AKM_SUITE_PSK_SHA256) &&
+		ieee80211_mesh_local_has_suite(rsn_conf->pairwise_ciphers,
+					       rsn_conf->n_pairwise_ciphers,
+					       WLAN_CIPHER_SUITE_CCMP_256);
+
+	need_ccmp =
+		ieee80211_mesh_local_has_suite(rsn_conf->akm_suites,
+					       rsn_conf->n_akm_suites,
+					       WLAN_AKM_SUITE_PSK) &&
+		ieee80211_mesh_local_has_suite(rsn_conf->pairwise_ciphers,
+					       rsn_conf->n_pairwise_ciphers,
+					       WLAN_CIPHER_SUITE_CCMP);
+
+	if (need_ccmp256 &&
+	    (!wiphy_dereference(sdata->local->hw.wiphy, link->gtk[0]) ||
+	     !wiphy_dereference(sdata->local->hw.wiphy, link->gtk[1])))
+		return false;
+
+	if (need_ccmp &&
+	    (!wiphy_dereference(sdata->local->hw.wiphy, link->gtk[2]) ||
+	     !wiphy_dereference(sdata->local->hw.wiphy, link->gtk[3])))
+		return false;
+
+	return need_ccmp256 || need_ccmp;
+}
+
+/**
+ * ieee80211_mesh_install_gtks_for_peer - Re-install link GTKs per-mesh-peer
+ * after add.
+ * @sdata:   sub-interface data
+ * @sta_info: newly added sta_info for the mesh peer
+ * @link_id: link ID the peer was added on
+ *
+ */
+static void ieee80211_mesh_install_gtks_for_peer(struct ieee80211_sub_if_data *sdata,
+						 struct sta_info *sta_info,
+						 u8 link_id)
+{
+	struct ieee80211_link_data *link;
+	struct ieee80211_key *key;
+	int i;
+
+	lockdep_assert_wiphy(sdata->local->hw.wiphy);
+
+	if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
+		return;
+
+	link = wiphy_dereference(sdata->local->hw.wiphy, sdata->link[link_id]);
+	if (!link)
+		return;
+
+	for (i = 0; i < NUM_DEFAULT_KEYS; i++) {
+		key = wiphy_dereference(sdata->local->hw.wiphy, link->gtk[i]);
+		if (!key)
+			continue;
+		drv_set_key(sdata->local, SET_KEY, sdata, &sta_info->sta,
+			    &key->conf);
+	}
+}
+
 /**
  * ieee80211_vendor_mesh_add_local_peer: Mesh peer addition handler.
  *
@@ -1256,9 +1573,12 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	struct station_parameters params = {0};
 	u8 *peer_addr = NULL;
 	struct ieee80211_sta *sta;
+	struct sta_info *sta_info;
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 	struct ieee80211_sub_if_data *sdata;
 	struct net_device *dev;
+	struct ieee80211_bss_conf *local_mesh_bss_conf;
+	u8 link_id;
 	int ret;
 
 	if (!vif || !mesh_params)
@@ -1271,6 +1591,25 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	dev = sdata->dev;
 	if (!dev)
 		return -EINVAL;
+
+	link_id = ieee80211_vif_is_mld(&sdata->vif) ?
+		  mesh_params->peers[0].link_id : sdata->deflink.link_id;
+	if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
+		return -EINVAL;
+
+	local_mesh_bss_conf = wiphy_dereference(wiphy,
+		sdata->vif.link_conf[link_id]);
+
+	/* Reject peer addition for WPA2/WPA3 VAPs when no GTK source key is
+	 * installed. Open-BSS VAPs are exempt — they authorize the peer
+	 * directly without key installation. */
+	if (ieee80211_mesh_bss_is_secured(local_mesh_bss_conf) &&
+	    !ieee80211_mesh_vap_gtk_installed(sdata, link_id,
+					      local_mesh_bss_conf->bss_conf_extn->mesh_bss_caps.rsn_conf)) {
+		pr_err("%s: mesh peer add rejected - no GTK installed on %s\n",
+		       __func__, sdata->name);
+		return -EINVAL;
+	}
 
 	if (!rdev || !rdev->ops || !rdev->ops->add_station)
 		return -EOPNOTSUPP;
@@ -1331,6 +1670,11 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 		!!(mesh_params->peers[0].caps & MESH_CAPS_SKIP_KEY_INSTALL);
 	sta->sta_extn.peer_info.key_installed = false;
 	rcu_read_unlock();
+
+	/* Re-install VAP GTKs per-peer */
+	sta_info = sta_info_get(sdata, peer_addr);
+	if (sta_info && ieee80211_mesh_bss_is_secured(local_mesh_bss_conf))
+		ieee80211_mesh_install_gtks_for_peer(sdata, sta_info, link_id);
 
 	ret = 0;
 
@@ -2361,79 +2705,6 @@ caps_done:
  * Returns true if the peer is rejected (caller should goto exit), false if OK.
  */
 
-/**
- * ieee80211_mesh_rsn_locate_list - Navigate to a suite list within an RSN IE body.
- * @rsn_body:     RSN IE body (starting at the version field)
- * @rsn_body_len: Length of @rsn_body
- * @list_index:   0 = pairwise cipher list, 1 = AKM suite list
- * @count_out:    Returns the number of suites in the located list
- *
- * Returns a pointer to the first 4-byte suite entry in the requested list,
- * or NULL if the IE is too short or malformed.
- */
-static const u8 *
-ieee80211_mesh_rsn_locate_list(const u8 *rsn_body, u8 rsn_body_len,
-			       int list_index, u16 *count_out)
-{
-	const u8 *pos = rsn_body;
-	u16 ie_len = rsn_body_len;
-	u16 count;
-	int idx;
-
-	/* Skip RSN version (2) + group cipher (4) */
-	if (ie_len < RSN_VERSION_LEN + RSN_SUITE_LEN)
-		return NULL;
-	pos   += RSN_VERSION_LEN + RSN_SUITE_LEN;
-	ie_len -= RSN_VERSION_LEN + RSN_SUITE_LEN;
-
-	for (idx = 0; idx <= list_index; idx++) {
-		if (ie_len < RSN_SUITE_COUNT_LEN)
-			return NULL;
-		count  = get_unaligned_le16(pos);
-		pos   += RSN_SUITE_COUNT_LEN;
-		ie_len -= RSN_SUITE_COUNT_LEN;
-		if ((u32)count * RSN_SUITE_LEN > ie_len)
-			return NULL;
-		if (idx == list_index) {
-			*count_out = count;
-			return pos;
-		}
-		pos   += count * RSN_SUITE_LEN;
-		ie_len -= count * RSN_SUITE_LEN;
-	}
-	/* Unreachable: the loop always returns when idx == list_index. */
-	return NULL;
-}
-
-/**
- * ieee80211_mesh_negotiate_suite - Select best common suite using local preference.
- * @peer_list:  Peer's flat suite list (array of 4-byte OUI+type entries)
- * @peer_count: Number of entries in @peer_list
- * @local:      Local suites in preference order
- * @n_local:    Number of valid entries in @local
- *
- * Iterates @local in preference order and returns the first suite the peer
- * also supports.  Local preference order always wins — the peer's ordering
- * is irrelevant.  Returns 0 if no common suite is found.
- *
- * Used for both pairwise cipher and AKM suite negotiation.
- */
-static u32
-ieee80211_mesh_negotiate_suite(const u8 *peer_list, u16 peer_count,
-			       const u32 *local, u8 n_local)
-{
-	int local_idx, peer_idx;
-
-	for (local_idx = 0; local_idx < n_local; local_idx++) {
-		for (peer_idx = 0; peer_idx < peer_count; peer_idx++) {
-			if (get_unaligned_be32(peer_list + peer_idx * RSN_SUITE_LEN)
-			    == local[local_idx])
-				return local[local_idx];
-		}
-	}
-	return 0;
-}
-
 static bool
 ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 			    struct ieee80211_bss_conf *link_conf,
@@ -2444,11 +2715,7 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 	struct sta_info *sta_info = container_of(sta, struct sta_info, sta);
 	struct mesh_peer_info *peer = &sta_info->sta.sta_extn.peer_info;
 	struct mesh_bss_conf *mesh_caps = NULL;
-	const u8 *peer_suite_list;
 	u32 local_wpa_versions = 0;
-	u32 negotiated_cipher = 0;
-	u32 negotiated_akm = 0;
-	u16 peer_suite_count = 0;
 	bool local_requires_rsn, peer_has_rsn;
 
 	if (link_conf->bss_conf_extn) {
@@ -2462,64 +2729,58 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 				(NL80211_WPA_VERSION_2 | NL80211_WPA_VERSION_3));
 	peer_has_rsn       = (elems->rsn != NULL);
 
-	/* Step 1: Presence gating — RSN IE must be present on both sides or
-	 * absent on both sides; a mismatch means the security policies differ. */
+	/* Step 1: Presence gating.
+	 * Both open: accept, no keys.
+	 * Primitive Mesh (secured local, open peer): accept, assume PSK/CCMP.
+	 * Primitive Mesh (open local, secured peer): accept, no keys.
+	 * Both secured: fall through to Step 2/3.
+	 */
 	if (!local_requires_rsn && !peer_has_rsn) {
 		/* Both open — clear any stale crypto state */
-		peer->peer_ucast_cipher  = 0;
-		peer->peer_mcast_cipher  = 0;
-		peer->peer_akm_suite     = 0;
-		peer->peer_wpa_versions  = 0;
-		peer->peer_mfp_capable   = false;
-		peer->peer_mfp_required  = false;
-		peer->peer_rsn_ie_len    = 0;
-		peer->peer_ht_restricted = false;
+		ieee80211_mesh_peer_clear_crypto(peer);
 		return false;
 	}
-	if (local_requires_rsn != peer_has_rsn)
-		goto reject;
+
+	if (local_requires_rsn && !peer_has_rsn) {
+		ieee80211_mesh_peer_clear_crypto(peer);
+		if (ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->akm_suites,
+						   mesh_caps->rsn_conf->n_akm_suites,
+						   WLAN_AKM_SUITE_PSK) &&
+		    ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->pairwise_ciphers,
+						   mesh_caps->rsn_conf->n_pairwise_ciphers,
+						   WLAN_CIPHER_SUITE_CCMP)) {
+			peer->peer_ucast_cipher = WLAN_CIPHER_SUITE_CCMP;
+			peer->peer_akm_suite    = WLAN_AKM_SUITE_PSK;
+		} else if (ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->akm_suites,
+							  mesh_caps->rsn_conf->n_akm_suites,
+							  WLAN_AKM_SUITE_PSK_SHA256) &&
+			   ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->pairwise_ciphers,
+							  mesh_caps->rsn_conf->n_pairwise_ciphers,
+							  WLAN_CIPHER_SUITE_CCMP_256)) {
+			peer->peer_ucast_cipher = WLAN_CIPHER_SUITE_CCMP_256;
+			peer->peer_akm_suite    = WLAN_AKM_SUITE_PSK_SHA256;
+		} else {
+			goto reject;
+		}
+		peer->peer_wpa_versions = NL80211_WPA_VERSION_2;
+		return false;
+	}
+
+	if (!local_requires_rsn && peer_has_rsn) {
+		ieee80211_mesh_peer_clear_crypto(peer);
+		return false;
+	}
 
 	/* Step 2: Parse peer RSN IE — log verbose only on first parse per peer */
 	if (ieee80211_mesh_parse_rsn_ie(elems->rsn, elems->rsn_len, peer,
-					!peer->intersection_done) < 0) {
+					(!peer->intersection_done &&
+					 !peer->rsn_parse_failures)) < 0) {
 		goto reject;
 	}
 
-	/* Step 3: Validate peer cipher and AKM against local BSS policy.
-	 * For both, iterate local suites in preference order and select the
-	 * first one the peer also supports (local preference order wins).
-	 * This allows a peer that supports a superset (e.g. CCMP-256 + CCMP,
-	 * or PSK-SHA256 + PSK) to connect to a more constrained local BSS.
-	 */
-	if (mesh_caps && mesh_caps->rsn_conf) {
-		if (mesh_caps->rsn_conf->n_pairwise_ciphers > 0) {
-			peer_suite_list = ieee80211_mesh_rsn_locate_list(
-					elems->rsn, elems->rsn_len, 0,
-					&peer_suite_count);
-			negotiated_cipher = peer_suite_list ?
-				ieee80211_mesh_negotiate_suite(
-					peer_suite_list, peer_suite_count,
-					mesh_caps->rsn_conf->pairwise_ciphers,
-					mesh_caps->rsn_conf->n_pairwise_ciphers) : 0;
-			if (!negotiated_cipher)
-				goto reject;
-			peer->peer_ucast_cipher = negotiated_cipher;
-		}
-
-		if (mesh_caps->rsn_conf->n_akm_suites > 0) {
-			peer_suite_list = ieee80211_mesh_rsn_locate_list(
-					elems->rsn, elems->rsn_len, 1,
-					&peer_suite_count);
-			negotiated_akm = peer_suite_list ?
-				ieee80211_mesh_negotiate_suite(
-					peer_suite_list, peer_suite_count,
-					mesh_caps->rsn_conf->akm_suites,
-					mesh_caps->rsn_conf->n_akm_suites) : 0;
-			if (!negotiated_akm)
-				goto reject;
-			peer->peer_akm_suite = negotiated_akm;
-		}
-	}
+	/* Step 3: Select an (AKM, cipher) pair for this peer. */
+	if (!ieee80211_mesh_select_akm_cipher(mesh_caps, elems, peer))
+		goto reject;
 
 	/* Step 4: PHY mode cipher checks */
 	if (peer->peer_ucast_cipher == WLAN_CIPHER_SUITE_TKIP) {

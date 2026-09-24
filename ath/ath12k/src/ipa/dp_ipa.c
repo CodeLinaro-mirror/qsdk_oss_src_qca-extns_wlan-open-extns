@@ -12,6 +12,7 @@
 #include "dp_ipa_stats.h"
 #endif
 #include <linux/ipa_wdi3.h>
+#include "../ini.h"
 
 /* global control for IPA status */
 atomic_t g_instances_added = ATOMIC_INIT(0);
@@ -26,6 +27,14 @@ struct wmi_ipa_offload_enable_disable_cmd {
 	__le32 vdev_id;
 	__le32 enable;
 } __packed;
+
+/* Update IPA config from INI File */
+inline void ath12k_ipa_update_ipa_config(struct ath12k_base *ab)
+{
+	if (g_ipa_config)
+		g_ipa_config->ipa_config = ath12k_cfg_get(ab, ATH12K_INI_DP_IPA_OFFLOAD_CONFIG);
+}
+EXPORT_SYMBOL(ath12k_ipa_update_ipa_config);
 
 /* IPA config update */
 void ath12k_dp_ipa_component_config_init(void)
@@ -95,6 +104,12 @@ void ath12k_dp_ipa_config_free(void)
 		}
 	}
 }
+
+bool dp_ipa_enable(void)
+{
+	return g_ipa_config ? ipa_enabled(g_ipa_config) : false;
+}
+EXPORT_SYMBOL(dp_ipa_enable);
 
 int ath12k_dp_ipa_attach(struct ath12k_base *ab)
 {
@@ -273,6 +288,9 @@ EXPORT_SYMBOL(ath12k_dp_ipa_uc_detach);
 
 int dp_ipa_uc_attach(struct ath12k_base *ab)
 {
+	if(!dp_ipa_enable())
+		return 0;
+
 	if (ath12k_dp_ipa_arch_op_tx_buffer_attach(ab))
 		return -ENOMEM;
 	return 0;
@@ -329,6 +347,9 @@ int ath12k_dp_ipa_handle_buf_smmu_map_unmap(struct ath12k_base *ab,
 	struct ipa_wdi_buffer_info mem_map_table = {0};
 	int ret = 0;
 	dma_addr_t frag_addr;
+
+	if(!dp_ipa_enable())
+		return 0;
 
 	/* Need to handle the case when one soc will
 	 * have multiple pdev(radio's), Currently non-split phy case.
@@ -400,6 +421,9 @@ static int ath12k_dp_ipa_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool crea
 	u32 tx_buffer_cnt = ipa_ctx->ipa_uc_tx_rsc.alloc_tx_buf_cnt;
 	struct sk_buff *skb;
 	u32 buf_len;
+
+	if(!dp_ipa_enable())
+		return 0;
 
 	if (!ipa_is_ready()) {
 		ath12k_err(ab, "IPA is not READY");
@@ -660,6 +684,8 @@ inline ath12k_dp_ipa_set_smmu_mapped(struct ath12k_ipa *ipa_ctx, int val)
 void ath12k_dp_ipa_uc_loaded_handler(struct ath12k_ipa *ipa_ctx)
 {
 	int status;
+	if(!dp_ipa_enable())
+		return;
 
 	ath12k_info(ipa_ctx->ab, "UC READY");
 
@@ -1284,6 +1310,9 @@ int ath12k_dp_ipa_uc_ol_init(struct ath12k_ipa *ipa_ctx)
 	struct device *dev = ipa_ctx->ab->dev;
 	struct ath12k_base *ab = ipa_ctx->ab;
 
+	if(!dp_ipa_enable())
+		return 0;
+
 	ath12k_info(ipa_ctx->ab, "enter");
 
 	if (!dev) {
@@ -1389,6 +1418,9 @@ int ath12k_dp_ipa_uc_ol_deinit(struct ath12k_base *ab)
 	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
 	struct device *dev = ab->dev;
 
+	if(!dp_ipa_enable())
+		return 0;
+
 	ath12k_info(ab, "enter in uc ol deinit");
 
 	if (!ipa_ctx) {
@@ -1471,6 +1503,9 @@ void ath12k_dp_ipa_ready_cb(void *data)
 	if (!ipa_priv)
 		return;
 
+	if(!dp_ipa_enable())
+		return;
+
 	ab = ipa_priv->ab;
 	ath12k_info(ipa_priv->ab, "ENTER in IPA code");
 
@@ -1527,6 +1562,9 @@ int ath12k_dp_ipa_register_is_ipa_ready(struct ath12k_base *ab)
 	int ret = 0;
 	struct ath12k_ipa *ipa_ctx;
 
+	if(!dp_ipa_enable())
+		return 0;
+
 	ipa_ctx = IPA_CTX(ab);
 	if (!ipa_ctx) {
 		ath12k_ipa_err(ab, "ipa_ctx is NULL");
@@ -1572,9 +1610,11 @@ EXPORT_SYMBOL(ath12k_dp_ipa_plugin_register_ops_extn);
 
 void ath12k_dp_ipa_plugin_deregister_ops_extn(struct ath12k_base *ab)
 {
-	ath12k_info(ab, "De-register IPA_OFFLAD hdl:%d",ab->ath12k_base_extn.ipa_ctx->hdl);
-	ath12k_dp_ipa_uc_ol_deinit(ab);
-	ath12k_dp_ipa_arch_op_srng_cleanup(ab);
+	if (dp_ipa_enable()) {
+		ath12k_info(ab, "De-register IPA_OFFLAD hdl:%d",ab->ath12k_base_extn.ipa_ctx->hdl);
+		ath12k_dp_ipa_uc_ol_deinit(ab);
+		ath12k_dp_ipa_arch_op_srng_cleanup(ab);
+	}
 	g_ipa_is_ready = false;
 	IPA_CTX(ab)->arch_ops = NULL;
 	ath12k_dp_ipa_detach(ab);
@@ -1801,16 +1841,6 @@ int wlan_ipa_check_iface_netdev_sessid(struct ath12k_ipa_iface_context *iface_ct
 	return 0;
 }
 
-static inline bool wlan_ipa_is_enabled(struct ath12k_ipa_config *ipa_cfg)
-{
-	return ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, ATH12K_IPA_ENABLE_MASK);
-}
-
-bool ipa_config_is_enabled(void)
-{
-	return g_ipa_config ? wlan_ipa_is_enabled(g_ipa_config) : 0;
-}
-
 static inline bool
 wlan_ipa_is_two_tx_pipes_enabled(struct ath12k_ipa_config *ipa_cfg)
 {
@@ -1820,8 +1850,7 @@ wlan_ipa_is_two_tx_pipes_enabled(struct ath12k_ipa_config *ipa_cfg)
 
 bool ipa_config_is_two_tx_pipes_enabled(void)
 {
-	return g_ipa_config ? (ipa_config_is_enabled() ?
-		wlan_ipa_is_two_tx_pipes_enabled(g_ipa_config) : 0) : 0;
+	return dp_ipa_enable() ? wlan_ipa_is_two_tx_pipes_enabled(g_ipa_config) : 0;
 }
 
 static inline char
@@ -1850,7 +1879,7 @@ static void dp_ipa_setup_iface_session_id(struct ipa_wdi_reg_intf_in_params *in,
 
 bool ipa_config_is_vlan_enabled(void)
 {
-	if (!ipa_config_is_enabled())
+	if (!dp_ipa_enable())
 		return false;
 
 	return g_ipa_config ? g_ipa_config->ipa_vlan_support : 0;
@@ -2241,6 +2270,9 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 	bool is_2g_iface = band == NL80211_BAND_2GHZ ? true : false;
 	bool is_tx1_used = false;
 	int i;
+
+	if(!dp_ipa_enable())
+		return 0;
 
 	if (!ipa_ctx) {
 		ath12k_info(NULL, "IPA context is NULL\n");
@@ -2745,9 +2777,7 @@ EXPORT_SYMBOL(ath12k_wlan_ipa_is_sta_only_offload_enabled);
 
 bool ath12k_ipa_config_is_enabled(void)
 {
-	return g_ipa_config
-		? ATH12K_IPA_IS_CONFIG_ENABLED(g_ipa_config, ATH12K_IPA_UC_ENABLE_MASK)
-		: 0;
+	return dp_ipa_enable();
 }
 EXPORT_SYMBOL(ath12k_ipa_config_is_enabled);
 
@@ -2762,6 +2792,9 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	struct wlan_ipa_evt_wq_args *ev;
 	struct net_device *dev;
 	struct ieee80211_chanctx_conf *chanctx = &arvif->chanctx;
+
+	if(!dp_ipa_enable())
+		return;
 
 	if (!ipa_global_ctx) {
 		ath12k_err(ab, "Invalid ipa_global_ctx\n");
@@ -2904,7 +2937,7 @@ EXPORT_SYMBOL(ath12k_ipa_send_uc_offload_enable_disable);
 
 bool ath12k_wlan_ipa_is_enabled(struct ath12k_ipa_config *ipa_cfg)
 {
-	return ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, ATH12K_IPA_ENABLE_MASK);
+	return ipa_enabled(ipa_cfg);
 }
 EXPORT_SYMBOL(ath12k_wlan_ipa_is_enabled);
 
@@ -3046,6 +3079,9 @@ ath12k_dp_ipa_peer_unmap_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_
 	bool mlo;
 	u16 session_id;
 
+	if (!dp_ipa_enable())
+		return;
+
 	rcu_read_lock();
 
 	arvif = ath12k_mac_get_arvif_by_vdev_id(ab, vdev_id);
@@ -3095,6 +3131,9 @@ ath12k_dp_ipa_peer_map_event_wds(struct ath12k_base *ab, u8 vdev_id, u16 peer_id
 	bool mlo;
 	u16 session_id;
 	int link_id;
+
+	if (!dp_ipa_enable())
+		return;
 
 	rcu_read_lock();
 

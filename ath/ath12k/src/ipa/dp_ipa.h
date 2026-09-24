@@ -174,6 +174,7 @@ struct ipa_header {
 
 int ath12k_dp_ipa_plugin_register_ops_extn(struct ath12k_base *ab);
 void ath12k_dp_ipa_plugin_deregister_ops_extn(struct ath12k_base *ab);
+void ath12k_ipa_update_ipa_config(struct ath12k_base *ab);
 
 int ath12k_dp_ipa_pci_smmu_fault_handler(struct iommu_domain *domain,
 					 struct device *dev, unsigned long iova,
@@ -938,9 +939,9 @@ int ath12k_dp_ipa_setup(struct ath12k_ipa *ipa_ctx);
 int ath12k_dp_ipa_perf_init_perf_level(struct ath12k_ipa *ipa_ctx);
 bool ath12k_dp_ipa_perf_set_perf_level_bw_enabled(struct ath12k_ipa *ipa_ctx);
 
-static inline bool dp_ipa_enable(void)
+static inline bool ipa_enabled(struct ath12k_ipa_config *ipa_cfg)
 {
-	return true;
+	return ATH12K_IPA_IS_CONFIG_ENABLED(ipa_cfg, ATH12K_IPA_ENABLE_MASK);
 }
 
 struct wlan_ipa_evt_wq_args {
@@ -1078,6 +1079,7 @@ int ath12k_dp_ipa_sg_tbl_setup(struct device *dev, struct sg_table *sgt,
 			       void *cpu_addr, dma_addr_t dma_addr, size_t size);
 void ath12k_dp_ipa_mac80211_rx(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
 			       struct sk_buff *skb);
+bool dp_ipa_enable(void);
 
 static inline void
 ath12k_dp_ipa_arch_op_ipa_iface_setup_set_metadata(struct ath12k_ipa *ipa_ctx,

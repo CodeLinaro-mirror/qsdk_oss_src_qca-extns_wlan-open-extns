@@ -7,6 +7,7 @@
 #include <linux/types.h>
 #include <linux/skbuff.h>
 #include <net/mac80211.h>
+#include <net/cfg80211.h>
 #include <linux/ieee80211.h>
 #include <linux/bitfield.h>
 #include "../core.h"
@@ -108,6 +109,38 @@ static void ath12k_handle_tx_completion(struct ath12k *ar,
 	ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
 		   "SUCCESS: All packets completed, calling drain to cleanup tracking list\n");
 	ath12k_home_offchan_tx_drain(raw_pkt_ctx);
+}
+
+void ath12k_update_scan_radio_data_tx_stats_extn(struct ath12k *ar,
+							struct sk_buff *msdu,
+							u32 status)
+{
+	struct ath12k_skb_cb *skb_cb;
+	struct ieee80211_hdr *hdr;
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+	struct ath12k_mgmt_frame_stats *mgmt_stats;
+
+	if (!ar || !msdu)
+		return;
+
+	skb_cb = ATH12K_SKB_CB(msdu);
+	vif = skb_cb->vif;
+	if (!vif ||
+	    !wdev_is_scan_radio(ieee80211_vif_to_wdev(vif)))
+		return;
+
+	hdr = (struct ieee80211_hdr *)msdu->data;
+	if (!ieee80211_is_data(hdr->frame_control))
+		return;
+
+	ath12k_dbg_level(ar->ab, ATH12K_DBG_MLME, ATH12K_DBG_L0,
+			 "Tx completion for DATA frame to STA %pM status %u\n",
+			 hdr->addr1, status);
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+	mgmt_stats = &ahvif->mgmt_stats;
+	ath12k_mgmt_tx_status_stats(mgmt_stats, msdu, status);
 }
 
 void ath12k_custom_tx_free_extn(struct sk_buff *skb, u32 status)

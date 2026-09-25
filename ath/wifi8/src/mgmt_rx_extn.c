@@ -20,7 +20,7 @@
 #include "../../debug.h"
 #include "../../core.h"
 
-#define MGMT_REO_DST_HIGH_PRIO_RING_SIZE 128
+#define MGMT_REO_DST_HIGH_PRIO_RING_SIZE 64
 
 enum ath12k_mgmt_srng_pkt_type_extn {
 	ATH12K_MGMT_SRNG_PKT_TYPE_EXTN_RX_HIGHPRI = ATH12K_MGMT_SRNG_PKT_TYPE_MAX,
@@ -165,6 +165,16 @@ int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, 
 	if (len < size)
 		len += ath12k_hal_dump_ring_stats(ab, HAL_REO_DST_HIGH_PRIO, ring_id,
 						  buf + len, size - len);
+
+	return len;
+}
+
+int ath12k_wifi8_mgmt_dump_ring_sizes_extn(struct ath12k_mgmt *mgmt, char *buf, int size)
+{
+	int len = 0;
+
+	len += scnprintf(buf + len, size - len, "highpri_ring_size:  %u\n",
+			 MGMT_REO_DST_HIGH_PRIO_RING_SIZE);
 
 	return len;
 }

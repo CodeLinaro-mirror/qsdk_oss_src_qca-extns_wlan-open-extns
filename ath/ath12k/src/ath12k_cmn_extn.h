@@ -2024,6 +2024,14 @@ int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, 
 					   int len);
 
 /**
+ * ath12k_wifi8_mgmt_dump_ring_sizes_extn - Dump mgmt ring sizes including highpri
+ * @mgmt: ath12k_mgmt instance
+ * @buf: Buffer to write sizes
+ * @size: Max size of the buffer
+ */
+int ath12k_wifi8_mgmt_dump_ring_sizes_extn(struct ath12k_mgmt *mgmt, char *buf, int size);
+
+/**
  * ath12k_control_beaconing_bootup_cac_check_extn - Check boot-up CAC state
  * and defer vdev_up if DFS CAC is still in progress.
  *

@@ -153,8 +153,9 @@ int ath12k_wifi8_mgmt_rx_deliver_mmpdu_extn(struct ath12k_mgmt *mgmt,
 	return 0;
 }
 
-int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
-					   int len)
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt,
+					   const struct ath12k_srng_dump_filter *filter,
+					   char *buf, int size, int len)
 {
 	struct ath12k_mgmt_wifi8 *mgmt_wifi8 = ath12k_get_mgmt_wifi8(mgmt);
 	struct mgmt_srng_extn *rx_highpri_ring =
@@ -164,7 +165,7 @@ int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, 
 
 	if (len < size)
 		len += ath12k_hal_dump_ring_stats(ab, HAL_REO_DST_HIGH_PRIO, ring_id,
-						  buf + len, size - len);
+						  filter, buf + len, size - len);
 
 	return len;
 }

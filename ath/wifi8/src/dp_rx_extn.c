@@ -170,6 +170,20 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			status->flag &= ~RX_FLAG_8023;
 		}
 
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+		if (peer->is_mmesh_peer && (status->flag & RX_FLAG_8023)) {
+			if (ath12k_dp_mesh_rx_filter_mesh_packets(dp_pdev->dp->ab, peer,
+								  rx_spd)) {
+				DP_PEER_MISC_STATS_INC(peer, mmesh_stat,
+						       filter_drop, 0, 1);
+				dev_kfree_skb(msdu);
+				return;
+			}
+			ath12k_dp_rx_fill_mesh_metadata(dp_pdev, peer, msdu, rx_spd);
+			ieee80211_mark_mmesh_frame(status);
+		}
+#endif
+
 		rx_status = IEEE80211_SKB_RXCB(msdu);
 		*rx_status = *status;
 

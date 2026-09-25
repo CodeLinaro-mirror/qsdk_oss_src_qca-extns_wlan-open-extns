@@ -581,6 +581,20 @@ ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
 	return false;
 }
 
+static inline bool
+ieee80211_diagnostic_sta_active_extn(struct ieee80211_local *local,
+				     int target_radio_idx)
+{
+	return false;
+}
+
+static inline bool
+ieee80211_any_ap_mon_vap_up_extn(struct ieee80211_local *local,
+				 int target_radio_idx)
+{
+	return false;
+}
+
 static inline void
 ieee80211_disconnect_diagnostic_sta_on_ctx_extn(struct ieee80211_local *local,
 					        struct ieee80211_chanctx *ctx,
@@ -678,6 +692,14 @@ ieee80211_clamp_scan_to_ap_channel_extn(struct ieee80211_sub_if_data *sdata,
 bool
 ieee80211_diagnostic_sta_blocks_bss_extn(struct ieee80211_sub_if_data *sdata,
 					 struct cfg80211_bss *bss);
+
+bool
+ieee80211_diagnostic_sta_active_extn(struct ieee80211_local *local,
+				     int target_radio_idx);
+
+bool
+ieee80211_any_ap_mon_vap_up_extn(struct ieee80211_local *local,
+				 int target_radio_idx);
 
 void
 ieee80211_disconnect_diagnostic_sta_on_ctx_extn(struct ieee80211_local *local,

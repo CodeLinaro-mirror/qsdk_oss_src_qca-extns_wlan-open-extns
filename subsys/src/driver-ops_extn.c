@@ -1578,6 +1578,7 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	struct ieee80211_sub_if_data *sdata;
 	struct net_device *dev;
 	struct ieee80211_bss_conf *local_mesh_bss_conf;
+	bool mesh_gtk_check = true;
 	u8 link_id;
 	int ret;
 
@@ -1600,10 +1601,15 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	local_mesh_bss_conf = wiphy_dereference(wiphy,
 		sdata->vif.link_conf[link_id]);
 
+	if (sdata->wdev.vap_submode == IEEE80211_EXTN_VAP_SUBMODE_RAW_MODE_MESH ||
+	    sdata->wdev.vap_submode == IEEE80211_EXTN_VAP_SUBMODE_ETH_OFFLOAD_MESH)
+		mesh_gtk_check = false;
+
+
 	/* Reject peer addition for WPA2/WPA3 VAPs when no GTK source key is
 	 * installed. Open-BSS VAPs are exempt — they authorize the peer
 	 * directly without key installation. */
-	if (ieee80211_mesh_bss_is_secured(local_mesh_bss_conf) &&
+	if (mesh_gtk_check && ieee80211_mesh_bss_is_secured(local_mesh_bss_conf) &&
 	    !ieee80211_mesh_vap_gtk_installed(sdata, link_id,
 					      local_mesh_bss_conf->bss_conf_extn->mesh_bss_caps.rsn_conf)) {
 		pr_err("%s: mesh peer add rejected - no GTK installed on %s\n",

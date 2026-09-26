@@ -1361,6 +1361,9 @@ struct ath12k_link_vif *ath12k_wifi7_mgmt_handler_extn(struct ieee80211_hw *hw,
 						       struct sk_buff *skb);
 
 void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab);
+struct ath12k_link_vif *ath12k_wifi8_mgmt_handler_extn(struct ieee80211_hw *hw,
+						       struct ieee80211_vif *vif,
+						       struct sk_buff *skb);
 
 
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,

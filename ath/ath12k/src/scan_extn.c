@@ -6,6 +6,7 @@
 #include <linux/types.h>
 #include "../wmi.h"
 #include "ath12k_cmn_extn.h"
+#include "ini.h"
 #include "../core.h"
 
 /**
@@ -67,6 +68,12 @@ void ath12k_wmi_start_scan_init_extn(struct ath12k *ar,
 				     struct ath12k_wmi_scan_req_arg *arg)
 {
 	arg->extn.scan_start_offset = 0;
+	arg->repeat_probe_time =
+		ath12k_cfg_get(ar->ab, ATH12K_CFG_SCAN_REPEAT_PROBE_TIME);
+	arg->probe_spacing_time =
+		ath12k_cfg_get(ar->ab, ATH12K_CFG_SCAN_PROBE_SPACING_TIME);
+	arg->probe_delay =
+		ath12k_cfg_get(ar->ab, ATH12K_CFG_SCAN_PROBE_DELAY);
 }
 
 /**

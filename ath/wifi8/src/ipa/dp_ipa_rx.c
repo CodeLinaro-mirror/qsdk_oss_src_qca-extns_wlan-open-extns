@@ -394,8 +394,11 @@ int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool creat
 	int i, j, ret = 0;
 
 	if (!ipa_is_ready()) {
-		ath12k_ipa_err(ab, "IPA is not ready");
-		return 0;
+		if (create) {
+			ath12k_ipa_err(ab, "IPA is not ready for RX buf map");
+			return -EAGAIN;
+		}
+		ath12k_ipa_err(ab, "IPA not ready during RX buf unmap, forcing cleanup");
 	}
 
 	spin_lock_bh(&dp->rx_desc_lock);

@@ -7,7 +7,11 @@
 #include "../../../qcn_extns/ipa/dp_ipa.h"
 #include "../../hal.h"
 #include <linux/iommu.h>
+#include <linux/netdevice.h>
 #include "../../../qcn_extns/ini.h"
+#include <linux/seq_file.h>
+
+#define ATH12K_TQM2SW6_POLL_INTERVAL_MS    10
 
 /*
  * Global VP-to-netdev mapping table indexed by ahvif_id.
@@ -301,6 +305,7 @@ static void ath12k_wifi8_dp_ipa_tx_srng_cleanup(struct ath12k_base *ab)
 
 	ath12k_dp_srng_cleanup(ab, &dp_wifi8_ipa->tqm2ipa_ring);
 	ath12k_dp_srng_cleanup(ab, &dp_wifi8_ipa->ipa2tcl_ring);
+	ath12k_dp_srng_cleanup(ab, &dp_wifi8_ipa->tqm2sw6_ring);
 }
 
 /**
@@ -362,6 +367,14 @@ static int ath12k_wifi8_dp_ipa_tx_srng_setup(struct ath12k_base *ab)
 	ath12k_ipa_info(ab, "setup tqm2ipa ring_id=%d paddr=%pad",
 			dp_wifi8_ipa->tqm2ipa_ring.ring_id,
 			&dp_wifi8_ipa->tqm2ipa_ring.paddr);
+
+	ret = ath12k_dp_srng_setup(ab, &dp_wifi8_ipa->tqm2sw6_ring, HAL_TX_COMPLETION, 6, 0,
+				   tqm2ipa_ring_sz);
+
+	if (ret) {
+		ath12k_ipa_err(ab, "tqm2sw6 ring alloc/init failed: %d", ret);
+		return 0;
+	}
 
 	return 0;
 
@@ -798,11 +811,219 @@ int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab)
 		goto err_srng_cleanup;
 	}
 
+	ret = ath12k_wifi8_dp_ipa_tqm2sw6_poller_start(ab);
+	if (ret) {
+		ath12k_ipa_err(ab, "tqm2sw6 poller start failed: %d", ret);
+		goto err_buf_free;
+	}
+
 	return 0;
 
+err_buf_free:
+	ath12k_wifi8_dp_ipa_tx_buf_free(ab);
 err_srng_cleanup:
 	ath12k_wifi8_dp_ipa_tx_srng_cleanup(ab);
 	return ret;
+}
+
+/**
+ * ath12k_wifi8_dp_ipa_tqm2sw6_handler() - Dummy handler for tqm2sw6 ring
+ * @dp: Pointer to ath12k datapath structure
+ * @budget: Maximum number of ring entries to drain
+ *
+ * Experimental interrupt handler for the tqm2sw6 TX completion ring.
+ * Uses the nolock srng access APIs (caller holds no lock; the begin/end
+ * pair re-arms the ring interrupt internally).  Drains available entries
+ * up to budget, counts them, and prints the total.
+ *
+ * Return: Number of entries processed.
+ */
+int ath12k_wifi8_dp_ipa_tqm2sw6_handler(struct ath12k_dp *dp, int budget)
+{
+	struct ath12k_base *ab = dp->ab;
+	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa;
+	struct hal_tqm2sw_completion_ring *tx_desc;
+	struct hal_srng *srng;
+	dma_addr_t paddr;
+	u32 failed_refill = 0;
+	u32 desc_id;
+	u8 rbm;
+	int valid_entries;
+	int count = 0;
+
+	if (!dp_wifi8)
+		return 0;
+
+	dp_wifi8_ipa = ath12k_wifi8_get_ipa_dp(dp_wifi8);
+	if (!dp_wifi8_ipa)
+		return 0;
+
+	srng = &ab->hal.srng_list[dp_wifi8_ipa->tqm2sw6_ring.ring_id];
+
+	ath12k_hal_srng_access_dst_ring_begin_nolock(ab, srng);
+
+	valid_entries = __ath12k_hal_srng_dst_num_free(srng, false);
+	if (!valid_entries) {
+		ath12k_hal_srng_access_dst_ring_end_nolock(srng);
+		dp_wifi8_ipa->tqm2sw6_stats.napi_empty_polls++;
+		return 0;
+	}
+
+	if (valid_entries > budget)
+		valid_entries = budget;
+
+	while (valid_entries--) {
+		tx_desc = __ath12k_hal_srng_dst_get_next_cached_entry(srng, NULL);
+		if (!tx_desc)
+			break;
+		count++;
+		paddr = ((u64)(le32_get_bits(tx_desc->buf_addr_info.info1,
+					     BUFFER_ADDR_INFO1_ADDR)) << 32) |
+			le32_get_bits(tx_desc->buf_addr_info.info0,
+				      BUFFER_ADDR_INFO0_ADDR);
+		desc_id = le32_get_bits(tx_desc->buf_addr_info.info1,
+				       BUFFER_ADDR_INFO1_SW_COOKIE);
+		rbm = le32_get_bits(tx_desc->buf_addr_info.info1,
+				    BUFFER_ADDR_INFO1_RET_BUF_MGR);
+		if (ath12k_wifi8_dp_tx_exception_to_tx_comp(dp, paddr, rbm, desc_id))
+			failed_refill++;
+	}
+
+	ath12k_hal_srng_access_dst_ring_end_nolock(srng);
+
+	dp_wifi8_ipa->tqm2sw6_stats.entries_processed += count;
+	dp_wifi8_ipa->tqm2sw6_stats.last_poll_count = count;
+	dp_wifi8_ipa->tqm2sw6_stats.failed_refill = failed_refill;
+	dp_wifi8_ipa->tqm2sw6_stats.rbm = rbm;
+	dp_wifi8_ipa->tqm2sw6_stats.cookie = desc_id;
+	if (count > dp_wifi8_ipa->tqm2sw6_stats.max_entries_per_poll)
+		dp_wifi8_ipa->tqm2sw6_stats.max_entries_per_poll = count;
+
+	return count;
+}
+
+/**
+ * ath12k_dp_ipa_tqm2sw6_poll() - NAPI poll function for tqm2sw6 ring
+ * @napi:   NAPI instance embedded in tqm2sw6_napi_ctxt
+ * @budget: Maximum entries the NAPI layer allows us to process
+ *
+ * Mirrors ath12k_dp_ppeds_tx_comp_poll(): calls the ring handler, and if
+ * work done is below budget completes the NAPI cycle so the timer can
+ * re-schedule it on the next interval.
+ *
+ * Return: Number of entries processed (capped at budget).
+ */
+static int ath12k_dp_ipa_tqm2sw6_poll(struct napi_struct *napi, int budget)
+{
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa =
+		container_of(napi, struct ath12k_dp_wifi8_ipa,
+			     tqm2sw6_napi_ctxt.napi);
+	struct ath12k_dp *dp = ath12k_get_dp(dp_wifi8_ipa->dp_wifi8);
+	int work_done;
+
+	dp_wifi8_ipa->tqm2sw6_stats.napi_polls++;
+
+	work_done = ath12k_wifi8_dp_ipa_tqm2sw6_handler(dp, budget);
+
+	if (budget > work_done) {
+		napi_complete(napi);
+		dp_wifi8_ipa->tqm2sw6_stats.napi_complete_cnt++;
+	}
+
+	return (work_done > budget) ? budget : work_done;
+}
+
+/**
+ * ath12k_dp_ipa_tqm2sw6_poll_timer() - Periodic timer to drive tqm2sw6 NAPI
+ * @t: Kernel timer list embedded in dp_wifi8_ipa
+ *
+ * Schedules the tqm2sw6 NAPI poll and re-arms the timer for the next
+ * interval.  Replaces the IRQ handler used by the PPE DS path.
+ */
+static void ath12k_dp_ipa_tqm2sw6_poll_timer(struct timer_list *t)
+{
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa =
+		from_timer(dp_wifi8_ipa, t, tqm2sw6_poll_timer);
+
+	dp_wifi8_ipa->tqm2sw6_stats.timer_fires++;
+	napi_schedule(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
+	mod_timer(&dp_wifi8_ipa->tqm2sw6_poll_timer,
+		  jiffies + msecs_to_jiffies(ATH12K_TQM2SW6_POLL_INTERVAL_MS));
+}
+
+/**
+ * ath12k_wifi8_dp_ipa_tqm2sw6_poller_start() - Set up tqm2sw6 NAPI poller
+ * @ab: Device base pointer
+ *
+ * Initialises a dummy netdev + NAPI context and starts the periodic
+ * timer that drives ring polling.  Must be called after the tqm2sw6_ring
+ * has been set up by ath12k_wifi8_dp_ipa_tx_srng_setup().
+ *
+ * Return: 0 on success, negative errno on failure.
+ */
+int ath12k_wifi8_dp_ipa_tqm2sw6_poller_start(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa;
+	struct net_device *ndev;
+
+	if (!dp_wifi8)
+		return -EINVAL;
+
+	dp_wifi8_ipa = ath12k_wifi8_get_ipa_dp(dp_wifi8);
+	if (!dp_wifi8_ipa)
+		return -EINVAL;
+
+	/* Replicate init_dummy_netdev() which is static in net/core/dev.c */
+	ndev = &dp_wifi8_ipa->tqm2sw6_napi_ctxt.ndev;
+	INIT_LIST_HEAD(&ndev->napi_list);
+	ndev->reg_state = NETREG_DUMMY;
+	set_bit(__LINK_STATE_PRESENT, &ndev->state);
+	set_bit(__LINK_STATE_START, &ndev->state);
+
+	netif_napi_add_weight(ndev,
+			      &dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi,
+			      ath12k_dp_ipa_tqm2sw6_poll,
+			      NAPI_POLL_WEIGHT);
+
+	napi_enable(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
+
+	timer_setup(&dp_wifi8_ipa->tqm2sw6_poll_timer,
+		    ath12k_dp_ipa_tqm2sw6_poll_timer, 0);
+	mod_timer(&dp_wifi8_ipa->tqm2sw6_poll_timer,
+		  jiffies + msecs_to_jiffies(ATH12K_TQM2SW6_POLL_INTERVAL_MS));
+
+	dp_wifi8_ipa->tqm2sw6_stats.poller_start_cnt++;
+	return 0;
+}
+
+/**
+ * ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop() - Tear down tqm2sw6 NAPI poller
+ * @ab: Device base pointer
+ *
+ * Stops the poll timer, disables NAPI, and removes the NAPI context.
+ * Must be called before the tqm2sw6_ring is cleaned up.
+ */
+void ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop(struct ath12k_base *ab)
+{
+	struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+	struct ath12k_dp_wifi8 *dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa;
+
+	if (!dp_wifi8)
+		return;
+
+	dp_wifi8_ipa = ath12k_wifi8_get_ipa_dp(dp_wifi8);
+	if (!dp_wifi8_ipa)
+		return;
+
+	del_timer_sync(&dp_wifi8_ipa->tqm2sw6_poll_timer);
+	napi_disable(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
+	netif_napi_del(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
+
+	dp_wifi8_ipa->tqm2sw6_stats.poller_stop_cnt++;
 }
 
 /**
@@ -817,8 +1038,148 @@ err_srng_cleanup:
  */
 void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab)
 {
+	ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop(ab);
 	ath12k_wifi8_dp_free_tx_rsrc(ab);
 	ath12k_wifi8_dp_ipa_tx_buf_free(ab);
 	ath12k_wifi8_dp_ipa_tx_srng_cleanup(ab);
 }
 
+/* -------------------------------------------------------------------------
+ * Debugfs: tqm2sw6_stats
+ *
+ * Exposes tqm2sw6 ring and poller health counters under the per-pdev IPA
+ * debugfs directory.  Write "reset" to zero all counters.
+ * -------------------------------------------------------------------------
+ */
+
+static struct ath12k_dp_wifi8_ipa *
+tqm2sw6_dbg_get_ipa(struct ath12k *ar)
+{
+	struct ath12k_dp *dp;
+	struct ath12k_dp_wifi8 *dp_wifi8;
+
+	if (!ar || !ar->ab)
+		return NULL;
+	dp = ath12k_ab_to_dp(ar->ab);
+	if (!dp)
+		return NULL;
+	dp_wifi8 = ath12k_get_dp_wifi8(dp);
+	if (!dp_wifi8)
+		return NULL;
+	return ath12k_wifi8_get_ipa_dp(dp_wifi8);
+}
+
+static int ath12k_wifi8_tqm2sw6_stats_show(struct seq_file *file, void *data)
+{
+	struct ath12k *ar = file->private;
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa = tqm2sw6_dbg_get_ipa(ar);
+	struct ath12k_dp_wifi8_ipa_tqm2sw6_stats *s;
+	struct hal_srng *srng;
+	int ring_id;
+
+	if (!dp_wifi8_ipa)
+		return -ENODEV;
+
+	s = &dp_wifi8_ipa->tqm2sw6_stats;
+	ring_id = dp_wifi8_ipa->tqm2sw6_ring.ring_id;
+	srng = &ar->ab->hal.srng_list[ring_id];
+
+	seq_printf(file, "tqm2sw6 Ring Info:\n");
+	seq_printf(file, "  ring_id        : %d\n", ring_id);
+	seq_printf(file, "  ring_paddr     : %pad\n",
+		   &dp_wifi8_ipa->tqm2sw6_ring.paddr);
+	seq_printf(file, "  num_entries    : %u\n", srng->num_entries);
+	seq_printf(file, "  entry_size     : %u dwords\n", srng->entry_size);
+	seq_printf(file, "  poll_interval  : %d ms\n",
+		   ATH12K_TQM2SW6_POLL_INTERVAL_MS);
+
+	seq_printf(file, "\ntqm2sw6 Poller Lifecycle:\n");
+	seq_printf(file, "  poller_start_cnt : %llu\n", s->poller_start_cnt);
+	seq_printf(file, "  poller_stop_cnt  : %llu\n", s->poller_stop_cnt);
+
+	seq_printf(file, "\ntqm2sw6 NAPI / Timer Activity:\n");
+	seq_printf(file, "  timer_fires      : %llu\n", s->timer_fires);
+	seq_printf(file, "  napi_polls       : %llu\n", s->napi_polls);
+	seq_printf(file, "  napi_empty_polls : %llu\n", s->napi_empty_polls);
+	seq_printf(file, "  napi_complete    : %llu\n", s->napi_complete_cnt);
+
+	seq_printf(file, "\ntqm2sw6 Ring Throughput:\n");
+	seq_printf(file, "  entries_processed    : %llu\n", s->entries_processed);
+	seq_printf(file, "  max_entries_per_poll : %llu\n",
+		   s->max_entries_per_poll);
+	seq_printf(file, "  last_poll_count      : %u\n", s->last_poll_count);
+
+	seq_printf(file, "\ntqm2sw6 Refill stats:\n");
+	seq_printf(file, "  Rx Refill Failed : %u\n", s->failed_refill);
+	seq_printf(file, "  Cookie           : %u\n", s->cookie);
+	seq_printf(file, "  RBM              : %u\n", s->rbm);
+
+	return 0;
+}
+
+static int ath12k_wifi8_tqm2sw6_stats_open(struct inode *inode,
+					   struct file *file)
+{
+	return single_open(file, ath12k_wifi8_tqm2sw6_stats_show,
+			   inode->i_private);
+}
+
+static ssize_t ath12k_wifi8_tqm2sw6_stats_write(struct file *file,
+						 const char __user *ubuf,
+						 size_t count, loff_t *ppos)
+{
+	struct seq_file *seq = file->private_data;
+	struct ath12k *ar;
+	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa;
+	char buf[32] = {0};
+	ssize_t len;
+
+	if (!seq)
+		return -EINVAL;
+
+	ar = seq->private;
+	dp_wifi8_ipa = tqm2sw6_dbg_get_ipa(ar);
+	if (!dp_wifi8_ipa)
+		return -ENODEV;
+
+	if (count == 0 || count >= sizeof(buf))
+		return -EINVAL;
+
+	len = simple_write_to_buffer(buf, sizeof(buf) - 1, ppos, ubuf, count);
+	if (len < 0)
+		return len;
+
+	buf[len] = '\0';
+
+	if (strstr(buf, "reset")) {
+		memset(&dp_wifi8_ipa->tqm2sw6_stats, 0,
+		       sizeof(dp_wifi8_ipa->tqm2sw6_stats));
+		return count;
+	}
+
+	return -EINVAL;
+}
+
+static const struct file_operations fops_tqm2sw6_stats = {
+	.read    = seq_read,
+	.write   = ath12k_wifi8_tqm2sw6_stats_write,
+	.open    = ath12k_wifi8_tqm2sw6_stats_open,
+	.llseek  = seq_lseek,
+	.release = single_release,
+	.owner   = THIS_MODULE,
+};
+
+/**
+ * ath12k_wifi8_debugfs_register_tqm2sw6() - Register tqm2sw6_stats debugfs file
+ * @ar: Radio (pdev) for which to create the entry
+ *
+ * Creates "tqm2sw6_stats" under the per-pdev IPA debugfs directory.
+ * Called via ipa_ctx->arch_ops->debugfs_register() from
+ * ath12k_debugfs_register_ipa_extn().
+ */
+void ath12k_wifi8_debugfs_register_tqm2sw6(struct ath12k *ar)
+{
+	debugfs_create_file("tqm2sw6_stats", 0600,
+			    ar->debug.debugfs_pdev, ar,
+			    &fops_tqm2sw6_stats);
+}

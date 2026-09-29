@@ -141,6 +141,7 @@ static const struct ieee80211_ops_extn ath12k_ops_wifi7_extn = {
 	.get_240mhz_cap_extn = ath12k_get_240_mhz_cap_extn,
 	.validate_6ghz_chandef_extn = ath12k_validate_6ghz_chandef_extn,
 	.nol_regdom_change_locked_extn = ath12k_nol_regdom_change_locked_extn,
+	.get_best_scan_radio_6ghz_power_mode = ath12k_get_best_6ghz_power_extn,
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	.mesh_peer_update_caps_extn = ath12k_mac_op_mesh_peer_update_caps_extn,
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */

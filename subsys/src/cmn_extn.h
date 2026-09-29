@@ -507,6 +507,16 @@ ieee80211_validate_6ghz_chandef_extn(struct ieee80211_local *local,
 	return 0;
 }
 
+static inline int
+ieee80211_get_scan_radio_best_6ghz_pm_extn(struct ieee80211_local *local,
+					   struct ieee80211_vif *vif,
+					   u32 freq,
+					   u32 center_freq,
+					   u16 bw)
+{
+	return -EOPNOTSUPP;
+}
+
 static inline void
 ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local)
 {
@@ -655,6 +665,11 @@ int ieee80211_validate_6ghz_chandef_extn(struct ieee80211_local *local,
 					 enum ieee80211_ap_reg_power power_type);
 
 void ieee80211_nol_regdom_change_locked_extn(struct ieee80211_local *local);
+int ieee80211_get_scan_radio_best_6ghz_pm_extn(struct ieee80211_local *local,
+					  struct ieee80211_vif *vif,
+				          u32 freq,
+				          u32 center_freq,
+				          u16 bw);
 
 void
 ieee80211_bss_240mhz_to_sta_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
@@ -877,6 +892,12 @@ struct ieee80211_ops_extn {
 					  const struct cfg80211_chan_def *chandef,
 					  enum ieee80211_ap_reg_power power_type);
 	void (*nol_regdom_change_locked_extn)(struct ieee80211_hw *hw);
+	enum nl80211_regulatory_power_modes
+		(*get_best_scan_radio_6ghz_power_mode)(struct ieee80211_hw *hw,
+						       struct ieee80211_vif *vif,
+						       u32 freq,
+						       u32 center_freq,
+						       u16 bw);
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	int (*mesh_peer_update_caps_extn)(struct ieee80211_hw *hw,
 					  struct ieee80211_vif *vif,

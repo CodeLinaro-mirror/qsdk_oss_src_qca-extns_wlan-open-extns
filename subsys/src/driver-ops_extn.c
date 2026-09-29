@@ -451,6 +451,18 @@ void drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
 }
 EXPORT_SYMBOL(drv_notify_diagnostic_sta_disconnect);
 
+int ieee80211_get_scan_radio_best_6ghz_pm_extn(struct ieee80211_local *local,
+					       struct ieee80211_vif *vif,
+					       u32 freq,
+					       u32 center_freq,
+					       u16 bw)
+{
+	if (!local->ops_extn || !local->ops_extn->get_best_scan_radio_6ghz_power_mode)
+		return -EOPNOTSUPP;
+	return local->ops_extn->get_best_scan_radio_6ghz_power_mode(&local->hw, vif,
+						freq, center_freq, bw);
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)
 {

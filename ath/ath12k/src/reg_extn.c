@@ -2037,3 +2037,229 @@ bool ath12k_change_6g_txpow_sta_mode_validate_extn(struct ath12k *ar,
 	ieee80211_disconnect(vif, false);
 	return true;
 }
+
+static enum wmi_reg_6g_ap_type
+ath12k_nl80211_ap_pwr_type_convert(enum nl80211_regulatory_power_modes pwr_mode)
+{
+	switch (pwr_mode) {
+	case NL80211_REG_AP_LPI:
+		return WMI_REG_INDOOR_AP;
+	case NL80211_REG_AP_VLP:
+		return WMI_REG_VLP_AP;
+	case NL80211_REG_AP_SP:
+		return WMI_REG_STD_POWER_AP;
+	default:
+		return WMI_REG_CURRENT_MAX_AP_TYPE;
+	}
+}
+
+/**
+ * ath12k_get_chan_from_freq - look up a channel by center frequency
+ * @chans: channel list to search
+ * @n_channels: number of chans
+ * @freq: center frequency in MHz
+ *
+ * Return: matching channel pointer, or NULL if not found
+ */
+static const struct ieee80211_channel *ath12k_get_chan_from_freq(
+				const struct ieee80211_channel *chans,
+				int n_channels,
+				u32 freq)
+{
+	const struct ieee80211_channel *chan = NULL;
+	u8 j;
+
+	for (j = 0; j < n_channels; j++) {
+		if (chans[j].center_freq == freq) {
+			chan = &chans[j];
+			break;
+		}
+	}
+	return chan;
+}
+
+/**
+ * ath12k_get_allsubchans_min_eirp - minimum EIRP across all 20 MHz subchannels
+ * @ar: radio instance
+ * @chan_6g: per-power-mode 6 GHz channel list
+ * @freq: primary channel center frequency in MHz
+ * @center_freq: channel center frequency in MHz
+ * @bw: channel bandwidth in MHz
+ *
+ * Iterates every 20 MHz subchannel and returns the minimum EIRP.
+ * Returns %ATH12K_MIN_TX_POWER if any subchannel is absent or disabled.
+ * A NO_IR subchannel contributes %ATH12K_MIN_SELECTABLE_TX_POWER so it still
+ * beats the "no valid mode" sentinel while keeping TX blocked.
+ *
+ * Return: minimum EIRP across all subchannels
+ */
+static s16 ath12k_get_allsubchans_min_eirp(struct ath12k *ar,
+					   const struct ieee80211_6ghz_channel *chan_6g,
+					   u32 freq,
+					   u32 center_freq,
+					   u16 bw)
+{
+	u32 sub_freq = ath12k_get_chan_start_freq(freq, center_freq, bw);
+	s16 mode_eirp = ATH12K_MAX_TX_POWER;
+	u8 i, num_sub = bw / 20;
+
+	for (i = 0; i < num_sub; i++, sub_freq += 20) {
+		const struct ieee80211_channel *chan;
+		s16 sub_eirp;
+
+		chan = ath12k_get_chan_from_freq(chan_6g->channels,
+						 chan_6g->n_channels,
+						 sub_freq);
+		if (!chan || chan->flags & IEEE80211_CHAN_DISABLED)
+			return ATH12K_MIN_TX_POWER;
+
+		if (chan->flags & IEEE80211_CHAN_NO_IR) {
+			sub_eirp = ATH12K_MIN_SELECTABLE_TX_POWER;
+		} else {
+			sub_eirp = chan->max_power;
+			if (chan->flags & IEEE80211_CHAN_PSD) {
+				s16 psd_eirp;
+
+				psd_eirp = ath12k_reg_psd_2_eirp(chan->psd, bw);
+				sub_eirp = min(sub_eirp, psd_eirp);
+			}
+		}
+		mode_eirp = min(mode_eirp, sub_eirp);
+	}
+
+	return mode_eirp;
+}
+
+/**
+ * ath12k_get_subchan_mode_eirp - effective EIRP for a channel under a power mode
+ * @ar: radio instance
+ * @chan_6g: per-power-mode 6 GHz channel list
+ * @pwr_mode: 6 GHz regulatory power mode (LPI / VLP / SP)
+ * @freq: primary channel center frequency in MHz
+ * @center_freq: channel center frequency in MHz
+ * @bw: channel bandwidth in MHz
+ *
+ * For SP, further constrains the result by the per-channel EIRP from the
+ * AFC.
+ *
+ * Return: effective EIRP in dBm
+ */
+static s16 ath12k_get_subchan_mode_eirp(struct ath12k *ar,
+					const struct ieee80211_6ghz_channel *chan_6g,
+					enum nl80211_regulatory_power_modes pwr_mode,
+					u32 freq,
+					u32 center_freq,
+					u16 bw)
+{
+	s16 mode_eirp = ath12k_get_allsubchans_min_eirp(ar,
+							chan_6g,
+							freq,
+							center_freq,
+							bw);
+
+	if (pwr_mode != NL80211_REG_AP_SP)
+		return mode_eirp;
+
+	if (ar->afc.is_6ghz_afc_power_event_received) {
+		s8 afc_eirp = ath12k_mac_get_afc_eirp_power(ar,
+							    freq,
+							    (u16)center_freq,
+							    (u16)bw);
+
+		if (afc_eirp != ATH12K_MAX_TX_POWER)
+			mode_eirp = min(mode_eirp, (s16)afc_eirp);
+	}
+
+	return mode_eirp;
+}
+
+/**
+ * ath12k_get_pw_mode_eirp - effective EIRP for a channel under a power mode
+ *                            with HW blocklist applied
+ * @ar: radio instance
+ * @sband: supported band containing per-power-mode 6 GHz channel data
+ * @pwr_mode: 6 GHz regulatory power mode (LPI / VLP / SP)
+ * @freq: primary channel center frequency in MHz
+ * @center_freq: channel center frequency in MHz
+ * @bw: channel bandwidth in MHz
+ *
+ * Return: effective EIRP in dBm;
+ *         %ATH12K_MIN_TX_POWER if channel data is unavailable or power mode
+ *         is unrecognised; %ATH12K_MIN_SELECTABLE_TX_POWER if HW-blocklisted
+ */
+static s16 ath12k_get_pw_mode_eirp(struct ath12k *ar,
+				   const struct ieee80211_supported_band *sband,
+				   enum nl80211_regulatory_power_modes pwr_mode,
+				   u32 freq,
+				   u32 center_freq,
+				   u16 bw)
+{
+	const struct ieee80211_6ghz_channel *chan_6g = sband->chan_6g[pwr_mode];
+	enum wmi_reg_6g_ap_type wmi_pwr;
+	bool blisted;
+
+	if (!chan_6g || !chan_6g->channels || !chan_6g->n_channels)
+		return ATH12K_MIN_TX_POWER;
+
+	wmi_pwr = ath12k_nl80211_ap_pwr_type_convert(pwr_mode);
+	if (wmi_pwr >= WMI_REG_CURRENT_MAX_AP_TYPE)
+		return ATH12K_MIN_TX_POWER;
+
+	blisted = ath12k_reg_is_hw_blocklisted_channel_extn(ar->ab,
+							    ar->pdev_idx,
+							    (u16)freq,
+							    (u16)center_freq,
+							    bw,
+							    wmi_pwr,
+							    0);
+	if (blisted)
+		return ATH12K_MIN_SELECTABLE_TX_POWER;
+
+	return ath12k_get_subchan_mode_eirp(ar, chan_6g, pwr_mode, freq,
+					    center_freq, bw);
+}
+
+enum nl80211_regulatory_power_modes
+ath12k_get_best_6ghz_power_extn(struct ieee80211_hw *hw,
+				struct ieee80211_vif *vif,
+				u32 freq,
+				u32 center_freq,
+				u16 bw)
+{
+	static const enum nl80211_regulatory_power_modes modes[] = {
+		NL80211_REG_AP_LPI,
+		NL80211_REG_AP_VLP,
+		NL80211_REG_AP_SP,
+	};
+	struct wiphy *wiphy = hw->wiphy;
+	const struct ieee80211_supported_band *sband;
+	enum nl80211_regulatory_power_modes best_mode = NL80211_REG_NUM_POWER_MODES;
+	s16 best_eirp = ATH12K_MIN_TX_POWER;
+	struct ath12k_hw *ah = ath12k_hw_to_ah(hw);
+	struct ath12k *ar = ath12k_ah_to_ar(ah, 0);
+	u8 m;
+
+	lockdep_assert_wiphy(wiphy);
+
+	sband = wiphy->bands[NL80211_BAND_6GHZ];
+	if (!sband)
+		return best_mode;
+
+	for (m = 0; m < ARRAY_SIZE(modes); m++) {
+		enum nl80211_regulatory_power_modes pwr_mode = modes[m];
+		s16 mode_eirp = ath12k_get_pw_mode_eirp(ar, sband, pwr_mode,
+						    freq, center_freq, bw);
+
+		if (mode_eirp > best_eirp) {
+			best_eirp = mode_eirp;
+			best_mode = pwr_mode;
+		}
+	}
+
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "best power mode %d eirp %d freq %u center_freq %u bw %u\n",
+		   best_mode, best_eirp, freq, center_freq, bw);
+
+	return best_mode;
+}
+EXPORT_SYMBOL(ath12k_get_best_6ghz_power_extn);

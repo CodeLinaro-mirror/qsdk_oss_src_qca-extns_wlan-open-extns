@@ -659,8 +659,8 @@ struct hal_rx_frm_type_info {
 };
 
 struct ath12k_wsi_remap_work {
-    struct work_struct work;
-    struct ath12k_base *ab;
+	struct work_struct work;
+	struct ath12k *ar;
 };
 
 /**

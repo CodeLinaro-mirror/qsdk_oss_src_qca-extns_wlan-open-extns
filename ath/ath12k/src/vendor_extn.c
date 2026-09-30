@@ -3463,6 +3463,112 @@ static int ath12k_vendor_set_he_ar_ldpc(struct ath12k_link_vif *arvif,
 	return ath12k_vendor_send_he_ar_cfg(arvif);
 }
 
+static bool
+ath12k_vendor_he_mcs_10_11_supported(
+					const struct ieee80211_sta_he_cap *he_cap,
+					u8 nss, enum nl80211_chan_width width)
+{
+	const struct ieee80211_he_mcs_nss_supp *mcs;
+	u16 rx_mcs, tx_mcs;
+	u8 mcs_idx;
+
+	if (!he_cap || !he_cap->has_he || !nss || nss > NL80211_HE_NSS_MAX)
+		return false;
+
+	mcs = &he_cap->he_mcs_nss_supp;
+	if (width == NL80211_CHAN_WIDTH_160) {
+		rx_mcs = le16_to_cpu(mcs->rx_mcs_160);
+		tx_mcs = le16_to_cpu(mcs->tx_mcs_160);
+	} else if (width == NL80211_CHAN_WIDTH_80P80) {
+		rx_mcs = le16_to_cpu(mcs->rx_mcs_80p80);
+		tx_mcs = le16_to_cpu(mcs->tx_mcs_80p80);
+	} else {
+		rx_mcs = le16_to_cpu(mcs->rx_mcs_80);
+		tx_mcs = le16_to_cpu(mcs->tx_mcs_80);
+	}
+
+	mcs_idx = 2 * (nss - 1);
+	return ((rx_mcs >> mcs_idx) & 0x3) == 2 ||
+	       ((tx_mcs >> mcs_idx) & 0x3) == 2;
+}
+
+static bool
+ath12k_vendor_eht_mcs_10_13_supported(
+					const struct ieee80211_sta_eht_cap *eht_cap,
+					u8 nss, enum nl80211_chan_width width)
+{
+	const struct ieee80211_eht_mcs_nss_supp_bw *bw;
+	const struct ieee80211_eht_mcs_nss_supp_20mhz_only *bw_20;
+	u8 rx_mcs, tx_mcs;
+
+	if (!eht_cap || !eht_cap->has_eht || !nss)
+		return false;
+
+	if (width == NL80211_CHAN_WIDTH_20 ||
+	    width == NL80211_CHAN_WIDTH_20_NOHT) {
+		bw_20 = &eht_cap->eht_mcs_nss_supp.only_20mhz;
+		rx_mcs = bw_20->rx_tx_mcs11_max_nss & IEEE80211_EHT_MCS_NSS_RX;
+		tx_mcs = (bw_20->rx_tx_mcs11_max_nss &
+			  IEEE80211_EHT_MCS_NSS_TX) >> 4;
+		if (rx_mcs >= nss || tx_mcs >= nss)
+			return true;
+		rx_mcs = bw_20->rx_tx_mcs13_max_nss & IEEE80211_EHT_MCS_NSS_RX;
+		tx_mcs = (bw_20->rx_tx_mcs13_max_nss &
+			  IEEE80211_EHT_MCS_NSS_TX) >> 4;
+		return rx_mcs >= nss || tx_mcs >= nss;
+	}
+
+	if (width == NL80211_CHAN_WIDTH_320)
+		bw = &eht_cap->eht_mcs_nss_supp.bw._320;
+	else if (width == NL80211_CHAN_WIDTH_160)
+		bw = &eht_cap->eht_mcs_nss_supp.bw._160;
+	else
+		bw = &eht_cap->eht_mcs_nss_supp.bw._80;
+
+	rx_mcs = bw->rx_tx_mcs11_max_nss & IEEE80211_EHT_MCS_NSS_RX;
+	tx_mcs = (bw->rx_tx_mcs11_max_nss &
+		  IEEE80211_EHT_MCS_NSS_TX) >> 4;
+	if (rx_mcs >= nss || tx_mcs >= nss)
+		return true;
+	rx_mcs = bw->rx_tx_mcs13_max_nss & IEEE80211_EHT_MCS_NSS_RX;
+	tx_mcs = (bw->rx_tx_mcs13_max_nss &
+		  IEEE80211_EHT_MCS_NSS_TX) >> 4;
+
+	return rx_mcs >= nss || tx_mcs >= nss;
+}
+
+int ath12k_vendor_vdev_config_after_start_extn(struct ath12k_link_vif *arvif)
+{
+	struct ath12k *ar = arvif->ar;
+	int ret;
+
+	if (arvif->vap_cfg.ldpc_configured) {
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_LDPC,
+						    arvif->vap_cfg.ldpc);
+		if (ret)
+			return ret;
+	}
+
+	if (arvif->vap_cfg.tx_stbc_configured) {
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_TX_STBC,
+						    arvif->vap_cfg.tx_stbc);
+		if (ret)
+			return ret;
+	}
+
+	if (arvif->vap_cfg.rx_stbc_configured) {
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_RX_STBC,
+						    arvif->vap_cfg.rx_stbc);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int ath12k_vendor_set_he_rts_threshold(struct ath12k_link_vif *arvif,
 						     u32 value)
 {
@@ -3525,8 +3631,29 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 					  void *data, u32 data_len)
 {
 	struct ath12k *ar = arvif->ar;
+	struct ieee80211_supported_band *sband;
+	const struct ieee80211_sta_he_cap *he_cap;
+	const struct ieee80211_sta_eht_cap *eht_cap;
+	enum nl80211_band band;
+	enum nl80211_chan_width width;
+	u32 ht_cap_info;
+	struct ieee80211_bss_conf *bss_conf;
+	u8 ldpc_nss;
+	bool bw_gt_20mhz;
+	bool he_mcs_10_11;
+	bool eht_mcs_10_13;
 	int ret = -1;
 	bool old_ofdma_val;
+
+	band = arvif->chanctx.def.chan ? arvif->chanctx.def.chan->band :
+		ath12k_get_band_based_on_freq(ar->chan_info.low_freq);
+	sband = &ar->mac.sbands[band];
+	ht_cap_info = ar->pdev->cap.band[band].ht_cap_info;
+	he_cap = ieee80211_get_he_iftype_cap_vif(sband, arvif->ahvif->vif);
+	eht_cap = ieee80211_get_eht_iftype_cap_vif(sband, arvif->ahvif->vif);
+	bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+	width = arvif->chanctx.def.chan ? arvif->chanctx.def.width :
+		NL80211_CHAN_WIDTH_20;
 
 	switch (param) {
         case QCA_WLAN_VENDOR_VDEV_PARAM_TEST_RELOAD:
@@ -4018,6 +4145,149 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			arvif->vap_cfg.bw_nss_rate = value;
 		} else {
 			ath12k_err(NULL, "Failed to send WMI_VDEV_PARAM_BW_NSS_RATEMASK to firmware");
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_LDPC:
+		if (value > 3) {
+			ath12k_err(ar->ab, "Invalid LDPC value %u\n", value);
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.ldpc &&
+		    arvif->vap_cfg.ldpc_configured) {
+			*reload = true;
+			return 0;
+		}
+		if ((value & 1) && !(ht_cap_info & WMI_HT_CAP_RX_LDPC)) {
+			ath12k_err(ar->ab,
+				   "LDPC RX value %u is not supported by firmware capabilities\n",
+				   value);
+			return -EINVAL;
+		}
+		if ((value & 2) && !(ht_cap_info & WMI_HT_CAP_TX_LDPC)) {
+			ath12k_err(ar->ab,
+				   "LDPC TX value %u is not supported by firmware capabilities\n",
+				   value);
+			return -EINVAL;
+		}
+		if (bss_conf && bss_conf->he_support && value != 0 && value != 3) {
+			ath12k_err(ar->ab,
+				   "LDPC value %u is not supported in HE/EHT mode; "
+				   "use 0 for disabling or 3 for enabling\n", value);
+			return -EINVAL;
+		}
+		bw_gt_20mhz = width != NL80211_CHAN_WIDTH_20 &&
+			      width != NL80211_CHAN_WIDTH_20_NOHT;
+		he_mcs_10_11 = false;
+		eht_mcs_10_13 = false;
+		if (value == 0 && bss_conf &&
+		    (bss_conf->he_support || bss_conf->eht_support)) {
+			ret = ath12k_vendor_resolve_nss(arvif, arvif->vap_cfg.nss,
+							&ldpc_nss);
+			if (ret)
+				return ret;
+			he_mcs_10_11 = bss_conf->he_support &&
+				ath12k_vendor_he_mcs_10_11_supported(he_cap, ldpc_nss, width);
+			eht_mcs_10_13 = bss_conf->eht_support &&
+				ath12k_vendor_eht_mcs_10_13_supported(eht_cap, ldpc_nss, width);
+			if ((bss_conf->he_support &&
+			     (bw_gt_20mhz || ldpc_nss > 4 || he_mcs_10_11)) ||
+			    (bss_conf->eht_support &&
+			     (bw_gt_20mhz || ldpc_nss > 4 || eht_mcs_10_13))) {
+				ath12k_err(ar->ab,
+					   "LDPC value %u is not supported if any of the "
+					   "following is true: is_bw_gt_20mhz: %s, "
+					   "is_nss_gt_4: %s, is_he_mcs_10_and_11: %s, "
+					   "is_eht_mcs_10_to_13: %s\n",
+					   value, bw_gt_20mhz ? "true" : "false",
+					   ldpc_nss > 4 ? "true" : "false",
+					   he_mcs_10_11 ? "true" : "false",
+					   eht_mcs_10_13 ? "true" : "false");
+				return -EINVAL;
+			}
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_LDPC, value);
+		if (ret)
+			ath12k_err(ar->ab, "Failed to send LDPC value %u to firmware\n",
+				   value);
+		if (!ret) {
+			arvif->vap_cfg.ldpc = value;
+			arvif->vap_cfg.ldpc_configured = true;
+			if (bss_conf) {
+				bss_conf->ht_ldpc = !!(value & 1);
+				bss_conf->vht_ldpc = !!(value & 1);
+				bss_conf->he_ldpc = !!(value & 1);
+			}
+			*reload = true;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_STBC:
+		if (value > 1) {
+			ath12k_err(ar->ab, "Invalid TX STBC value %u\n", value);
+			return -EINVAL;
+		}
+		if (value == arvif->vap_cfg.tx_stbc &&
+		    arvif->vap_cfg.tx_stbc_configured) {
+			*reload = true;
+			return 0;
+		}
+		if (value && !(ht_cap_info & WMI_HT_CAP_TX_STBC)) {
+			ath12k_err(ar->ab,
+				   "TX STBC value %u is not supported by firmware capabilities\n",
+				   value);
+			return -EINVAL;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_TX_STBC, value);
+		if (ret)
+			ath12k_err(ar->ab, "Failed to send TX STBC value %u to firmware\n",
+				   value);
+		if (!ret) {
+			arvif->vap_cfg.tx_stbc = value;
+			arvif->vap_cfg.tx_stbc_configured = true;
+			*reload = true;
+		}
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_STBC:
+		if (value > 3) {
+			ath12k_err(ar->ab, "Invalid RX STBC value %u\n", value);
+			return -EINVAL;
+		}
+		if (value) {
+			if (bss_conf && bss_conf->he_support) {
+				if (!he_cap ||
+				    (!(he_cap->he_cap_elem.phy_cap_info[2] &
+				      IEEE80211_HE_PHY_CAP2_STBC_RX_UNDER_80MHZ) &&
+				     !(he_cap->he_cap_elem.phy_cap_info[7] &
+				       IEEE80211_HE_PHY_CAP7_STBC_RX_ABOVE_80MHZ))) {
+					ath12k_err(ar->ab,
+						   "RX STBC value %u is not supported in HE/EHT mode\n",
+						   value);
+					return -EINVAL;
+				}
+				value = 1;
+			} else if (!(ht_cap_info & WMI_HT_CAP_RX_STBC) &&
+				   !(ar->pdev->cap.vht_cap & WMI_VHT_CAP_RX_STBC_MASK)) {
+				ath12k_err(ar->ab,
+					   "RX STBC value %u is not supported by firmware capabilities\n",
+					   value);
+				return -EINVAL;
+			}
+		}
+		if (value == arvif->vap_cfg.rx_stbc &&
+		    arvif->vap_cfg.rx_stbc_configured) {
+			*reload = true;
+			return 0;
+		}
+		ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
+						    WMI_VDEV_PARAM_RX_STBC, value);
+		if (ret)
+			ath12k_err(ar->ab, "Failed to send RX STBC value %u to firmware\n",
+				   value);
+		if (!ret) {
+			arvif->vap_cfg.rx_stbc = value;
+			arvif->vap_cfg.rx_stbc_configured = true;
+			*reload = true;
 		}
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_CHWIDTH:
@@ -11616,6 +11886,18 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 #endif
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BW_NSS_RATE:
 		*value = arvif->vap_cfg.bw_nss_rate;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_LDPC:
+		*value = arvif->vap_cfg.ldpc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_STBC:
+		*value = arvif->vap_cfg.tx_stbc;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_RX_STBC:
+		*value = arvif->vap_cfg.rx_stbc;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_CHWIDTH:

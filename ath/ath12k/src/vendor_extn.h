@@ -225,6 +225,12 @@ ath12k_vendor_get_wifi_config_handler_extn(struct wiphy *wiphy, struct nlattr **
 	return -EOPNOTSUPP;
 }
 
+static inline int
+ath12k_vendor_vdev_config_after_start_extn(struct ath12k_link_vif *arvif)
+{
+	return 0;
+}
+
 static inline void
 ath12k_peer_assoc_h_he_mcs_12_13_extn(struct ath12k *ar,
 				      struct ath12k_wmi_peer_assoc_arg *arg,
@@ -646,6 +652,8 @@ int ath12k_vendor_get_wifi_params_extn(struct wiphy *wiphy,
 				       struct wireless_dev *wdev,
 				       struct ath12k_wifi_generic_params *params,
 				       u64 *value);
+
+int ath12k_vendor_vdev_config_after_start_extn(struct ath12k_link_vif *arvif);
 
 int ath12k_vendor_get_wiphy_params_extn(struct wiphy *wiphy,
 					struct ath12k_wifi_generic_params *params,

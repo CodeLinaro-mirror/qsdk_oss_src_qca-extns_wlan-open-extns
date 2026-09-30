@@ -16,6 +16,7 @@
 #include "cbs_extn.h"
 #include "extap_extn.h"
 
+struct ath12k;
 struct ath12k_base;
 struct ath12k_hw_blocklist_state;
 struct ath12k_reg_info;
@@ -865,6 +866,13 @@ static inline void ath12k_mgmt_stats_scan_radio_tx_reset(struct ath12k_vif *ahvi
 	return;
 }
 
+static inline void
+ath12k_update_scan_radio_data_tx_stats_extn(struct ath12k *ar,
+						struct sk_buff *msdu,
+						u32 status)
+{
+}
+
 static inline void ath12k_wmi_peer_migration_event_extn(struct ath12k_vif *ahvif)
 {
 	return;
@@ -1405,6 +1413,16 @@ void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif);
 
 void ath12k_mgmt_stats_scan_radio_tx_reset(struct ath12k_vif *ahvif);
+
+/**
+ * ath12k_update_scan_radio_data_tx_stats_extn() - Update Scan Radio DATA TX stats
+ * @ar: Driver radio instance
+ * @msdu: Completed TX socket buffer
+ * @status: Firmware TX completion status
+ */
+void ath12k_update_scan_radio_data_tx_stats_extn(struct ath12k *ar,
+						 struct sk_buff *msdu,
+						 u32 status);
 
 const void **ath12k_wmi_tlv_parse_alloc(struct ath12k_base *ab,
 					struct sk_buff *skb, gfp_t gfp);

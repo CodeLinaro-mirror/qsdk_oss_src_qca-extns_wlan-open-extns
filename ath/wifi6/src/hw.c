@@ -785,6 +785,12 @@ ath12k_mem_profile_based_param_wifi6[] = {
 	},
 };
 
+#ifdef CPTCFG_QCN_EXTN
+static const struct ieee80211_ops_extn ath12k_ops_wifi6_extn = {
+	.get_best_scan_radio_6ghz_power_mode = ath12k_get_best_6ghz_power_extn,
+};
+#endif
+
 int ath12k_wifi6_hw_init(struct ath12k_base *ab)
 {
 	struct ath12k_hw_params *hw_params = NULL;
@@ -824,6 +830,9 @@ int ath12k_wifi6_hw_init(struct ath12k_base *ab)
 		ab->hw_params = hw_params;
 	}
 	ab->ath12k_ops = &ath12k_ops_wifi6;
+#ifdef CPTCFG_QCN_EXTN
+	ab->ath12k_ops_extn = &ath12k_ops_wifi6_extn;
+#endif
 
 	ath12k_info(ab, "WiFi6 Hardware name: %s\n", ab->hw_params->name);
 

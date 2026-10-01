@@ -112,19 +112,14 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 }
 
 /**
- * ieee80211_bootup_cac_mesh_vdev_up_extn - trigger vdev_up for mesh vdevs
- * after boot-up CAC completes on a shared chanctx.
+ * ieee80211_bootup_cac_mesh_vdev_up_extn - bring mesh vdevs up after CAC
+ * completes on a shared chanctx.
  * @ctx: the chanctx whose CAC timer just fired
  *
- * cfg80211_cac_event() is sent for only one link per chanctx by the caller,
- * and its netlink notification carries only that link's netdev ifindex. Any
- * other mesh vdev sharing this chanctx (e.g. an AP root co-located on the
- * same DFS channel) never sees the CAC event on its own ifindex,
- * so its userspace state machine stays stuck in DFS and drops all peering
- * frames. cfg80211_clear_cac_started() skips NL80211_IFTYPE_MESH_POINT
- * wdevs, so cac_started is still set here for every mesh link that has
- * joined; call cfg80211_cac_event() and clear cac_started for each one so
- * every mesh netdev gets its own scoped CAC-finished notification.
+ * CAC completion is delivered by cfg80211 either at netdev scope for a
+ * single-link CAC or at wiphy scope when multiple links share the CAC.
+ * This helper only performs the mesh vdev-up and carrier-on handling after
+ * the CAC completion event has been delivered.
  */
 void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
 {
@@ -134,26 +129,10 @@ void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx)
 			    assigned_chanctx_list) {
 		if (iter_link->sdata->vif.type != NL80211_IFTYPE_MESH_POINT)
 			continue;
-		/*
-		 * enable_beacon is set by ieee80211_start_mesh() when the mesh
-		 * joined during boot-up CAC.  Use it as the guard instead of
-		 * cac_started, which cfg80211_clear_cac_started() has already
-		 * cleared for every non-mesh wdev on this channel by the time
-		 * we get here.
-		 */
+		/* enable_beacon is set by ieee80211_start_mesh() when the mesh
+		 * joined during boot-up CAC. */
 		if (!iter_link->sdata->vif.bss_conf.enable_beacon)
 			continue;
-
-		if (iter_link->sdata->wdev.links[iter_link->link_id].cac_started) {
-			struct cfg80211_chan_def chandef =
-						iter_link->conf->chanreq.oper;
-
-			cfg80211_cac_event(iter_link->sdata->dev, &chandef,
-					   NL80211_RADAR_CAC_FINISHED,
-					   GFP_KERNEL, iter_link->link_id);
-			iter_link->sdata->wdev.links[iter_link->link_id].cac_started =
-									false;
-		}
 
 		ieee80211_link_info_change_notify(iter_link->sdata, iter_link,
 						  BSS_CHANGED_BEACON_ENABLED);

@@ -140,6 +140,11 @@ struct chmask_per_sta {
 	u_int8_t nss;
 };
 
+struct peer_nss {
+	u_int16_t aid;
+	u_int8_t nss;
+};
+
 extern const struct nla_policy
 ath12k_240mhz_sta_info_policy[QCA_WLAN_VENDOR_ATTR_240MHZ_MAX + 1];
 

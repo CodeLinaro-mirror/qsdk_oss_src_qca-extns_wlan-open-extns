@@ -5111,6 +5111,60 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			   !!(arvif->ahvif->dp_vif.dp_features & DP_FEATURE_HLOS));
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_PEER_NSS: {
+		struct ath12k_link_sta *arsta = NULL;
+		struct peer_nss *peer_nss;
+		struct ieee80211_sta *sta;
+		u8 sta_found = 0;
+		u8 addr[ETH_ALEN];
+		u8 max_nss;
+		u16 aid;
+		u32 bkt;
+
+		if (!data || data_len != sizeof(struct peer_nss)) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: invalid data or len %u\n", data_len);
+			return -EINVAL;
+		}
+
+		peer_nss = (struct peer_nss *)data;
+		aid = peer_nss->aid;
+		if (aid < 1 || aid > 2007) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: invalid AID %d\n", aid);
+			return -EINVAL;
+		}
+
+		max_nss = ath12k_vendor_get_max_tx_nss(ar);
+		if (peer_nss->nss > max_nss) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: nss %u exceeds radio max nss %u\n",
+				   peer_nss->nss, max_nss);
+			return -EINVAL;
+		}
+
+		spin_lock_bh(&ar->arsta_lock);
+		ath12k_link_sta_for_each(ar, bkt, arsta) {
+			if (arsta && !arsta->is_self_peer) {
+				sta = ath12k_ahsta_to_sta(arsta->ahsta);
+				if (sta->aid == aid) {
+					sta_found = 1;
+					ether_addr_copy(addr, arsta->addr);
+					goto found;
+				}
+			}
+		}
+found:
+		spin_unlock_bh(&ar->arsta_lock);
+		if (!sta_found) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: STA not found for AID %d\n", aid);
+			return -ENOTCONN;
+		}
+		ret = ath12k_wmi_set_peer_param(ar, addr, arvif->vdev_id,
+						WMI_PEER_NSS, peer_nss->nss);
+		break;
+	}
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);

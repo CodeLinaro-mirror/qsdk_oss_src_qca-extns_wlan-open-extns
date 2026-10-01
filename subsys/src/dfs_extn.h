@@ -57,17 +57,13 @@ void ieee80211_bootup_cac_start_timer_extn(struct ieee80211_sub_if_data *sdata,
 					   u32 residual_cac_ms);
 
 /**
- * ieee80211_bootup_cac_mesh_vdev_up_extn - trigger vdev_up for mesh vdevs
- * sharing a chanctx after boot-up CAC completes.
+ * ieee80211_bootup_cac_mesh_vdev_up_extn - bring mesh vdevs up after CAC
+ * completes on a shared chanctx.
  * @ctx: the chanctx whose CAC timer just fired
  *
- * The CAC timer fires once per chanctx and cfg80211_cac_event() is sent only
- * for the first link found by the caller, scoped to that link's netdev
- * ifindex. cfg80211_clear_cac_started() leaves cac_started set for mesh
- * wdevs, so for every mesh vdev on the same chanctx that has already joined
- * (enable_beacon=true) and still has cac_started set, call
- * cfg80211_cac_event() to send it its own scoped CAC-finished notification
- * and clear cac_started.
+ * CAC completion is delivered before this helper, either to the selected
+ * netdev or at wiphy scope when multiple links share the CAC. This helper
+ * handles the mesh vdev-up and carrier-on transition.
  */
 void ieee80211_bootup_cac_mesh_vdev_up_extn(struct ieee80211_chanctx *ctx);
 

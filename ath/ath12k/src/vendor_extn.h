@@ -1261,6 +1261,9 @@ const char *ath12k_phymode_str(enum wmi_phy_mode mode);
 /* Maximum allowed value for the duration field (usecs) */
 #define ATH12K_FRAME_INJECTOR_MAX_DUR  32000
 
+#define ANTENNA_GAIN_2G_MASK    0x0
+#define ANTENNA_GAIN_5G_MASK    0x8000
+
 /**
  * Payload for QCA_WLAN_VENDOR_VDEV_PARAM_FRAME_INJECTOR_EN.
  *

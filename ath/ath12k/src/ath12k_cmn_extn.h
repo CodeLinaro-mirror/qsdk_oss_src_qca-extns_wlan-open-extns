@@ -737,6 +737,16 @@ ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 	return;
 }
 
+static inline void ath12k_mac_build_radio_order_extn(struct ath12k_base *ab)
+{
+	return;
+}
+
+static inline u8 ath12k_mac_get_radio_idx_extn(struct ath12k_base *ab, u8 local_idx)
+{
+	return local_idx;
+}
+
 static inline void ath12k_mac_hw_register_extn(struct ath12k_hw *ah)
 {
 }
@@ -1225,6 +1235,13 @@ struct ath12k_pci_extn {
 
 struct ath12k_base_extn {
 	u16 reg_6ghz_thresh_priority_freq[MAX_RADIOS];
+	/* Raw per-SoC radio_order INI value; 0 = default order. */
+	u32 radio_order_raw;
+	/* Physical pdev index per serving-radio slot, valid only when
+	 * radio_order_valid is true.
+	 */
+	u8 radio_order[MAX_RADIOS];
+	bool radio_order_valid;
 	/* hw_blocklist: Per-pdev HW blocklist state; protected by ab->base_lock */
 	struct ath12k_hw_blocklist_state *hw_blocklist[MAX_RADIOS];
 	/* hw_bl_reg_info: Cached reg_info for multi-fragment HWBL reg events */
@@ -1252,6 +1269,9 @@ struct ath12k_base_extn {
 
 void ath12k_mac_hw_allocate_extn(struct ieee80211_hw *hw,
 			  const struct ieee80211_ops_extn *ops_extn);
+
+void ath12k_mac_build_radio_order_extn(struct ath12k_base *ab);
+u8 ath12k_mac_get_radio_idx_extn(struct ath12k_base *ab, u8 local_idx);
 
 /**
  * ath12k_mac_hw_register_extn - Extension hook for ath12k_mac_hw_register

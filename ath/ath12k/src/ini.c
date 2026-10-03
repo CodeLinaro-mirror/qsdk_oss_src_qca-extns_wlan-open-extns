@@ -1565,3 +1565,31 @@ void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab)
 #endif
 	}
 }
+
+/* Parse per-SoC "SOC<soc_key>" section into ab's config store. */
+void ath12k_cfg_parse_soc_section_extn(struct ath12k_base *ab, u32 soc_key)
+{
+	struct ath12k_ini_file ini;
+	char ini_buf[ATH12K_CFG_FILE_NAME_MAX] = {0};
+	char section_name[16];
+	int ret;
+
+	if (!ab->cfg_ctx)
+		return;
+
+	ret = ath12k_cfg_get_ini_file_name(ab->hw_rev, &ini);
+	if (ret)
+		return;
+
+	scnprintf(ini_buf, sizeof(ini_buf), "internal/");
+	strlcat(ini_buf, ini.internal, sizeof(ini_buf));
+
+	scnprintf(section_name, sizeof(section_name),
+		  ATH12K_CFG_SOC_SECTION_FMT, soc_key);
+
+	ath12k_dbg(ab, ATH12K_DBG_INI,
+		   "Parsing SoC section for soc_key %u: %s\n",
+		   soc_key, section_name);
+	ath12k_cfg_section_parse_to_store(ab, ini_buf, section_name);
+}
+EXPORT_SYMBOL(ath12k_cfg_parse_soc_section_extn);

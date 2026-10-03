@@ -1816,6 +1816,7 @@ u32 ath12k_get_monitor_version(struct ath12k_base *ab)
 	case ATH12K_HW_QCN9625_HW10:
 	case ATH12K_HW_QCN9625_HW20:
 	case ATH12K_HW_QCN9589_HW10:
+	case ATH12K_HW_QCN9589_HW20:
 		return 5;
 	default:
 		ath12k_warn(ab, "unknown hw_rev %d for monitor version\n",

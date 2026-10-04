@@ -69,6 +69,7 @@ struct mac_db_entry {
 
 	struct mac_db *db;
 	u16 bmap_idx;
+	atomic64_t hits;
 };
 
 /**

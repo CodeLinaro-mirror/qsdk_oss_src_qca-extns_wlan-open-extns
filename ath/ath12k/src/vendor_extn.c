@@ -8925,6 +8925,9 @@ static int ath12k_vendor_build_nol_chan_list_extn(struct wiphy *wiphy,
 	struct ieee80211_hw *hw;
 	struct ath12k_hw *ah;
 	struct ath12k *ar;
+	const struct ieee80211_regdomain *regd;
+	u8 alpha2_buf[2] = { 0, 0 };
+	const u8 *dump_alpha2 = NULL;
 
 	hw = wiphy_to_ieee80211_hw(wiphy);
 	if (!hw)
@@ -8948,7 +8951,18 @@ static int ath12k_vendor_build_nol_chan_list_extn(struct wiphy *wiphy,
 	if (!buf)
 		return -ENOMEM;
 
-	ath12k_vendor_init_nol_bin_hdr_extn(&hdr, nop_ms, entry_count, ar->alpha2);
+	rcu_read_lock();
+	regd = rcu_dereference(wiphy->regd);
+	if (regd && regd->alpha2[0]) {
+		alpha2_buf[0] = regd->alpha2[0];
+		alpha2_buf[1] = regd->alpha2[1];
+		dump_alpha2 = alpha2_buf;
+	}
+	rcu_read_unlock();
+
+	ath12k_vendor_init_nol_bin_hdr_extn(&hdr, nop_ms, entry_count,
+					    dump_alpha2);
+
 	memcpy(buf, &hdr, sizeof(hdr));
 	entries = (void *)(buf + sizeof(hdr));
 	entry_idx = ath12k_vendor_fill_nol_entries_extn(wiphy, radio_idx,
@@ -18535,9 +18549,8 @@ int ath12k_vendor_extap_setup_handler(struct wiphy *wiphy,
 
 	ahvif = ath12k_vif_to_ahvif(vif);
 
-	/* TODO: Enable with EXTAP Hook Patch */
 	if (tb[QCA_WLAN_VENDOR_ATTR_EXTAP_TEARDOWN]) {
-		//ath12k_extap_deinit(ahvif);
+		ath12k_extap_deinit(ahvif);
 		return 0;
 	}
 
@@ -18550,9 +18563,7 @@ int ath12k_vendor_extap_setup_handler(struct wiphy *wiphy,
 	if (wdev->netdev)
 		wdev->netdev->priv_flags &= ~IFF_DONT_BRIDGE;
 
-	/* TODO: Enable with EXTAP Hook Patch */
-	return 0;
-	//return ath12k_extap_init(ahvif, max_clients);
+	return ath12k_extap_init(ahvif, max_clients);
 }
 
 /**
@@ -18589,12 +18600,10 @@ int ath12k_vendor_extap_info_handler(struct wiphy *wiphy,
 
 	switch (nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_TYPE])) {
 	case QCA_WLAN_EXTAP_INFO_STATS:
-		/* TODO: Enable during EXTAP Hook enablement */
-		//ath12k_extap_stats_dump(ahvif);
+		ath12k_extap_stats_dump(ahvif);
 		break;
 	case QCA_WLAN_EXTAP_INFO_DUMP:
-		/* TODO: Enable during EXTAP Hook enablement */
-		//ath12k_extap_info_dump(ahvif);
+		ath12k_extap_info_dump(ahvif);
 		break;
 	default:
 		return -EINVAL;

@@ -217,6 +217,7 @@ struct mac_db_entry *mac_db_entry_get(struct mac_db *db, struct mac_hash_key *k)
 
 			if (__key_compare(&me->key, k)) {
 				atomic64_inc(&db->stats.matched);
+				atomic64_inc(&me->hits);
 				break;
 			}
 

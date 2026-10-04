@@ -34,6 +34,49 @@ enum ath12k_dp_wifi8_ipa2wbm_ring_e {
 };
 
 /**
+ * struct ath12k_dp_wifi8_ipa_napi - NAPI context for tqm2sw6 ring polling
+ * @ndev: Dummy netdev anchoring the NAPI instance
+ * @napi: NAPI struct for ring polling
+ */
+struct ath12k_dp_wifi8_ipa_napi {
+	struct net_device ndev;
+	struct napi_struct napi;
+};
+
+/**
+ * struct ath12k_dp_wifi8_ipa_tqm2sw6_stats - Per-ring stats for tqm2sw6 poller
+ *
+ * All counters are cumulative since poller_start (reset on "reset" write).
+ *
+ * @poller_start_cnt:    Number of times poller_start succeeded
+ * @poller_stop_cnt:     Number of times poller_stop was called
+ * @timer_fires:         Timer callback invocations (== napi_schedule calls)
+ * @napi_polls:          NAPI poll function invocations
+ * @napi_empty_polls:    Polls where the ring had no valid entries
+ * @napi_complete_cnt:   Times napi_complete was called (budget not exhausted)
+ * @entries_processed:   Total ring entries drained across all polls
+ * @max_entries_per_poll: Peak entries processed in a single poll call
+ * @last_poll_count:     Entry count from the most recent poll (0 if empty)
+ * @failed_refill:       Buffers which are not refilled back or failed in TQM_CMD
+ * @cookie:              TX_DESC buffer cookie
+ * @rbm:                 Return Buffer Manager value
+ */
+struct ath12k_dp_wifi8_ipa_tqm2sw6_stats {
+	u64 poller_start_cnt;
+	u64 poller_stop_cnt;
+	u64 timer_fires;
+	u64 napi_polls;
+	u64 napi_empty_polls;
+	u64 napi_complete_cnt;
+	u64 entries_processed;
+	u64 max_entries_per_poll;
+	u32 last_poll_count;
+	u32 failed_refill;
+	u32 cookie;
+	u8  rbm;
+};
+
+/**
  * struct ath12k_dp_wifi8_ipa - WiFi8 IPA datapath context
  * @dp_wifi8: Pointer to the WiFi8 datapath structure
  * @ipa2wbm_idle_buf_ring: ring for providing initial rx bufs to IPA WBM pool
@@ -41,6 +84,10 @@ enum ath12k_dp_wifi8_ipa2wbm_ring_e {
  * @reo2sw5: reo dst ring used by IPA for processing RX packets
  * @ipa2tcl_ring: TX data ring to which IPA enqueues packets
  * @tqm2ipa_ring: TX completion ring from which IPA consumes free buffers
+ * @tqm2sw6_ring: Experimental TX completion ring (tqm2sw6)
+ * @tqm2sw6_napi_ctxt: Standalone NAPI context for polling tqm2sw6_ring
+ * @tqm2sw6_poll_timer: Periodic timer that schedules tqm2sw6 NAPI poll
+ * @tqm2sw6_stats: Runtime statistics for the tqm2sw6 poller
  */
 struct ath12k_dp_wifi8_ipa {
 	struct ath12k_dp_wifi8 *dp_wifi8;
@@ -49,6 +96,10 @@ struct ath12k_dp_wifi8_ipa {
 	struct dp_srng reo2sw5;
 	struct dp_srng ipa2tcl_ring;
 	struct dp_srng tqm2ipa_ring;
+	struct dp_srng tqm2sw6_ring;
+	struct ath12k_dp_wifi8_ipa_napi tqm2sw6_napi_ctxt;
+	struct timer_list tqm2sw6_poll_timer;
+	struct ath12k_dp_wifi8_ipa_tqm2sw6_stats tqm2sw6_stats;
 };
 
 int ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab);
@@ -101,6 +152,10 @@ void ath12k_wifi8_dp_fill_rx_src(struct ath12k_base *ab);
 int ath12k_wifi8_dp_rx_ipa2wbm_idle_buf_config_qcn9625(struct ath12k_base *ab);
 int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab);
 void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab);
+int ath12k_wifi8_dp_ipa_tqm2sw6_handler(struct ath12k_dp *dp, int budget);
+int ath12k_wifi8_dp_ipa_tqm2sw6_poller_start(struct ath12k_base *ab);
+void ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop(struct ath12k_base *ab);
+void ath12k_wifi8_debugfs_register_tqm2sw6(struct ath12k *ar);
 int ath12k_wifi8_dp_fill_tx_src(struct ath12k_base *ab);
 int ath12k_wifi8_dp_ipa_rx_buf_smmu_map_unmap(struct ath12k_base *ab, bool create);
 void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,

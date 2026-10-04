@@ -261,9 +261,19 @@ static const struct file_operations fops_wlan_ipa_stats = {
  */
 void ath12k_debugfs_register_ipa_extn(struct ath12k *ar)
 {
+	struct ath12k_base *ab = ar->ab;
+	struct ath12k_ipa *ipa_ctx;
+
 	debugfs_create_file("ipa_stats", 0600,
 			    ar->debug.debugfs_pdev, ar,
 			    &fops_wlan_ipa_stats);
+
+	if (!ab || !ab->ath12k_base_extn.ipa_ctx)
+		return;
+
+	ipa_ctx = ab->ath12k_base_extn.ipa_ctx;
+	if (ipa_ctx->arch_ops && ipa_ctx->arch_ops->debugfs_register)
+		ipa_ctx->arch_ops->debugfs_register(ar);
 }
 
 /*

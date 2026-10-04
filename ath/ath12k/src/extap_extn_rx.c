@@ -81,10 +81,6 @@ static int __proc_ipv6_na_rx(struct extap_extn *ee, struct sk_buff *skb, void *h
 	struct nd_opt_hdr *noh = hdr;
 	struct mac_hash_key k;
 
-	/* Only learn from multicast targets or when override flag is set */
-	if (!ipv6_addr_is_multicast(&nm->target) && !nm->icmph.icmp6_override)
-		return -EINVAL;
-
 	if ((noh->nd_opt_len * 8) < NA_HDR_LEN) {
 		ath12k_err(ee->ab, "extap: invalid NA option header\n");
 		return -EINVAL;
@@ -117,29 +113,49 @@ static int __proc_ipv4_arp_rx(struct extap_extn *ee, struct sk_buff *skb)
 	arp_skip += arp->ar_hln != ETH_ALEN;
 	arp_skip += arp->ar_pln != sizeof(__be32);
 
+	if (arp_skip)
+		return -EINVAL;
+
+	ae = (struct arp_eth *)((u8 *)arp + sizeof(*arp));
+	k.is_v6 = false;
+
+	/* Check for echo before broadcast skip: TX rewrites SHA to vap_mac for
+	 * all ARP frames. When rootAP reflects the broadcast back, SHA=vap_mac.
+	 * Rewrite SHA back to real client MAC
+	 */
+	if (ether_addr_equal(ae->sender_mac, ee->my_mac)) {
+		memcpy(&k.ip.v4.s_addr, ae->sender_ip, sizeof(k.ip.v4.s_addr));
+		me = mac_db_entry_get(extap_get_db(ee), &k);
+		if (!me) {
+			atomic64_inc(&ee->stats.rx_misses);
+			return ENOENT;
+		}
+
+		ether_addr_copy(ae->sender_mac, me->mac_addr);
+		mac_db_entry_deref(me);
+	}
+
+	/* Broadcast ARP requests need no DMAC xlate — pass through */
 	switch (ntohs(arp->ar_op)) {
 	case ARPOP_REQUEST:
 	case ARPOP_RREQUEST:
-		/* Broadcast ARP requests need no DMAC translation */
-		arp_skip += is_multicast_ether_addr(eth_hdr(skb)->h_dest);
+		if (is_broadcast_ether_addr(eth_hdr(skb)->h_dest))
+			return -EINVAL;
 		break;
 	default:
 		break;
 	}
 
-	if (arp_skip)
-		return -EINVAL;
-
-	ae = (struct arp_eth *)((u8 *)arp + sizeof(*arp));
-	memcpy(&k.ip.v4.s_addr, ae->ar_tip, sizeof(k.ip.v4.s_addr));
-	k.is_v6 = false;
-
+	/* Change the DMAC to end client's MAC */
+	memcpy(&k.ip.v4.s_addr, ae->target_ip, sizeof(k.ip.v4.s_addr));
 	me = mac_db_entry_get(extap_get_db(ee), &k);
-	if (!me)
-		return -EINVAL;
+	if (!me) {
+		atomic64_inc(&ee->stats.rx_misses);
+		return ENOENT;
+	}
 
 	ether_addr_copy(eth_hdr(skb)->h_dest, me->mac_addr);
-	ether_addr_copy(ae->ar_tha, me->mac_addr);
+	ether_addr_copy(ae->target_mac, me->mac_addr);
 	mac_db_entry_deref(me);
 
 	return 0;
@@ -208,6 +224,8 @@ static void __proc_ipv4_mcast_rx(struct extap_extn *ee, struct sk_buff *skb)
 		return;
 	}
 
+	atomic64_inc(&ee->stats.rx_misses);
+
 	ip_eth_mc_map(iph->daddr, k.mac_addr);
 	ether_addr_copy(eth_hdr(skb)->h_dest, k.mac_addr);
 
@@ -240,6 +258,8 @@ static void __proc_ipv6_mcast_rx(struct extap_extn *ee, struct sk_buff *skb)
 		mac_db_entry_deref(me);
 		return;
 	}
+
+	atomic64_inc(&ee->stats.rx_misses);
 
 	ipv6_eth_mc_map(&ip6h->daddr, k.mac_addr);
 	ether_addr_copy(eth_hdr(skb)->h_dest, k.mac_addr);
@@ -351,8 +371,9 @@ static int __proc_eapol_rx(struct extap_extn *ee, struct sk_buff *skb)
  *
  * Called via ee->rx() under static_branch_unlikely(&extap_enabled).
  * Rewrites Ethernet DMAC to the real end device MAC.
+ * Returns true if the frame should be dropped, false otherwise.
  */
-void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb)
+int ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 {
 	int (*proc)(struct extap_extn *ee, struct sk_buff *skb);
 	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
@@ -367,6 +388,12 @@ void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 	atomic64_inc(&ee->stats.rx_pkts);
 
 	eh = eth_hdr(skb);
+
+	/* Drop frames reflected back with our own VAP MAC as source —
+	 * these are echoes of our TX broadcasts and would cause duplicates.
+	 */
+	if (ether_addr_equal(eh->h_source, ee->my_mac))
+		return ENOENT;
 
 	/* Parse the L3 protocol */
 	switch (ntohs(eh->h_proto)) {
@@ -396,7 +423,8 @@ void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 
 	default: /* Unhandled protocol */
 		ip_pkt = false;
-		return;
+		atomic64_inc(&ee->stats.rx_unhandled);
+		return 0;
 	}
 
 	/*
@@ -405,15 +433,17 @@ void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 	rcu_read_lock_bh();
 	if (likely(ip_pkt)) {
 		struct mac_db_entry *me = mac_db_entry_get(extap_get_db(ee), &k);
-		if (unlikely(!me))
+		if (unlikely(!me)) {
+			atomic64_inc(&ee->stats.rx_misses);
 			goto proc_pkt;
+		}
 
 		ether_addr_copy(eh->h_dest, me->mac_addr);
 		mac_db_entry_deref(me);
 
 		atomic64_inc(&ee->stats.rx_conv);
 		rcu_read_unlock_bh();
-		return;
+		return 0;
 	}
 
 	/*
@@ -428,15 +458,15 @@ proc_pkt:
 	if (skb_is_nonlinear(skb)) {
 		if (skb_linearize(skb)) {
 			rcu_read_unlock_bh();
-			return;
+			return 0;
 		}
 	}
 
 	err = proc(ee, skb);
-	if (!err)
-		atomic64_inc(&ee->stats.rx_conv);
-
+	atomic64_add(!err, &ee->stats.rx_conv);
 	rcu_read_unlock_bh();
+
+	return err > 0 ? err : 0;
 }
 EXPORT_SYMBOL(ath12k_extap_rx);
 

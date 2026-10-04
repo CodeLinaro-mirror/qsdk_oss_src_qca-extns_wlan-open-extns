@@ -13,6 +13,7 @@
 
 #include "../core.h"
 #include "../debug.h"
+#include "../dp_tx.h"
 #include "extap_db.h"
 #include "extap_extn.h"
 
@@ -135,8 +136,10 @@ int extap_xlate_dmac(struct extap_extn *ee, struct sk_buff *skb)
 	}
 
 	me = mac_db_entry_get(extap_get_db(ee), &k);
-	if (!me)
+	if (!me) {
+		atomic64_inc(&ee->stats.rx_misses);
 		return -ENOENT;
+	}
 
 	ether_addr_copy(eth_hdr(skb)->h_dest, me->mac_addr);
 	mac_db_entry_deref(me);
@@ -194,17 +197,40 @@ static int extap_fdb_event(struct notifier_block *nb, unsigned long event,
 }
 
 /**
+ * ath12k_vif_has_extap() - check if ExtAP is enabled for a VAP
+ * @ahvif: ath12k VIF context
+ *
+ * Return: true if ExtAP is enabled for this VAP, false otherwise
+ */
+bool ath12k_vif_has_extap(struct ath12k_vif *ahvif)
+{
+	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+
+	return ee->enabled;
+}
+EXPORT_SYMBOL(ath12k_vif_has_extap);
+
+/**
  * ath12k_extap_deinit() - tear down ExtAP for a STA VAP
  * @ahvif: ath12k VIF context
  */
 void ath12k_extap_deinit(struct ath12k_vif *ahvif)
 {
-	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+	struct ath12k_dp_vif_extn *dp_extn = &ahvif->dp_vif.dp_extn;
+	struct extap_extn *ee = &dp_extn->extap;
 	struct mac_db *db;
 
-	db = rcu_dereference_protected(ee->db, true);
+	db = mac_db_ref(rcu_dereference_protected(ee->db, true));
 	if (!db)
 		return;
+
+	/* Unregister bridge FDB notifier */
+	br_fdb_unregister_notify(&ee->fdb_nb);
+
+	/* Mark ExtAP as disabled for this VAP before cleanup */
+	ee->enabled = false;
+
+	ahvif->dp_vif.dp_features &= ~DP_FEATURE_EXTAP;
 
 	/* Disable static branch if this is the last VAP */
 	if (!atomic_dec_return(&extap_vif_count))
@@ -212,20 +238,12 @@ void ath12k_extap_deinit(struct ath12k_vif *ahvif)
 
 	/* Clear pointers to prevent new operations */
 	RCU_INIT_POINTER(ee->db, NULL);
-	ee->tx_cb = NULL;
-	ee->rx_cb = NULL;
 
-	/* Wait for RCU readers to finish */
+	/* Wait for RCU readers to finish before flushing entries */
 	synchronize_rcu();
-
-	/* Unregister bridge FDB notifier */
-	br_fdb_unregister_notify(&ee->fdb_nb);
 
 	/* Flush all entries */
 	mac_db_entry_flush(db);
-
-	/* Wait for any remaining references to be released */
-	synchronize_rcu();
 
 	mac_db_deref(db);
 }
@@ -240,7 +258,8 @@ EXPORT_SYMBOL(ath12k_extap_deinit);
  */
 int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 {
-	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+	struct ath12k_dp_vif_extn *dp_extn = &ahvif->dp_vif.dp_extn;
+	struct extap_extn *ee = &dp_extn->extap;
 	struct mac_db *db;
 
 	if (rcu_access_pointer(ee->db))
@@ -259,8 +278,6 @@ int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 	/* Reset stats for this init cycle */
 	memset(&ee->stats, 0, sizeof(ee->stats));
 
-	ee->tx_cb = ath12k_extap_tx;
-	ee->rx_cb = ath12k_extap_rx;
 	ee->ab = ath12k_ah_to_ar(ahvif->ah, 0)->ab;
 
 	ether_addr_copy(ee->my_mac, ahvif->vif->addr);
@@ -272,6 +289,11 @@ int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 	 */
 	if (atomic_inc_return(&extap_vif_count) == 1)
 		static_branch_enable(&extap_enabled);
+
+	ahvif->dp_vif.dp_features |= DP_FEATURE_EXTAP;
+
+	/* Mark ExtAP as enabled for this VAP after all initialization is complete */
+	ee->enabled = true;
 
 	return 0;
 }
@@ -302,7 +324,7 @@ void ath12k_extap_info_dump(struct ath12k_vif *ahvif)
 	}
 
 	pr_info("EXTAP Info Dump: %pM\n", ahvif->vif->addr);
-	pr_info("%-26s %-24s %s\n", "IP Address", "MAC Address", "Type");
+	pr_info("%-45s %-24s %s\n", "IP Address", "MAC Address", "Hits");
 
 	/* Snapshot bitmap under the db lock to get a consistent view */
 	spin_lock_bh(&db->lock);
@@ -311,20 +333,18 @@ void ath12k_extap_info_dump(struct ath12k_vif *ahvif)
 
 	for_each_set_bit(bit, snapshot, db->max_entries) {
 		struct mac_db_entry *me = mac_db_entry_ref(db, (u16)bit);
-		const char *type = "Unicast";
 
 		if (!me)
 			continue;
 
-		if (is_multicast_ether_addr(me->mac_addr))
-			type = "Multicast";
-
 		if (me->key.is_v6)
-			pr_info("%-26pI6 %-24pM %s\n",
-					&me->key.ip.v6, me->mac_addr, type);
+			pr_info("%-45pI6 %-24pM %lld\n",
+					&me->key.ip.v6, me->mac_addr,
+					atomic64_read(&me->hits));
 		else
-			pr_info("%-26pI4 %-24pM %s\n",
-					&me->key.ip.v4, me->mac_addr, type);
+			pr_info("%-45pI4 %-24pM %lld\n",
+					&me->key.ip.v4, me->mac_addr,
+					atomic64_read(&me->hits));
 
 		mac_db_entry_deref(me);
 	}
@@ -346,20 +366,28 @@ void ath12k_extap_stats_dump(struct ath12k_vif *ahvif)
 	struct mac_db *db;
 
 	pr_info("EXTAP Stats: %pM\n", ahvif->vif->addr);
-	pr_info("TX Packets Converted : %lld\n",
+	pr_info("TX Packets :           %lld\n",
+		atomic64_read(&s->tx_pkts));
+	pr_info("TX Converted :         %lld\n",
 		atomic64_read(&s->tx_conv));
-	pr_info("RX Packets Converted : %lld\n",
+	pr_info("Tx DB learn errors :   %lld\n",
+		atomic64_read(&s->tx_learn_error));
+	pr_info("RX Packets :           %lld\n",
+		atomic64_read(&s->rx_pkts));
+	pr_info("RX Converted :         %lld\n",
 		atomic64_read(&s->rx_conv));
+	pr_info("Rx DB Lookup Miss :    %lld\n",
+		atomic64_read(&s->rx_misses));
+	pr_info("Unhandled protocol :   %lld\n",
+		atomic64_read(&s->rx_unhandled));
 
 	db = extap_get_db(ee);
 	if (db) {
-		pr_info("TX Learns :            %lld\n",
+		pr_info("DB Entries Created :   %lld\n",
 			atomic64_read(&db->stats.created));
-		pr_info("RX Hits :              %lld\n",
-			atomic64_read(&db->stats.matched));
-		pr_info("FDB Deletes :          %lld\n",
+		pr_info("DB Entries Deleted :   %lld\n",
 			atomic64_read(&db->stats.deleted));
-		pr_info("Add Failures :         %lld\n",
+		pr_info("DB Add Failures :      %lld\n",
 			atomic64_read(&db->stats.failed));
 		mac_db_deref(db);
 	}

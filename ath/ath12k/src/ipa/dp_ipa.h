@@ -363,6 +363,7 @@ struct ath12k_ipa_arch_ops {
 	void (*dp_ipa_w2i)(void *priv,
 			   enum ipa_dp_evt_type evt,
 			   unsigned long data);
+	void (*debugfs_register)(struct ath12k *ar);
 };
 
 struct ath12k_ipa_mac_addr {

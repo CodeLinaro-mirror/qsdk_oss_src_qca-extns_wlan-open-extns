@@ -203,6 +203,10 @@ struct sta_240mhz_info {
 #define ATH12K_MAX_OFFCHAN_WAIT        50
 /* Off Rx timemout delay for scan radio (ms) */
 #define ATH12K_SCAN_RADIO_OFFCHAN_RX_DELAY	150
+/* ATH12K_MIN_TX_POWER is not picked up by selection algorithms;
+ * makes the value selectable for NO_IR or HW-blocklisted channels.
+ */
+#define ATH12K_MIN_SELECTABLE_TX_POWER (ATH12K_MIN_TX_POWER + 1)
 /* Maximum number of custom pkts for tx per request */
 #define ATH12K_MAX_CUSTOM_TX_PKT	20
 /* Checks whether SKB has custom pkt */
@@ -1261,6 +1265,16 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 	return 0;
 }
 
+static inline enum nl80211_regulatory_power_modes
+ath12k_get_best_6ghz_power_extn(struct ieee80211_hw *hw,
+				struct ieee80211_vif *vif,
+				u32 freq,
+				u32 center_freq,
+				u16 bw)
+{
+	return NL80211_REG_NUM_POWER_MODES;
+}
+
 static inline bool
 ath12k_control_beaconing_bootup_cac_check_extn(struct ath12k *ar,
 					       struct ath12k_link_vif *arvif,
@@ -1879,6 +1893,28 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
 				      unsigned int link_id,
 				      const struct cfg80211_chan_def *chandef,
 				      enum ieee80211_ap_reg_power power_type);
+
+/**
+ * ath12k_get_best_6ghz_power_extn - select the highest available 6 GHz AP power mode
+ * @hw: ieee80211_hw of the radio
+ * @vif: ieee80211_vif of the interface
+ * @freq: primary channel center frequency (MHz)
+ * @center_freq: band center frequency (MHz)
+ * @bw: channel bandwidth (MHz)
+ *
+ * Compares effective EIRP available under LPI, VLP and SP for the given channel
+ * and returns the mode with the highest EIRP.  SP is only considered when AFC
+ * authorization has been received (ar->afc.is_6ghz_afc_power_event_received).
+ *
+ * Returns the best nl80211_regulatory_power_modes value, or
+ * NL80211_REG_NUM_POWER_MODES if no mode is usable.
+ */
+enum nl80211_regulatory_power_modes
+ath12k_get_best_6ghz_power_extn(struct ieee80211_hw *hw,
+				struct ieee80211_vif *vif,
+				u32 freq,
+				u32 center_freq,
+				u16 bw);
 
 /**
  * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery

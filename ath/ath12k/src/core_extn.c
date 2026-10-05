@@ -1115,6 +1115,8 @@ void ath12k_mac_setup_extn(struct ath12k *ar)
 	       sizeof(ar->ar_extn.wlan_intf.curr_stats));
 
 	init_completion(&ar->ar_extn.lowi_oem_done);
+	wiphy_work_init(&ar->ar_extn.change_scan_vap_pwr_mode_work,
+			ath12k_change_scan_vap_pwr_mode_work);
 }
 
 void ath12k_mac_cleanup_unregister_extn(struct ath12k *ar)

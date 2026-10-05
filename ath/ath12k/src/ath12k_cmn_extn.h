@@ -523,6 +523,13 @@ enum ath12k_dfs_chan_state {
  *   bits[15:8] = G80 NSS bitmap (BW >  80 MHz) → mcs_set bits[31:24]
  * @he_mcs_12_13_radio_cap: Radio capability for HE MCS 12/13 support.
  * @sa_ar: Smart Antenna extention for radio
+ * @change_scan_vap_pwr_mode_work: AFC scan radio power mode reselection work.
+ *	Reselects the scan VAP 6 GHz power mode after an AFC power or expiry
+ *	event. Queued from ath12k_reg_notifier() once the regdomain update
+ *	completes.
+ * @change_scan_vap_pwr_mode_work: A flag set when receiving an AFC power or afc
+ *	expiry to request a scan VAP power-mode reselection. Consumed and
+ *	cleared by ath12k_reg_notifier() to queue the work above.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -573,6 +580,8 @@ struct ath12k_extn {
 	 * for non-DFS channels.
 	 */
 	enum ath12k_dfs_chan_state dfs_chan_state[ATH12K_MAX_NUM_5GHZ_CHAN];
+	struct wiphy_work change_scan_vap_pwr_mode_work;
+	bool afc_pwr_scan_radio_update_pending;
 };
 
 /**
@@ -1922,7 +1931,7 @@ int ath12k_validate_6ghz_chandef_extn(struct ieee80211_hw *hw,
  *
  * Compares effective EIRP available under LPI, VLP and SP for the given channel
  * and returns the mode with the highest EIRP.  SP is only considered when AFC
- * authorization has been received (ar->afc.is_6ghz_afc_power_event_received).
+ * power event has been received (ar->afc.is_6ghz_afc_power_event_received).
  *
  * Returns the best nl80211_regulatory_power_modes value, or
  * NL80211_REG_NUM_POWER_MODES if no mode is usable.
@@ -1933,6 +1942,34 @@ ath12k_get_best_6ghz_power_extn(struct ieee80211_hw *hw,
 				u32 freq,
 				u32 center_freq,
 				u16 bw);
+
+/**
+ * ath12k_change_scan_vap_pwr_mode_work - Work handler to reselect the 6 GHz
+ * power mode on all scan VAPs after an AFC power or expiry event.
+ *
+ * Called from ath12k_reg_notifier() once the regulatory domain is fully
+ * updated.  For each scan VAP that is currently operating on a 6 GHz channel
+ * the handler computes the best available power mode under LPI, VLP, SP and
+ * notifies mac80211 via ieee80211_6ghz_power_mode_change().
+ * @wiphy: wiphy of the radio
+ * @work: embedded wiphy_work inside struct ath12k_extn
+ */
+void ath12k_change_scan_vap_pwr_mode_work(struct wiphy *wiphy,
+					  struct wiphy_work *work);
+
+/**
+ * ath12k_afc_scan_radio_update_extn - Schedule a scan VAP 6 GHz power mode
+ * reselection on AFC auth or expiry.
+ *
+ * @ar: ATH12K radio instance
+ * @retail_mode_only: if true, only proceed when RETAIL_AFC_SUPPORT is set
+ *
+ * Checks that the radio is a scan radio with at least one active scan VAP
+ * wdev, then sets afc_pwr_scan_radio_update_pending so that
+ * ath12k_reg_notifier() can queue change_scan_vap_pwr_mode_work once the
+ * regulatory domain is fully updated.
+ */
+void ath12k_afc_scan_radio_update_extn(struct ath12k *ar, bool retail_mode_only);
 
 /**
  * ath12k_extn_reconfig_extn_params - Reconfig extn params after FW recovery

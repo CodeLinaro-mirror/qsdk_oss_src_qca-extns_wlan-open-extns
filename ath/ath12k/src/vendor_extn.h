@@ -1001,6 +1001,9 @@ ath12k_mapc_get_peer_params_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
 extern const struct nla_policy
 ath12k_cotdma_e2e_config_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
 
+extern const struct nla_policy
+ath12k_wnm_tim_bcast_policy[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_MAX + 1];
+
 int ath12k_vendor_mapc_peer_params_extn(struct wiphy *wiphy,
 					struct wireless_dev *wdev,
 					const void *data, int data_len);
@@ -1032,6 +1035,10 @@ int ath12k_vendor_cotdma_e2e_config_extn(struct wiphy *wiphy,
  */
 int ath12k_vendor_suspend_device_extn(struct wiphy *wiphy,
 				     struct ath12k_wifi_generic_params *params);
+
+int ath12k_vendor_wnm_tim_bcast_extn(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      const void *data, int data_len);
 
 #endif /* CPTCFG_QCN_EXTN */
 

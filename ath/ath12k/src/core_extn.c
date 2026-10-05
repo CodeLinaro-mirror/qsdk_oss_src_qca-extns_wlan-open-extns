@@ -1021,6 +1021,21 @@ void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
 #endif
 }
 
+bool ath12k_vht_11ng_enabled_extn(struct ieee80211_vif *vif)
+{
+	struct ath12k_vif *ahvif;
+
+	if (!vif)
+		return false;
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+	if (!ahvif)
+		return false;
+
+	return ahvif->ath12k_vif_extn.vht_11ng;
+}
+EXPORT_SYMBOL(ath12k_vht_11ng_enabled_extn);
+
 void ath12k_mac_remove_link_interface_extn(struct ath12k_link_vif *arvif)
 {
 	struct ath12k *ar = arvif->ar;

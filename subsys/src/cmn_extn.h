@@ -647,6 +647,12 @@ drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
 	return;
 }
 
+static inline bool
+ieee80211_vht_11ng_enabled_extn(struct ieee80211_vif *vif,
+				enum nl80211_band band)
+{
+	return false;
+}
 #else
 
 u8 *
@@ -751,6 +757,9 @@ drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
 				     struct ieee80211_sub_if_data *sdata,
 				     unsigned int link_id,
 				     enum ieee80211_diagnostic_sta_disconnect_reason reason);
+
+bool ieee80211_vht_11ng_enabled_extn(struct ieee80211_vif *vif,
+				     enum nl80211_band band);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);
@@ -911,6 +920,7 @@ ieee80211_vendor_mesh_get_key(struct wiphy *wiphy,
  * @mesh_peer_update_caps_extn: When receiving beacons from the mesh peer, parse the
  * 	relevant elements and update the mesh peer capabilities. Send the peer assoc
  * 	WMI to update the existing peer capabilities to FW.
+ * @vht_11ng_enabled: Return whether VHT 11ng is enabled for the VAP.
  */
 struct ieee80211_ops_extn {
 	struct ieee80211_240mhz_vendor_oper_extn*
@@ -928,6 +938,7 @@ struct ieee80211_ops_extn {
 						       u32 freq,
 						       u32 center_freq,
 						       u16 bw);
+	bool (*vht_11ng_enabled)(struct ieee80211_vif *vif);
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 	int (*mesh_peer_update_caps_extn)(struct ieee80211_hw *hw,
 					  struct ieee80211_vif *vif,

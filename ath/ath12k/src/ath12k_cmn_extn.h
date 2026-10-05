@@ -67,6 +67,7 @@ struct ath12k_vif_extn {
 	u8 ssid_len;
 	u8 bssid[ETH_ALEN];
 	bool bssid_set;
+	bool vht_11ng;
 };
 
 struct ath12k_dp_vif_extn {
@@ -922,6 +923,12 @@ static inline void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
 	return;
 }
 
+static inline bool
+ath12k_vht_11ng_enabled_extn(struct ieee80211_vif *vif)
+{
+	return false;
+}
+
 static inline void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
 						     struct dentry *link_debugfs)
 {
@@ -1472,6 +1479,7 @@ struct ath12k_link_vif *ath12k_wifi8_mgmt_handler_extn(struct ieee80211_hw *hw,
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
 				struct ath12k_link_vif *arvif);
 void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif);
+bool ath12k_vht_11ng_enabled_extn(struct ieee80211_vif *vif);
 void ath12k_mac_op_add_interface_extn(struct ieee80211_hw *hw,
 				      struct ieee80211_vif *vif);
 void ath12k_rtt_vdev_assoc_extn(struct ath12k *ar,

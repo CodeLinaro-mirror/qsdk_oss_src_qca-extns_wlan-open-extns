@@ -3897,3 +3897,21 @@ int ieee80211_subif_start_xmit_raw_mesh(struct ieee80211_sub_if_data *sdata,
 }
 EXPORT_SYMBOL(ieee80211_subif_start_xmit_raw_mesh);
 #endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
+bool ieee80211_vht_11ng_enabled_extn(struct ieee80211_vif *vif,
+				     enum nl80211_band band)
+{
+	struct ieee80211_sub_if_data *sdata;
+	struct ieee80211_local *local;
+
+	if (!vif || band != NL80211_BAND_2GHZ)
+		return false;
+
+	sdata = vif_to_sdata(vif);
+	local = sdata->local;
+	if (!local->ops_extn || !local->ops_extn->vht_11ng_enabled)
+		return false;
+
+	return local->ops_extn->vht_11ng_enabled(vif);
+}
+EXPORT_SYMBOL(ieee80211_vht_11ng_enabled_extn);

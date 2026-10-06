@@ -92,8 +92,8 @@ struct ath12k_vif_mesh_params {
 	u_int32_t mhdr;
 	u_int32_t mdbg;
 	u_int8_t mhdr_len;
-	bool mac_addr_valid;
 	uint8_t mac_addr[MAC_ADDR_SIZE];
+	bool is_eth_offload_mesh;
 };
 
 static inline int add_mesh_meta_hdr(struct sk_buff *skb, struct ath12k_vif_mesh_params *params)
@@ -101,6 +101,7 @@ static inline int add_mesh_meta_hdr(struct sk_buff *skb, struct ath12k_vif_mesh_
 	struct meta_hdr_s *mhdr;
 	u_int32_t hdrsize;
 	u_int32_t dbg_mhdr;
+	struct meta_hdr_extn *mhdr_extn;
 
 	dbg_mhdr = params->mhdr ? params->mhdr : MESH_DBG_HDR;
 	hdrsize = params->mhdr_len;
@@ -124,9 +125,11 @@ static inline int add_mesh_meta_hdr(struct sk_buff *skb, struct ath12k_vif_mesh_
 	mhdr->flags = (dbg_mhdr >> MESH_DBG_FLAGS_OFFSET) & MESH_BYTE_MASK;
 	params->mhdr &= ~(METAHDR_FLAG_INFO_UPDATED << MESH_DBG_FLAGS_OFFSET);
 
-	if (params->mac_addr_valid)
-		memcpy(mhdr->mac_addr, params->mac_addr, MAC_ADDR_SIZE);
-	mhdr->mac_addr_valid = params->mac_addr_valid;
+	if (params->is_eth_offload_mesh) {
+		mhdr_extn = (struct meta_hdr_extn *)
+				(skb->data + sizeof(struct meta_hdr_s));
+		memcpy(mhdr_extn->mac_addr, params->mac_addr, MAC_ADDR_SIZE);
+	}
 
 	return 0;
 }

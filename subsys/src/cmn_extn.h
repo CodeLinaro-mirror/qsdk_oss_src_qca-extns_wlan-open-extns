@@ -92,7 +92,9 @@ int ieee80211_skb_resize(struct ieee80211_sub_if_data *sdata,
 #define MESH_PEER_MAX_LINKS 3
 
 #define MESH_PEER_TIMEOUT_CNT 3			/* Peer inactivity timeout threshold */
-#define MMESH_TX_META_HDR	20
+#define MMESH_TX_META_HDR		16  /* sizeof(struct meta_hdr_s) */
+#define MESH_TX_META_HDR_EXTN		6   /* sizeof(struct meta_hdr_extn) */
+#define MESH_TX_META_HDR_ETH_OFFLOAD	(MMESH_TX_META_HDR + MESH_TX_META_HDR_EXTN)
 #define MESH_PEER_INACTIVITY_PERIOD 20000	/* Peer inactivity timer in milliseconds */
 
 #define MESH_AID_WORDS ((2008 + 31) / 32)  /* 63 words for 2008 AIDs */

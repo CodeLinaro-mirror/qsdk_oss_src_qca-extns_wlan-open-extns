@@ -1570,6 +1570,48 @@ ieee80211_mesh_select_akm_cipher(struct mesh_bss_conf *mesh_caps,
 	return true;
 }
 
+/*
+ * ieee80211_mesh_mfp_intersect - three-input MFP intersection.
+ * @mesh_caps: Local mesh BSS capabilities (may be NULL)
+ * @peer:      Peer info; peer_mfp_capable/peer_mfp_required may be cleared
+ * @sta_info:  STA whose WLAN_STA_MFP flag is set on success
+ *
+ * Returns true if the peer is OK to proceed (MFP on or legitimately skipped),
+ * false if the peer must be rejected (local requires MFP, peer beacon lacks it).
+ */
+static bool
+ieee80211_mesh_mfp_intersect(struct mesh_bss_conf *mesh_caps,
+			     struct mesh_peer_info *peer,
+			     struct sta_info *sta_info)
+{
+	/* Gate 1: PEER_CAP_MFP_CAPABLE must be set at addlocalpeer time.
+	 * If not, treat peer as legacy — MFP off regardless of beacon RSN caps.
+	 */
+	if (!peer->peer_caps_mfp_capability) {
+		peer->peer_mfp_capable  = false;
+		peer->peer_mfp_required = false;
+		peer->cnt_mfp_legacy_bypass++;
+		return true;
+	}
+
+	/* Gate 2: peer beacon must advertise MFPC (RSN Caps bit 7). */
+	if (!peer->peer_mfp_capable) {
+		peer->cnt_mfp_beacon_no_mfpc++;
+		if (mesh_caps && mesh_caps->rsn_conf &&
+		    (mesh_caps->rsn_conf->rsn_caps & RSN_CAP_MFP_REQUIRED))
+			return false;
+		return true;
+	}
+
+	/* Gate 3: PEER_CAP + beacon MFPC both set — MFP enabled */
+	peer->cnt_mfp_enabled++;
+	if (!test_sta_flag(sta_info, WLAN_STA_MFP)) {
+		sta_info->sta.mfp = true;
+		set_sta_flag(sta_info, WLAN_STA_MFP);
+	}
+	return true;
+}
+
 /**
  * ieee80211_mesh_vap_gtk_installed - Check all required GTK source key slots
  * are installed for the configured AKM/cipher combos.
@@ -1774,6 +1816,8 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	sta->sta_extn.peer_info.is_mesh_peer = true;
 	sta->sta_extn.peer_info.parse_beacon_install_key =
 		!!(mesh_params->peers[0].caps & MESH_CAPS_SKIP_KEY_INSTALL);
+	sta->sta_extn.peer_info.peer_caps_mfp_capability =
+		!!(mesh_params->peers[0].caps & MESH_CAPS_PEER_CAP_MFP_CAPABLE);
 	sta->sta_extn.peer_info.key_installed = false;
 	rcu_read_unlock();
 
@@ -2867,8 +2911,10 @@ caps_done:
  *     - TKIP + VHT: hard reject per 802.11ac §11.5.3.
  *     - TKIP + HT: sets peer_ht_restricted to suppress HT caps at
  *       beacon intersection, preserving connectivity at legacy rates.
- *  4. MFP cross-check: rejects if the local VAP requires MFP but the
- *     peer does not advertise MFP capability.
+ *  4. Three-input MFP intersection (ieee80211_mesh_mfp_intersect):
+ *     peer_caps_mfp_capability (addlocalpeer) x beacon MFPC x local rsn_caps
+ *     MFP_REQUIRED. Rejects only if local requires MFP and the peer
+ *     gates fail; otherwise sets WLAN_STA_MFP when both sides agree.
  *  5. Saves raw peer RSN IE into peer_info.peer_rsn_ie.
  *  6. Key install trigger: if parse_beacon_install_key is set and keys
  *     have not yet been installed, queues update_cap_wk.
@@ -2971,26 +3017,14 @@ ieee80211_mesh_rsn_ie_check(struct ieee80211_sub_if_data *sdata,
 		peer->peer_ht_restricted = false;
 	}
 
-	/* Step 5: MFP cross-check using RSN Capabilities pre-parsed at AP setup */
-	if (mesh_caps && mesh_caps->rsn_conf &&
-	    (mesh_caps->rsn_conf->rsn_caps & RSN_CAP_MFP_REQUIRED) &&
-	    !peer->peer_mfp_capable) {
+	/* Step 5: Three-input MFP intersection (PEER_CAP x beacon MFPC x local PMF). */
+	if (!ieee80211_mesh_mfp_intersect(mesh_caps, peer, sta_info))
 		goto reject;
-	}
 
 	/* Step 6: Save raw peer RSN IE body */
 	if (elems->rsn_len <= (int)sizeof(peer->peer_rsn_ie)) {
 		memcpy(peer->peer_rsn_ie, elems->rsn, elems->rsn_len);
 		peer->peer_rsn_ie_len = elems->rsn_len;
-	}
-
-	/* Set WLAN_STA_MFP once at RSN capability discovery so the subsequent
-	 * WMI peer assoc in update_cap_wk carries is_pmf_enabled=true before
-	 * the PTK is installed.
-	 */
-	if (peer->peer_mfp_capable && !test_sta_flag(sta_info, WLAN_STA_MFP)) {
-		sta_info->sta.mfp = true;
-		set_sta_flag(sta_info, WLAN_STA_MFP);
 	}
 
 	/* Step 7: Key install is deferred to ieee80211_mesh_beacon_intersect

@@ -10,6 +10,7 @@
 #include "../core.h"
 #include "../wmi.h"
 #include "../mac.h"
+#include "../peer.h"
 #include "../debug.h"
 #include "../vendor.h"
 #include "ath12k_cmn_extn.h"
@@ -501,6 +502,34 @@ void ath12k_wlan_intf_rollover_stats_extn(struct ath12k *ar)
 	spin_unlock_bh(&ar->data_lock);
 }
 
+static u32 ath12k_dcs_npca_client_count(struct ath12k *ar,
+					struct ath12k_link_vif *arvif)
+{
+	struct ath12k_link_sta *arsta;
+	struct ieee80211_link_sta *link_sta;
+	u32 bkt;
+	u32 npca_clients = 0;
+
+	spin_lock_bh(&ar->arsta_lock);
+	ath12k_link_sta_for_each(ar, bkt, arsta) {
+		if (arsta->arvif != arvif || arsta->is_self_peer ||
+		    !arsta->ahsta || arsta->ahsta->state < IEEE80211_STA_ASSOC)
+			continue;
+
+		link_sta = rcu_dereference(ath12k_ahsta_to_sta(arsta->ahsta)->
+							     link[arsta->link_id]);
+		if (!link_sta || !link_sta->uhr_cap.has_uhr ||
+		    !(link_sta->uhr_cap.mac.mac_cap[0] &
+		      IEEE80211_UHR_MAC_CAP0_NPCA_SUPP))
+			continue;
+
+		npca_clients++;
+	}
+	spin_unlock_bh(&ar->arsta_lock);
+
+	return npca_clients;
+}
+
 /**
  * ath12k_dcs_npca_intf_monitor - Monitor P20 OBSS CU and signal
  * hostapd to enable/disable NPCA after 5 consecutive threshold crossings.
@@ -518,6 +547,7 @@ static void ath12k_dcs_npca_intf_monitor(struct ath12k *ar,
 	u8 en_threshold;
 	u8 dis_threshold;
 	u8 cu;
+	u32 npca_clients;
 	bool npca_enabled;
 
 	if (!arvif) {
@@ -534,16 +564,27 @@ static void ath12k_dcs_npca_intf_monitor(struct ath12k *ar,
 	npca_enabled = link_conf &&
 		link_conf->chanreq.oper.npca_freq;
 
+	npca_clients = ath12k_dcs_npca_client_count(ar, arvif);
+
 	ath12k_dbg(ab, ATH12K_DBG_WMI,
 		   "DCS NPCA: pdev=%u link_id=%u cu=%u en_thr=%u dis_thr=%u "
-		   "consec=%u link_conf=%p npca_freq=%u npca_punct=0x%x "
+		   "consec=%u npca_clients=%u link_conf=%p npca_freq=%u "
+		   "npca_punct=0x%x "
 		   "npca_enabled=%u\n",
 		   ar->pdev->pdev_id, arvif->link_id, cu, en_threshold,
-		   dis_threshold, npca_intf->consec_samp, link_conf,
+		   dis_threshold, npca_intf->consec_samp, npca_clients, link_conf,
 		   link_conf ? link_conf->chanreq.oper.npca_freq : 0,
 		   link_conf ? link_conf->chanreq.oper.npca_puncture_bitmap : 0,
 		   npca_enabled);
 
+	if (!npca_clients && npca_enabled) {
+		npca_intf->consec_samp = 0;
+		ath12k_err(ab,
+			   "DCS NPCA: disabling NPCA because no capable client is connected\n");
+		ath12k_vendor_send_intf_notify_extn(ar,
+					      ATH12K_DCS_NPCA_AUTO, 0);
+		return;
+	}
 
 	if (npca_enabled) {
 		if (cu < dis_threshold)

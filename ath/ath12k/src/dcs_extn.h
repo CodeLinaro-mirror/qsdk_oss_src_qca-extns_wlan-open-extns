@@ -6,10 +6,14 @@
 #ifndef ATH12K_DCS_EXTN_H
 #define ATH12K_DCS_EXTN_H
 
-/* Valid DCS interference bitmap: CW, WLAN */
+/* Host-only bit used to request NPCA automatic control. */
+#define ATH12K_DCS_NPCA_AUTO         0x20
+
+/* Valid DCS interference bitmap: CW, WLAN, OBSS, NPCA auto */
 #define ATH12K_DCS_VALID_INTF_BITMAP (WMI_DCS_CW_INTF | \
-                                     WMI_DCS_WLAN_INTF| \
-				     WMI_DCS_OBSS_INTF)
+                                     WMI_DCS_WLAN_INTF | \
+				     WMI_DCS_OBSS_INTF | \
+				     ATH12K_DCS_NPCA_AUTO)
 #define ATH12K_MAX_20MHZ_SEGMENTS       16
 
 #define ATH12K_CHWIDTH_1                1   /* Channel width 1 MHz */

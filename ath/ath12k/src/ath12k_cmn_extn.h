@@ -404,6 +404,11 @@ struct wlan_intf_extn {
 	struct dcs_wlan_intr_user_cfg dcs_cfg;
 };
 
+struct npca_intf_extn {
+    u8 en_threshold;
+    u8 dis_threshold;
+};
+
 #define ATH12K_MSEC_PER_SEC		1000
 #define ATH12K_MAX_CAC_TIMEOUT_MS	(24 * 60 * 60 * ATH12K_MSEC_PER_SEC)
 #define ATH12K_MAX_CAC_TIMEOUT_SEC	(ATH12K_MAX_CAC_TIMEOUT_MS / ATH12K_MSEC_PER_SEC)
@@ -457,6 +462,7 @@ struct ath12k_extn {
 	u16 he_mcs_12_13_peer_cap;
 	u16 he_mcs_12_13_radio_cap;
 
+	struct npca_intf_extn npca_intf; /* NPCA auto on/off state */
 	/* Smart Antenna Specific */
 	struct sa_ar_extn sa_ar;
 

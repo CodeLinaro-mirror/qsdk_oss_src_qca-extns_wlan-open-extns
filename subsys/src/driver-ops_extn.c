@@ -1528,7 +1528,8 @@ ieee80211_mesh_select_akm_cipher(struct mesh_bss_conf *mesh_caps,
 	peer_akm_list = ieee80211_mesh_rsn_locate_list(
 			elems->rsn, elems->rsn_len, 1, &peer_akm_count);
 
-	if (peer_cipher_count == 0 && peer_akm_count == 0) {
+	if (peer_cipher_list && peer_akm_list &&
+	    peer_cipher_count == 0 && peer_akm_count == 0) {
 		if (ieee80211_mesh_local_has_suite(mesh_caps->rsn_conf->akm_suites,
 						   mesh_caps->rsn_conf->n_akm_suites,
 						   WLAN_AKM_SUITE_PSK) &&
@@ -1636,7 +1637,6 @@ static void ieee80211_mesh_install_gtks_for_peer(struct ieee80211_sub_if_data *s
 {
 	struct ieee80211_link_data *link;
 	struct ieee80211_key *key;
-	int i;
 
 	lockdep_assert_wiphy(sdata->local->hw.wiphy);
 
@@ -1647,7 +1647,8 @@ static void ieee80211_mesh_install_gtks_for_peer(struct ieee80211_sub_if_data *s
 	if (!link)
 		return;
 
-	for (i = 0; i < NUM_DEFAULT_KEYS; i++) {
+	for (int i = MANAGED_MESH_VAP_CCMP256_KEY_BASE;
+	     i < MANAGED_MESH_VAP_CCMP_KEY_BASE; i++) {
 		key = wiphy_dereference(sdata->local->hw.wiphy, link->gtk[i]);
 		if (!key)
 			continue;
@@ -1672,7 +1673,6 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	struct station_parameters params = {0};
 	u8 *peer_addr = NULL;
 	struct ieee80211_sta *sta;
-	struct sta_info *sta_info;
 	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
 	struct ieee80211_sub_if_data *sdata;
 	struct net_device *dev;
@@ -1775,11 +1775,6 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 		!!(mesh_params->peers[0].caps & MESH_CAPS_SKIP_KEY_INSTALL);
 	sta->sta_extn.peer_info.key_installed = false;
 	rcu_read_unlock();
-
-	/* Re-install VAP GTKs per-peer */
-	sta_info = sta_info_get(sdata, peer_addr);
-	if (sta_info && ieee80211_mesh_bss_is_secured(local_mesh_bss_conf))
-		ieee80211_mesh_install_gtks_for_peer(sdata, sta_info, link_id);
 
 	ret = 0;
 
@@ -2204,6 +2199,7 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 	struct key_params kp = {};
 	u8 key_buf[WLAN_MAX_KEY_LEN];
 	u8 key_len = 0;
+	u8 vap_base;
 	int ret = -ENOENT;
 	unsigned int i;
 
@@ -2238,43 +2234,60 @@ static void ieee80211_mesh_install_peer_key(struct wiphy *wiphy,
 		return;
 	}
 
-	/* Step 1: Retrieve the VAP's installed GTK */
-	ret = ieee80211_extn_get_key_material(&sdata->vif,
-					      link_conf->link_id,
-					      NULL,
-					      false,
-					      MANAGED_MESH_GTK_KEY_IDX,
+	vap_base = (peer->peer_ucast_cipher == WLAN_CIPHER_SUITE_CCMP_256) ?
+		   MANAGED_MESH_VAP_CCMP256_KEY_BASE :
+		   MANAGED_MESH_VAP_CCMP_KEY_BASE;
+
+	/* Step 1: Install slot B (peer slot 3). */
+	ret = ieee80211_extn_get_key_material(&sdata->vif, link_conf->link_id,
+					      NULL, false, vap_base + 1,
 					      key_buf, sizeof(key_buf), &key_len);
 	if (ret) {
-		pr_debug_ratelimited("managed_mesh_dbg install_peer_key: no VAP GTK at idx=%d for peer %pM\n",
-				     MANAGED_MESH_GTK_KEY_IDX, sta->sta.addr);
+		pr_debug_ratelimited("managed_mesh_dbg install_peer_key: no VAP key at slot=%u for peer %pM\n",
+				     vap_base + 1, sta->sta.addr);
 		memzero_explicit(key_buf, sizeof(key_buf));
 		return;
 	}
-
-	/* Step 2: Install as pairwise key */
-	if (WARN_ON_ONCE(!peer->peer_ucast_cipher)) {
-		memzero_explicit(key_buf, sizeof(key_buf));
-		return;
-	}
-	kp.key     = key_buf;
-	kp.key_len = key_len;
-	kp.cipher  = peer->peer_ucast_cipher;
-
-	ret = rdev->ops->add_key(wiphy, dev,
-				 MANAGED_MESH_SET_KEY_DEFAULT_LINK_ID,
-				 MANAGED_MESH_PTK_KEY_IDX,
-				 true,
-				 sta->sta.addr,
-				 &kp);
+	kp.key = key_buf; kp.key_len = key_len;
+	kp.cipher = peer->peer_ucast_cipher;
+	kp.mode   = NL80211_KEY_RX_TX;
+	ret = rdev->ops->add_key(wiphy, dev, MANAGED_MESH_SET_KEY_DEFAULT_LINK_ID,
+				 MANAGED_MESH_PEER_KEY_SLOT_B, true,
+				 sta->sta.addr, &kp);
 	memzero_explicit(key_buf, sizeof(key_buf));
 	if (ret) {
-		pr_warn_ratelimited("managed_mesh_dbg install_peer_key: add_key failed for peer %pM (ret=%d)\n",
-				    sta->sta.addr, ret);
+		pr_warn_ratelimited("managed_mesh_dbg install_peer_key: add_key failed slot=%d for peer %pM (ret=%d)\n",
+				    MANAGED_MESH_PEER_KEY_SLOT_B, sta->sta.addr, ret);
 		return;
 	}
 
-	/* Step 3: Authorize peer */
+	/* Step 2: Install slot A (peer slot 2). */
+	ret = ieee80211_extn_get_key_material(&sdata->vif, link_conf->link_id,
+					      NULL, false, vap_base,
+					      key_buf, sizeof(key_buf), &key_len);
+	if (ret) {
+		pr_debug_ratelimited("managed_mesh_dbg install_peer_key: no VAP key at slot=%u for peer %pM\n",
+				     vap_base, sta->sta.addr);
+		memzero_explicit(key_buf, sizeof(key_buf));
+		return;
+	}
+	kp.key = key_buf; kp.key_len = key_len;
+	kp.cipher = peer->peer_ucast_cipher;
+	kp.mode   = NL80211_KEY_RX_TX;
+	ret = rdev->ops->add_key(wiphy, dev, MANAGED_MESH_SET_KEY_DEFAULT_LINK_ID,
+				 MANAGED_MESH_PEER_KEY_SLOT_A, true,
+				 sta->sta.addr, &kp);
+	memzero_explicit(key_buf, sizeof(key_buf));
+	if (ret) {
+		pr_warn_ratelimited("managed_mesh_dbg install_peer_key: add_key failed slot=%d for peer %pM (ret=%d)\n",
+				    MANAGED_MESH_PEER_KEY_SLOT_A, sta->sta.addr, ret);
+		return;
+	}
+
+	/* Step 3: Install group keys. */
+	ieee80211_mesh_install_gtks_for_peer(sdata, sta, link_conf->link_id);
+
+	/* Step 4: Authorize peer */
 	ret = ieee80211_vendor_mesh_authorize_peer(wiphy, &sdata->vif, sta->sta.addr);
 	if (ret) {
 		pr_warn_ratelimited("managed_mesh_dbg install_peer_key: authorize failed for %pM (ret=%d)\n",
@@ -2321,6 +2334,7 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 	if (ret < 0) {
 		printk(KERN_ERR "Mesh peer update failed for peer AID %d\n", sta->sta.aid);
 		sta->sta.sta_extn.peer_info.cap_update_failures++;
+		return;
 	} else {
 		sta->sta.sta_extn.peer_info.intersection_done = true;
 		sta->sta.sta_extn.peer_info.intersect_successes++;

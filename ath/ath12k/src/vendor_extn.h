@@ -1048,6 +1048,9 @@ ath12k_cotdma_e2e_config_policy[QCA_WLAN_VENDOR_ATTR_CONFIG_MAX + 1];
 extern const struct nla_policy
 ath12k_wnm_tim_bcast_policy[QCA_WLAN_VENDOR_ATTR_WNM_TIM_BCAST_MAX + 1];
 
+extern const struct nla_policy
+ath12k_vendor_wnm_policy[QCA_WLAN_VENDOR_ATTR_WNM_MAX + 1];
+
 int ath12k_vendor_mapc_peer_params_extn(struct wiphy *wiphy,
 					struct wireless_dev *wdev,
 					const void *data, int data_len);
@@ -1101,6 +1104,20 @@ int ath12k_vendor_get_ipa_debug_info(struct wiphy *wiphy,
 int ath12k_vendor_wnm_tim_bcast_extn(struct wiphy *wiphy,
 				      struct wireless_dev *wdev,
 				      const void *data, int data_len);
+
+enum ath12k_wnm_oper {
+	ATH12K_WNM_SLEEP_ENTER_CONFIRM    = 0,
+	ATH12K_WNM_SLEEP_ENTER_FAIL       = 1,
+	ATH12K_WNM_SLEEP_EXIT_CONFIRM     = 2,
+	ATH12K_WNM_SLEEP_EXIT_FAIL        = 3,
+	ATH12K_WNM_SLEEP_TFS_REQ_IE_SET   = 6,
+	ATH12K_WNM_SLEEP_TFS_RESP_IE_NONE = 8,
+	ATH12K_WNM_SLEEP_TFS_IE_DEL       = 10,
+};
+
+int ath12k_vendor_wnm_extn(struct wiphy *wiphy,
+			   struct wireless_dev *wdev,
+			   const void *data, int data_len);
 
 #endif /* CPTCFG_QCN_EXTN */
 

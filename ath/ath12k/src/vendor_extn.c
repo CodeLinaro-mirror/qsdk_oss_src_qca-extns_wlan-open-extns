@@ -19489,3 +19489,156 @@ err_free:
 	return ret;
 }
 #endif /* CPTCFG_EXT_IPA_OFFLOAD */
+
+const struct nla_policy
+ath12k_vendor_wnm_policy[QCA_WLAN_VENDOR_ATTR_WNM_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_WNM_OPER]        = { .type = NLA_U32 },
+	[QCA_WLAN_VENDOR_ATTR_WNM_PEER]        = NLA_POLICY_ETH_ADDR,
+	[QCA_WLAN_VENDOR_ATTR_WNM_IE]          = { .type = NLA_BINARY,
+						   .len  = ATH12K_TFS_MAX_FILTER_LEN * 2 + 256 },
+	/* WNM_TFS_RESULTS is output-only from REQ_IE_SET; not parsed on input */
+	[QCA_WLAN_VENDOR_ATTR_WNM_TFS_CAPAB]   = { .type = NLA_U8 },
+};
+
+static int ath12k_vendor_wnm_tfs_req_ie_set(struct wiphy *wiphy,
+					    struct ath12k_sta *ahsta,
+					    struct nlattr **tb)
+{
+	struct ath12k_tfs_parse_result results[ATH12K_TFS_MAX_PARSE_RESULTS];
+	u8 results_bin[ATH12K_TFS_MAX_PARSE_RESULTS * 2];
+	const u8 *ie_data;
+	u16 ie_len;
+	u8 n_results = 0;
+	u16 results_bin_len;
+	struct sk_buff *skb;
+	u8 i;
+	int ret;
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_WNM_IE])
+		return -EINVAL;
+
+	ie_data = nla_data(tb[QCA_WLAN_VENDOR_ATTR_WNM_IE]);
+	ie_len  = (u16)nla_len(tb[QCA_WLAN_VENDOR_ATTR_WNM_IE]);
+
+	ret = ath12k_tfs_parse_req_ies(ahsta, ie_data, ie_len,
+				       results, &n_results,
+				       ATH12K_TFS_MAX_PARSE_RESULTS);
+	if (ret) {
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "WNM: TFS parse error: %d\n", ret);
+		return ret;
+	}
+
+	/* Encode results as [tfs_id, status] pairs */
+	for (i = 0; i < n_results; i++) {
+		results_bin[i * 2]     = results[i].tfs_id;
+		results_bin[i * 2 + 1] = results[i].tfs_status;
+	}
+	results_bin_len = (u16)(n_results * 2);
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, NLMSG_DEFAULT_SIZE);
+	if (!skb)
+		return -ENOMEM;
+
+	if (results_bin_len &&
+	    nla_put(skb, QCA_WLAN_VENDOR_ATTR_WNM_TFS_RESULTS,
+		    results_bin_len, results_bin)) {
+		kfree_skb(skb);
+		return -ENOBUFS;
+	}
+
+	ret = cfg80211_vendor_cmd_reply(skb);
+	if (ret)
+		ath12k_err(NULL, "WNM: TFS results reply failed: %d\n", ret);
+	return ret;
+}
+
+int ath12k_vendor_wnm_extn(struct wiphy *wiphy,
+			   struct wireless_dev *wdev,
+			   const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct ieee80211_sta *sta;
+	struct ath12k_sta *ahsta;
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_WNM_MAX + 1];
+	enum ath12k_wnm_oper oper;
+	u8 peer_addr[ETH_ALEN];
+	int ret;
+
+	lockdep_assert_wiphy(wiphy);
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_WNM_MAX, data, data_len,
+			ath12k_vendor_wnm_policy, NULL);
+	if (ret) {
+		ath12k_err(NULL, "Invalid attributes in WNM vendor cmd: %d\n",
+			   ret);
+		return ret;
+	}
+
+	/* Set TFS capability to driver */
+	if (tb[QCA_WLAN_VENDOR_ATTR_WNM_TFS_CAPAB]) {
+		struct ieee80211_vif *vif = wdev_to_ieee80211_vif(wdev);
+		struct ath12k_vif *ahvif;
+		u8 enable = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_WNM_TFS_CAPAB]);
+
+		if (!vif)
+			return -EINVAL;
+		ahvif = ath12k_vif_to_ahvif(vif);
+		ahvif->wnm_tfs = !!enable;
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "WNM: TFS capability %s for vdev\n",
+			   enable ? "enabled" : "disabled");
+		return 0;
+	}
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_WNM_OPER] ||
+	    !tb[QCA_WLAN_VENDOR_ATTR_WNM_PEER])
+		return -EINVAL;
+
+	oper = (enum ath12k_wnm_oper)
+		nla_get_u32(tb[QCA_WLAN_VENDOR_ATTR_WNM_OPER]);
+	memcpy(peer_addr, nla_data(tb[QCA_WLAN_VENDOR_ATTR_WNM_PEER]),
+	       ETH_ALEN);
+
+	rcu_read_lock();
+	sta = ieee80211_find_sta_by_link_addrs(hw, peer_addr, NULL, NULL);
+	if (!sta) {
+		rcu_read_unlock();
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "WNM: STA %pM not found for oper=%d\n",
+			   peer_addr, oper);
+		return -ENOENT;
+	}
+	ahsta = ath12k_sta_to_ahsta(sta);
+	rcu_read_unlock();
+
+	switch (oper) {
+	case ATH12K_WNM_SLEEP_TFS_REQ_IE_SET:
+		return ath12k_vendor_wnm_tfs_req_ie_set(wiphy, ahsta, tb);
+
+	case ATH12K_WNM_SLEEP_TFS_IE_DEL:
+		ath12k_tfs_delete_rules(ahsta);
+		break;
+
+	case ATH12K_WNM_SLEEP_ENTER_CONFIRM:
+		/* No-op: filter is queue-driven, no per-peer state to set. */
+		break;
+
+	case ATH12K_WNM_SLEEP_EXIT_CONFIRM:
+	case ATH12K_WNM_SLEEP_EXIT_FAIL:
+		ath12k_tfs_delete_rules(ahsta);
+		break;
+
+	case ATH12K_WNM_SLEEP_ENTER_FAIL:
+		ath12k_tfs_delete_rules(ahsta);
+		break;
+
+	default:
+		ath12k_dbg(NULL, ATH12K_DBG_CFG,
+			   "WNM: unsupported oper %d\n", oper);
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(ath12k_vendor_wnm_extn);

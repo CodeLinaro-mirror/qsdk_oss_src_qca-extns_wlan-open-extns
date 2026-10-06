@@ -126,7 +126,7 @@ static inline void cfg80211_intf_notify_extn(struct wiphy *wiphy,
 
 static inline void ath12k_vendor_send_intf_notify_extn(struct ath12k *ar,
 						       u16 type,
-						       u32 interference_type);
+						       u32 interference_type)
 {
 }
 

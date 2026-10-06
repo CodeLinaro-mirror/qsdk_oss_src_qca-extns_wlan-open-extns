@@ -491,6 +491,65 @@ void ath12k_wlan_intf_rollover_stats_extn(struct ath12k *ar)
 	spin_unlock_bh(&ar->data_lock);
 }
 
+
+/**
+ * ath12k_dcs_wlan_intf_monitor - Accumulate WLAN interference score
+ * and trigger a channel switch via hostapd when the threshold is reached.
+ */
+static void ath12k_dcs_wlan_intf_monitor(struct ath12k *ar,
+					  struct ath12k_base *ab,
+					  struct dcs_wlan_intr_metrics *metrics)
+{
+	struct ath12k_mac_get_any_chanctx_conf_arg cca;
+	struct ath12k_hw *ah;
+	u32 wlan_bitmap = ATH12K_DCS_SEG_PRI20, full_bw_bitmap;
+	u16 bw, num_sub;
+
+	if (metrics->reg_unused_cu >= dcs_get_coch_intr_threshold(ar))
+		ar->ar_extn.intf_detect_cnt += 2;
+	else if (metrics->too_many_phy_errors &&
+		 (((metrics->total_wasted_cu >
+			(dcs_get_coch_intr_threshold(ar) + 10)) &&
+		  (metrics->reg_tx_cu + metrics->reg_rx_cu) >
+			dcs_get_user_max_cu(ar)) ||
+		  (metrics->reg_tx_cu > DCS_TX_MAX_CU &&
+		   metrics->tx_err >= dcs_get_txerr_threshold(ar))))
+		ar->ar_extn.intf_detect_cnt++;
+
+	if (ar->ar_extn.intf_detect_cnt >= dcs_get_intr_detection_thr(ar)) {
+		ar->ar_extn.intf_detect_cnt = 0;
+		ar->ar_extn.samp_cnt = 0;
+
+		cca.ar = ar;
+		cca.chanctx_conf = NULL;
+		ah = ar->ah;
+
+		ieee80211_iter_chan_contexts_atomic(ah->hw,
+						   ath12k_mac_get_any_chanctx_conf_iter,
+						   &cca);
+		if (cca.chanctx_conf) {
+			bw = ath12k_mac_nlwidth_to_chwidth(
+					cca.chanctx_conf->def.width);
+			num_sub = bw / ATH12K_CHWIDTH_20;
+			full_bw_bitmap = num_sub ?
+				(BIT(num_sub) - 1) : ATH12K_DCS_SEG_PRI20;
+			wlan_bitmap = ath12k_transform_intf_bitmap(
+						full_bw_bitmap,
+						&cca.chanctx_conf->def);
+			if (!wlan_bitmap)
+				wlan_bitmap = ATH12K_DCS_SEG_PRI20;
+		}
+		ath12k_vendor_send_intf_notify_extn(ar, WMI_DCS_WLAN_INTF,
+						    wlan_bitmap);
+	} else if (!ar->ar_extn.intf_detect_cnt ||
+		ar->ar_extn.samp_cnt >= dcs_get_sample_size(ar)) {
+		ar->ar_extn.intf_detect_cnt = 0;
+		ar->ar_extn.samp_cnt = 0;
+	}
+
+	ar->ar_extn.samp_cnt++;
+}
+
 void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 						 struct sk_buff *skb,
 						 u32 pdev_id)
@@ -498,13 +557,9 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	struct wmi_dcs_wlan_interference_stats wlan_info = {};
 	struct wmi_dcs_wlan_interference_stats *prev, *curr;
 	struct dcs_wlan_intr_metrics metrics = {};
-	struct ath12k_mac_get_any_chanctx_conf_arg cca;
-	struct ath12k_hw *ah;
 	struct ath12k *ar;
 	int ret;
 	u32 cycle_count_den, tsf_den;
-	u32 wlan_bitmap = ATH12K_DCS_SEG_PRI20, full_bw_bitmap;
-	u16 bw, num_sub;
 
 	ret = ath12k_wmi_tlv_iter(ab, skb->data, skb->len,
 				  ath12k_wmi_dcs_event_parser,
@@ -633,61 +688,9 @@ void ath12k_wmi_dcs_wlan_interference_event_extn(struct ath12k_base *ab,
 	    (metrics.max_phy_err_count > dcs_get_phyerr_threshold(ar))) ||
 	    (curr->phyerr_cnt > dcs_get_radarerr_threshold(ar)))
 		metrics.too_many_phy_errors = 1;
-
-	if (metrics.reg_unused_cu >= dcs_get_coch_intr_threshold(ar))
-		ar->ar_extn.intf_detect_cnt += 2;
-	else if (metrics.too_many_phy_errors &&
-		 (((metrics.total_wasted_cu > (dcs_get_coch_intr_threshold(ar) + 10)) &&
-		 ((metrics.reg_tx_cu + metrics.reg_rx_cu) > dcs_get_user_max_cu(ar))) ||
-		 ((metrics.reg_tx_cu > DCS_TX_MAX_CU) &&
-		 (metrics.tx_err >= dcs_get_txerr_threshold(ar)))))
-		ar->ar_extn.intf_detect_cnt++;
-
-	if (ar->ar_extn.intf_detect_cnt >= dcs_get_intr_detection_thr(ar)) {
-		ar->ar_extn.intf_detect_cnt = 0;
-		ar->ar_extn.samp_cnt = 0;
-		/*
-		 * Fetch the current channel context so we can build a bitmap
-		 * that covers the full operating bandwidth (e.g. 160 MHz),
-		 * not just the primary 20 MHz sub-channel.  Hostapd uses this
-		 * bitmap together with cur_chan_params to drive find_random_channel();
-		 * sending only ATH12K_DCS_SEG_PRI20 causes it to treat the
-		 * channel as 20 MHz wide and pick a wrong/narrow replacement.
-		 */
-		cca.ar = ar;
-		cca.chanctx_conf = NULL;
-		ah = ar->ah;
-
-		ieee80211_iter_chan_contexts_atomic(ah->hw,
-						   ath12k_mac_get_any_chanctx_conf_iter,
-						   &cca);
-		if (cca.chanctx_conf) {
-			bw = ath12k_mac_nlwidth_to_chwidth(
-					cca.chanctx_conf->def.width);
-			num_sub = bw / ATH12K_CHWIDTH_20;
-			/*
-			 * Build a bitmap with all sub-channel bits set
-			 * for the operating bandwidth, then transform it
-			 * to the host-side segment ordering.  This tells
-			 * hostapd the full channel is affected, matching
-			 * what the OBSS handler does.
-			 */
-			full_bw_bitmap = num_sub ?
-				(BIT(num_sub) - 1) : ATH12K_DCS_SEG_PRI20;
-			wlan_bitmap = ath12k_transform_intf_bitmap(full_bw_bitmap,
-								   &cca.chanctx_conf->def);
-			if (!wlan_bitmap)
-				wlan_bitmap = ATH12K_DCS_SEG_PRI20;
-		}
-		ath12k_vendor_send_intf_notify_extn(ar, WMI_DCS_WLAN_INTF,
-						    wlan_bitmap);
-	} else if (!ar->ar_extn.intf_detect_cnt ||
-		ar->ar_extn.samp_cnt >= dcs_get_sample_size(ar)) {
-		ar->ar_extn.intf_detect_cnt = 0;
-		ar->ar_extn.samp_cnt = 0;
-	}
-
-	ar->ar_extn.samp_cnt++;
+	/* WLAN interference path: accumulate score, trigger channel switch */
+	if (ar->ar_extn.dcs_config_bitmap & WMI_DCS_WLAN_INTF)
+		ath12k_dcs_wlan_intf_monitor(ar, ab, &metrics);
 
 	ath12k_dbg(ab, ATH12K_DBG_WMI,
 		   "DCS: deltas rxclr=%u rxclr_ext=%u tx_frame=%u rx_frame=%u cycle=%u",

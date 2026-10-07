@@ -996,6 +996,9 @@ void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
 	ahvif->dp_vif.dp_extn.mhdr = 0;
 	ahvif->dp_vif.dp_extn.mdbg = 0;
 	ahvif->dp_vif.dp_extn.mesh_tx = 0;
+
+	if (ahvif->vap_submode == IEEE80211_EXTN_VAP_SUBMODE_ETH_OFFLOAD_MESH)
+		ahvif->dp_vif.dp_extn.mhdr_len = MESH_TX_META_HDR_ETH_OFFLOAD;
 #endif
 
 	ath12k_gpr_arvif_init(arvif);

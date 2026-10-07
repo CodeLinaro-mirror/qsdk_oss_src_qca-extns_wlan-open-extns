@@ -363,19 +363,23 @@ int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb, struct ath12k_vif *ahvif, 
 	params.mhdr_len = ahvif->dp_vif.dp_extn.mhdr_len;
 	params.mdbg = ahvif->dp_vif.dp_extn.mdbg;
 
-	spin_lock_bh(&vif->rada_lock);
-	if (vif->rada_table) {
-		for (i = 0; i < MESH_RADA_MAX_ENTRIES; i++) {
-			if (vif->rada_table[i].valid &&
-			    ether_addr_equal(vif->rada_table[i].da, da)) {
-				memcpy(params.mac_addr, vif->rada_table[i].ra,
-				       MAC_ADDR_SIZE);
-				params.mac_addr_valid = true;
-				break;
+	if (ahvif->vap_submode == IEEE80211_EXTN_VAP_SUBMODE_ETH_OFFLOAD_MESH) {
+		params.is_eth_offload_mesh = true;
+
+		spin_lock_bh(&vif->rada_lock);
+		if (vif->rada_table) {
+			for (i = 0; i < MESH_RADA_MAX_ENTRIES; i++) {
+				if (vif->rada_table[i].valid &&
+				    ether_addr_equal(vif->rada_table[i].da, da)) {
+					memcpy(params.mac_addr,
+					       vif->rada_table[i].ra,
+					       MAC_ADDR_SIZE);
+					break;
+				}
 			}
 		}
+		spin_unlock_bh(&vif->rada_lock);
 	}
-	spin_unlock_bh(&vif->rada_lock);
 
 	status = add_mesh_meta_hdr(skb, &params);
 
@@ -389,7 +393,7 @@ int ath12k_dp_add_mesh_meta_hdr(struct sk_buff  *skb, struct ath12k_vif *ahvif, 
 	if (ahvif->dp_vif.dp_extn.mdbg & MESH_DBG_TXHDR_DUMP) {
 		pr_info("### Tx mesh meta header after encap ###");
 		print_hex_dump(KERN_INFO, "BUF: ", DUMP_PREFIX_OFFSET, 16, 1, skb->data,
-			       sizeof(struct meta_hdr_s), false);
+			       ahvif->dp_vif.dp_extn.mhdr_len, false);
 		pr_info("\n");
 	}
 	return 0;

@@ -12,6 +12,43 @@
 #include "../../hal.h"
 #include "../../../dp_cmn.h"
 
+/* ============================================================================
+ * IPA debug_info Helper Functions
+ * ============================================================================ */
+
+/**
+ * ath12k_wifi8_ipa_evt_entry_add() - Log event to global ring buffer
+ * @ipa_ctx: IPA context (single shared context for the hardware group)
+ * @entry: Event entry to log
+ *
+ * Atomically logs event to global circular buffer.
+ * All events go to a single global log (no per-chip separation).
+ */
+void ath12k_wifi8_ipa_evt_entry_add(struct ath12k_ipa *ipa_ctx,
+                                   const struct ath12k_ipa_evt_entry *entry)
+{
+    struct ath12k_ipa_debug_info *debug_info;
+    u32 idx;
+
+    if (!ipa_ctx || !ipa_ctx->debug_info)
+        return;
+
+    if (!entry)
+        return;
+
+    debug_info = ipa_ctx->debug_info;
+
+    spin_lock_bh(&ipa_ctx->debug_info_lock);
+
+    idx = debug_info->global_evt_write_idx % ATH12K_IPA_GLOBAL_EVT_DEPTH;
+    memcpy(&debug_info->global_evt[idx], entry, sizeof(*entry));
+    debug_info->global_evt_write_idx =
+        (debug_info->global_evt_write_idx + 1) % ATH12K_IPA_GLOBAL_EVT_DEPTH;
+    debug_info->global_evt_total_count++;
+
+    spin_unlock_bh(&ipa_ctx->debug_info_lock);
+}
+
 static void ath12k_wifi8_dp_ipa_set_metadata(struct ipa_wdi_reg_intf_in_params *in)
 {
 	in->is_meta_data_valid = 0;
@@ -46,6 +83,22 @@ static int get_vp_num_from_dev_name(const char *net_dev_name, struct ath12k_vif 
 	struct net_device *dev = dev_get_by_name(&init_net, net_dev_name);
 
 	vp_num = ath12k_dp_ipa_alloc_vp_num(ahvif, dev);
+
+	/* LOG: VP ALLOC */
+	if (vp_num >= 0 && ahvif && ahvif->ah && ahvif->ah->num_radio > 0) {
+		struct ath12k_ipa *ipa_ctx = IPA_CTX(ahvif->ah->radio[0].ab);
+		if (ipa_ctx && ipa_ctx->debug_info) {
+			struct ath12k_ipa_evt_entry entry = {0};
+			entry.timestamp_ns = ktime_get_ns();
+			entry.device_id = ahvif->ah->radio[0].ab->device_id;
+			entry.ahvif_id = ahvif->dp_vif.ahvif_id;
+			entry.vp_num = vp_num;
+			entry.log_evt = ATH12K_IPA_LOG_EVT_VP_ALLOC;
+			snprintf((char *)entry.netdev_name, 16, "%s", net_dev_name);
+			ath12k_wifi8_ipa_evt_entry_add(ipa_ctx, &entry);
+		}
+	}
+
 	dev_put(dev);
 	return vp_num;
 }
@@ -107,6 +160,46 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 
 	ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(arvif->ar->ab, vp_num, &vp_profile);
 
+	/* LOG: VP CONFIG and update vap_state.vp */
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(arvif->ar->ab);
+	if (ipa_ctx && ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		int i;
+		u64 timestamp_ns = ktime_get_ns();
+
+		entry.timestamp_ns = timestamp_ns;
+		entry.device_id = arvif->ar->ab->device_id;
+		entry.lmac_id = arvif->ar->lmac_id;
+		entry.vdev_id = arvif->vdev_id;
+		entry.ahvif_id = ahvif->dp_vif.ahvif_id;
+		entry.vp_num = vp_num;
+		entry.bank_id = vp_profile.bank_id;
+		entry.log_evt = ATH12K_IPA_LOG_EVT_VP_CONFIG;
+		snprintf((char *)entry.netdev_name, 16, "%s", in->netdev_name);
+		ath12k_wifi8_ipa_evt_entry_add(ipa_ctx, &entry);
+
+		/* Update vap_state.vp configuration */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		for (i = 0; i < ATH12K_IPA_LOG_MAX_IFACE; i++) {
+			if (ipa_ctx->debug_info->vap[i].ahvif_id == ahvif->dp_vif.ahvif_id &&
+			    ipa_ctx->debug_info->vap[i].active) {
+				ipa_ctx->debug_info->vap[i].lmac_id = arvif->ar->lmac_id;
+				ipa_ctx->debug_info->vap[i].vp.vp_num = vp_num;
+				ipa_ctx->debug_info->vap[i].vp.ahvif_id = ahvif->dp_vif.ahvif_id;
+				ipa_ctx->debug_info->vap[i].vp.vdev_id = arvif->vdev_id;
+				ipa_ctx->debug_info->vap[i].vp.lmac_id = vp_profile.lmac_id;
+				ipa_ctx->debug_info->vap[i].vp.bank_id = vp_profile.bank_id;
+				ipa_ctx->debug_info->vap[i].vp.entry_valid = vp_profile.entry_valid;
+				ipa_ctx->debug_info->vap[i].vp.drop_prec_enable = vp_profile.drop_prec_enable;
+				ipa_ctx->debug_info->vap[i].vp.to_fw_sw = vp_profile.to_fw_sw;
+				ipa_ctx->debug_info->vap[i].vp.use_ppe_int_pri = vp_profile.use_ppe_int_pri;
+				ipa_ctx->debug_info->vap[i].vp.search_idx_reg_num = vp_profile.search_idx_reg_num;
+				ipa_ctx->debug_info->vap[i].vp.config_timestamp_ns = timestamp_ns;
+				break;
+			}
+		}
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
 err:
 	rcu_read_unlock();
 }
@@ -149,8 +242,22 @@ void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id)
 
 	ath12k_dp_ipa_dealloc_vp_num(ahvif);
 
-	if (ab)
+	if (ab) {
 		ath12k_dp_ipa_hal_tx_set_ppe_vp_entry(ab, vp_num, NULL);
+
+		/* LOG: VP FREE */
+		struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+		if (ipa_ctx && ipa_ctx->debug_info) {
+			struct ath12k_ipa_evt_entry entry = {0};
+			entry.timestamp_ns = ktime_get_ns();
+			entry.device_id = ab->device_id;
+			entry.ahvif_id = ahvif_id;
+			entry.vp_num = vp_num;
+			entry.log_evt = ATH12K_IPA_LOG_EVT_VP_FREE;
+			snprintf((char *)entry.netdev_name, 16, "%s", dev_name);
+			ath12k_wifi8_ipa_evt_entry_add(ipa_ctx, &entry);
+		}
+	}
 }
 
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
@@ -407,6 +514,47 @@ static int ath12k_wifi8_dp_ipa_srng_setup(struct ath12k_base *ab)
 		ath12k_ipa_err(ab, "failed to set up tx ipa extn rings :%d", ret);
 		goto tx_err;
 	}
+
+	/* Capture ring configuration in debug_info */
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+	if (ipa_ctx && ipa_ctx->debug_info) {
+		struct ath12k_dp *dp = ath12k_ab_to_dp(ab);
+		struct ath12k_dp_wifi8 *dp_wifi8 = dp ? ath12k_get_dp_wifi8(dp) : NULL;
+		struct ath12k_dp_wifi8_ipa *dp_ipa = (dp_wifi8 && dp_wifi8->extn.ipa) ?
+						      dp_wifi8->extn.ipa : NULL;
+		struct ath12k_pci *pci_priv = ath12k_pci_priv(ab);
+
+		if (dp_ipa) {
+			spin_lock_bh(&ipa_ctx->debug_info_lock);
+
+			/* TX configuration (shared) */
+			ipa_ctx->debug_info->init.tx_tcl_ring_size = dp_ipa->ipa2tcl_ring.size;
+			ipa_ctx->debug_info->init.tx_wbm_ring_size = dp_ipa->tqm2ipa_ring.size;
+			ipa_ctx->debug_info->init.tx_tcl_ring_base_pa = dp_ipa->ipa2tcl_ring.paddr;
+			ipa_ctx->debug_info->init.tx_wbm_ring_base_pa = dp_ipa->tqm2ipa_ring.paddr;
+			ipa_ctx->debug_info->init.tx_tcl_hp_paddr = ipa_ctx->ipa_uc_tx_rsc.ipa_tcl_hp_paddr;
+			ipa_ctx->debug_info->init.tx_wbm_tp_paddr = ipa_ctx->ipa_uc_tx_rsc.ipa_wbm_tp_paddr;
+			ipa_ctx->debug_info->init.tx_num_pkt_buffers = ipa_ctx->ipa_uc_tx_rsc.alloc_tx_buf_cnt;
+
+			/* RX configuration (shared) */
+			ipa_ctx->debug_info->init.rx_reo_ring_size = dp_ipa->reo2sw5.size;
+			ipa_ctx->debug_info->init.rx_refill_ring_size = dp_ipa->ipa2wbm_ring[0].size;
+			ipa_ctx->debug_info->init.rx_reo_ring_base_pa = dp_ipa->reo2sw5.paddr;
+			ipa_ctx->debug_info->init.rx_refill_ring_base_pa = dp_ipa->ipa2wbm_ring[0].paddr;
+			ipa_ctx->debug_info->init.rx_reo_tp_paddr = ipa_ctx->ipa_uc_rx_rsc.ipa_reo_tp_paddr;
+			ipa_ctx->debug_info->init.rx_refill_hp_paddr = ipa_ctx->ipa_uc_rx_rsc.ipa_rx_refill_buf_hp_paddr;
+			ipa_ctx->debug_info->init.rx_pkt_offset = ab->hal.hal_desc_sz + L3_HEADER_PADDING;
+
+			/* SMMU state */
+			if (pci_priv)
+				ipa_ctx->debug_info->init.smmu_s1_enable = pci_priv->ath12k_pci_extn.smmu_s1_enable;
+
+			ipa_ctx->debug_info->init.is_db_ddr_mapped = ipa_ctx->is_db_ddr_mapped;
+
+			spin_unlock_bh(&ipa_ctx->debug_info_lock);
+		}
+	}
+
 	return ret;
 
 ipa2wbm_idle_buf_err:
@@ -982,6 +1130,7 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.ipa_uc_offload_enable = NULL,
 	.dp_ipa_w2i = ath12k_wifi8_dp_ipa_w2i,
 	.debugfs_register = ath12k_wifi8_debugfs_register_tqm2sw6,
+	.evt_entry_add = ath12k_wifi8_ipa_evt_entry_add,
 };
 
 int
@@ -1004,16 +1153,51 @@ ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 	ath12k_ipa_update_ipa_config(ab);
 	if (!dp_ipa_enable())
 		return 0;
+	/* Allocate and initialize IPA debug_info */
+	ipa_ctx->debug_info = kzalloc(sizeof(struct ath12k_ipa_debug_info),
+	                            GFP_KERNEL);
+	if (!ipa_ctx->debug_info) {
+		ath12k_ipa_err(ab, "Failed to allocate debug_info");
+		ath12k_dp_ipa_plugin_deregister_ops_extn(ab);
+		return -ENOMEM;
+	}
+
+	/* Initialize debug_info lock */
+	spin_lock_init(&ipa_ctx->debug_info_lock);
+
+	/* Initialize header */
+	ipa_ctx->debug_info->cumac_enabled = 1;
+	ipa_ctx->debug_info->central_chip_id = ab->device_id;
+
+	/* Count active chips in group */
+	if (ab->ag) {
+		struct ath12k_hw_group *ag = ab->ag;
+		int i;
+		ipa_ctx->debug_info->num_active_chips = 0;
+		for (i = 0; i < ag->num_devices; i++) {
+			if (ag->ab[i] && !ag->ab[i]->is_bypassed)
+				ipa_ctx->debug_info->num_active_chips++;
+		}
+	}
+
+	ath12k_ipa_info(ab, "IPA debug_info initialized: %u chips, size=%zu bytes",
+	                ipa_ctx->debug_info->num_active_chips,
+	                sizeof(struct ath12k_ipa_debug_info));
 
 	ret = ath12k_wifi8_dp_ipa_set_ipa_ctx_for_all_ab(ipa_ctx);
 	if (ret) {
 		ath12k_ipa_err(ab, "failed to set ipa_ctx for all ab");
+		kfree(ipa_ctx->debug_info);
+		ipa_ctx->debug_info = NULL;
 		return ret;
 	}
 
 	dp_wifi8->extn.ipa = kmalloc(sizeof(struct ath12k_dp_wifi8_ipa), GFP_KERNEL);
-	if (!dp_wifi8->extn.ipa)
+	if (!dp_wifi8->extn.ipa) {
+		kfree(ipa_ctx->debug_info);
+		ipa_ctx->debug_info = NULL;
 		return -ENOMEM;
+	}
 
 	memset(dp_wifi8->extn.ipa, 0, sizeof(struct ath12k_dp_wifi8_ipa));
 	dp_wifi8->extn.ipa->dp_wifi8 = dp_wifi8;
@@ -1021,6 +1205,8 @@ ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 	ret = ath12k_dp_ipa_register_is_ipa_ready(ab);
 	if (ret) {
 		ath12k_err(ab, "IPA: ipa init failed");
+		kfree(ipa_ctx->debug_info);
+		ipa_ctx->debug_info = NULL;
 		ath12k_dp_ipa_plugin_deregister_ops_extn(ab);
 	}
 

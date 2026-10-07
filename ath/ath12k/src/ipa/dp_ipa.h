@@ -172,6 +172,344 @@ struct ipa_header {
 
 #define ATH12K_CORE_DMA_UNMAP_SINGLE(...) ((void)0)
 
+/* START - TLPD_WIFI_AGENT STRUCTURES */
+/* Constants for the IPA debug_info feature */
+#define ATH12K_IPA_LOG_MAX_IFACE        48   /* Max interfaces (3 SoCs × 16 VDEVs) */
+#define ATH12K_IPA_GLOBAL_EVT_DEPTH     128  /* Global event log depth */
+
+/* IPA event types */
+enum ath12k_ipa_log_evt {
+	/* Interface events (VAP = Virtual Access Point) */
+	ATH12K_IPA_LOG_EVT_VAP_UP         = 0,   /* VAP interface registered/up */
+	ATH12K_IPA_LOG_EVT_VAP_DOWN       = 1,   /* VAP interface deregistered/down */
+
+	/* WMI configuration events */
+	ATH12K_IPA_LOG_EVT_WMI_OFFLOAD    = 2,   /* WMI offload enable/disable */
+	ATH12K_IPA_LOG_EVT_WMI_INTRABSS   = 3,   /* WMI intrabss forwarding config */
+
+	/* IPA pipe events */
+	ATH12K_IPA_LOG_EVT_PIPES_ENABLED  = 4,   /* IPA pipes enabled */
+	ATH12K_IPA_LOG_EVT_PIPES_DISABLED = 5,   /* IPA pipes disabled */
+
+	/* VP (Virtual Port) events */
+	ATH12K_IPA_LOG_EVT_VP_ALLOC       = 6,   /* VP number allocated */
+	ATH12K_IPA_LOG_EVT_VP_FREE        = 7,   /* VP number freed */
+	ATH12K_IPA_LOG_EVT_VP_CONFIG      = 8,   /* VP table entry programmed */
+
+	ATH12K_IPA_LOG_EVT_MAX
+};
+
+/*
+ * Nested netlink attribute numbering for QCA_WLAN_VENDOR_ATTR_IPA_STATS_DEBUG_INFO.
+ * The top-level attribute ID itself comes from the vendor's qca-vendor.h and
+ * is unaffected; these enums number the sub-attributes nested inside it, one
+ * per member of the structs below, so vendor_extn.c can encode the debug info
+ * field-by-field instead of as a single binary blob. Must stay numerically
+ * in sync with the identical enums in tlpd-wifi-agent/tlpd_wifi_agent.h.
+ */
+
+/** Sub-attributes of IPA_STATS_DEBUG_INFO, one per ath12k_ipa_debug_info member */
+enum ipa_debug_info_attr {
+	IPA_DEBUG_INFO_INVALID                = 0,
+	IPA_DEBUG_INFO_NUM_ACTIVE_CHIPS        = 1,  /* u8  */
+	IPA_DEBUG_INFO_CUMAC_ENABLED           = 2,  /* u8  */
+	IPA_DEBUG_INFO_CENTRAL_CHIP_ID         = 3,  /* u8  */
+	IPA_DEBUG_INFO_INIT                    = 4,  /* nested: enum ipa_init_attr */
+	IPA_DEBUG_INFO_NUM_ACTIVE_IFACES       = 5,  /* u32 */
+	IPA_DEBUG_INFO_VAP_LIST                = 6,  /* nested list, per-index nests */
+	IPA_DEBUG_INFO_EVT_WRITE_IDX           = 7,  /* u32 */
+	IPA_DEBUG_INFO_EVT_TOTAL_COUNT         = 8,  /* u32 */
+	IPA_DEBUG_INFO_EVT_LIST                = 9,  /* nested list, per-index nests */
+
+	IPA_DEBUG_INFO_ATTR_MAX                = IPA_DEBUG_INFO_EVT_LIST,
+};
+
+/** Sub-attributes of IPA_DEBUG_INFO_INIT, one per ath12k_ipa_init_params member */
+enum ipa_init_attr {
+	IPA_INIT_INVALID                 = 0,
+	IPA_INIT_WDI_VERSION             = 1,  /* u8  */
+	IPA_INIT_HDL                     = 2,  /* u8  */
+	IPA_INIT_INST_ID                 = 3,  /* u8  */
+	IPA_INIT_OVER_GSI                = 4,  /* u8  */
+	IPA_INIT_SMMU_ENABLED_IPA        = 5,  /* u8  */
+	IPA_INIT_SMMU_S1_ENABLE          = 6,  /* u8  */
+	IPA_INIT_UC_READY                = 7,  /* u8  */
+	IPA_INIT_IS_DB_DDR_MAPPED        = 8,  /* u8  */
+	IPA_INIT_NUM_CHIPS               = 9,  /* u8  */
+	IPA_INIT_NUM_RADIOS              = 10, /* u8  */
+	IPA_INIT_TX_CLIENT               = 11, /* u8  */
+	IPA_INIT_TX_BANK_ID              = 12, /* u8  */
+	IPA_INIT_TX_PMAC_ID              = 13, /* u8  */
+	IPA_INIT_TX_PKT_OFFSET           = 14, /* u8  */
+	IPA_INIT_TX_IS_TXR_DB_PCIE       = 15, /* u8  */
+	IPA_INIT_TX_IS_EVT_DB_PCIE       = 16, /* u8  */
+	IPA_INIT_TX_NUM_PKT_BUFFERS      = 17, /* u32 */
+	IPA_INIT_TX_TCL_RING_SIZE        = 18, /* u32 */
+	IPA_INIT_TX_WBM_RING_SIZE        = 19, /* u32 */
+	IPA_INIT_TX_TCL_RING_BASE_PA     = 20, /* u64 */
+	IPA_INIT_TX_TCL_HP_PADDR         = 21, /* u64 */
+	IPA_INIT_TX_WBM_RING_BASE_PA     = 22, /* u64 */
+	IPA_INIT_TX_WBM_TP_PADDR         = 23, /* u64 */
+	IPA_INIT_TX_DB_PHYS              = 24, /* u64 */
+	IPA_INIT_TX_DB_IOVA              = 25, /* u64 */
+	IPA_INIT_RX_CLIENT               = 26, /* u8  */
+	IPA_INIT_RX_MLO_CHIP_ID          = 27, /* u8  */
+	IPA_INIT_RX_PKT_OFFSET           = 28, /* u32 */
+	IPA_INIT_RX_REO_RING_SIZE        = 29, /* u32 */
+	IPA_INIT_RX_REFILL_RING_SIZE     = 30, /* u32 */
+	IPA_INIT_RX_REO_RING_BASE_PA     = 31, /* u64 */
+	IPA_INIT_RX_REO_TP_PADDR         = 32, /* u64 */
+	IPA_INIT_RX_REFILL_RING_BASE_PA  = 33, /* u64 */
+	IPA_INIT_RX_REFILL_HP_PADDR      = 34, /* u64 */
+	IPA_INIT_RX_DB_PHYS              = 35, /* u64 */
+	IPA_INIT_RX_DB_IOVA              = 36, /* u64 */
+	IPA_INIT_TX_UC_DB_PA             = 37, /* u64 */
+	IPA_INIT_RX_UC_DB_PA             = 38, /* u64 */
+	IPA_INIT_PIPES_ENABLED           = 39, /* u8  */
+	IPA_INIT_PIPES_ENABLED_NS        = 40, /* u64 */
+	IPA_INIT_INIT_START_NS           = 41, /* u64 */
+	IPA_INIT_INIT_DONE_NS            = 42, /* u64 */
+	IPA_INIT_PIPES_DISABLE_NS        = 43, /* u64 */
+	IPA_INIT_DEINIT_DONE_NS          = 44, /* u64 */
+
+	IPA_INIT_ATTR_MAX                = IPA_INIT_DEINIT_DONE_NS,
+};
+
+/** Sub-attributes of IPA_VAP_VP, one per ath12k_ipa_vp_config member */
+enum ipa_vp_attr {
+	IPA_VP_INVALID                   = 0,
+	IPA_VP_NUM                       = 1,  /* u8  */
+	IPA_VP_AHVIF_ID                  = 2,  /* u8  */
+	IPA_VP_VDEV_ID                   = 3,  /* u8  */
+	IPA_VP_LMAC_ID                   = 4,  /* u8  */
+	IPA_VP_BANK_ID                   = 5,  /* u8  */
+	IPA_VP_ENTRY_VALID               = 6,  /* u8  */
+	IPA_VP_DROP_PREC_ENABLE          = 7,  /* u8  */
+	IPA_VP_TO_FW_SW                  = 8,  /* u8  */
+	IPA_VP_USE_PPE_INT_PRI           = 9,  /* u8  */
+	IPA_VP_SEARCH_IDX_REG_NUM        = 10, /* u8  */
+	IPA_VP_CONFIG_TIMESTAMP_NS       = 11, /* u64 */
+
+	IPA_VP_ATTR_MAX                  = IPA_VP_CONFIG_TIMESTAMP_NS,
+};
+
+/** Sub-attributes of an IPA_DEBUG_INFO_VAP_LIST element, one per
+ *  ath12k_ipa_vap_state member
+ */
+enum ipa_vap_attr {
+	IPA_VAP_INVALID                  = 0,
+	IPA_VAP_NETDEV_NAME              = 1,  /* binary, 16 bytes */
+	IPA_VAP_BSSID                    = 2,  /* binary, 6 bytes */
+	IPA_VAP_AHVIF_ID                 = 3,  /* u8  */
+	IPA_VAP_VDEV_ID                  = 4,  /* u8  */
+	IPA_VAP_DEVICE_ID                = 5,  /* u8  */
+	IPA_VAP_LMAC_ID                  = 6,  /* u8  */
+	IPA_VAP_DEVICE_MODE              = 7,  /* u8  */
+	IPA_VAP_ACTIVE                   = 8,  /* u8  */
+	IPA_VAP_MLD_ENABLED              = 9,  /* u8  */
+	IPA_VAP_VP                       = 10, /* nested: enum ipa_vp_attr */
+	IPA_VAP_TX_CLIENT                = 11, /* u8  */
+	IPA_VAP_SESSION_ID               = 12, /* u8  */
+	IPA_VAP_WMI_OFFLOAD_EN           = 13, /* u8  */
+	IPA_VAP_WMI_INTRABSS_VAL         = 14, /* u8  */
+	IPA_VAP_REG_TIMESTAMP_NS         = 15, /* u64 */
+	IPA_VAP_UP_TIMESTAMP_NS          = 16, /* u64 */
+	IPA_VAP_DOWN_TIMESTAMP_NS        = 17, /* u64 */
+
+	IPA_VAP_ATTR_MAX                 = IPA_VAP_DOWN_TIMESTAMP_NS,
+};
+
+/** Sub-attributes of an IPA_DEBUG_INFO_EVT_LIST element, one per
+ *  ath12k_ipa_evt_entry member
+ */
+enum ipa_evt_attr {
+	IPA_EVT_INVALID                  = 0,
+	IPA_EVT_TIMESTAMP_NS             = 1,  /* u64 */
+	IPA_EVT_MAC_ADDR                 = 2,  /* binary, 6 bytes */
+	IPA_EVT_DEVICE_ID                = 3,  /* u8  */
+	IPA_EVT_LMAC_ID                  = 4,  /* u8  */
+	IPA_EVT_VDEV_ID                  = 5,  /* u8  */
+	IPA_EVT_AHVIF_ID                 = 6,  /* u8  */
+	IPA_EVT_VP_NUM                   = 7,  /* u8  */
+	IPA_EVT_BANK_ID                  = 8,  /* u8  */
+	IPA_EVT_LOG_EVT                  = 9,  /* u8  */
+	IPA_EVT_IPA_WLAN_EVENT           = 10, /* u8  */
+	IPA_EVT_WMI_OFFLOAD_TYPE         = 11, /* u8  */
+	IPA_EVT_WMI_ENABLE               = 12, /* u8  */
+	IPA_EVT_MLD_ENABLED              = 13, /* u8  */
+	IPA_EVT_RESULT                   = 14, /* s32 */
+	IPA_EVT_NETDEV_NAME              = 15, /* binary, 16 bytes */
+
+	IPA_EVT_ATTR_MAX                 = IPA_EVT_NETDEV_NAME,
+};
+
+/**
+ * IPA initialization parameters
+ *
+ * Captures the IPA initialization state.
+ * Note: Single set of parameters for entire hardware group.
+ */
+struct ath12k_ipa_init_params {
+	/* IPA configuration */
+	u8  wdi_version;           /* WDI version (3.0 for WiFi8) */
+	u8  hdl;                   /* IPA handle */
+	u8  inst_id;               /* Instance ID */
+	u8  over_gsi;              /* Over GSI flag */
+	u8  smmu_enabled_ipa;      /* SMMU enabled */
+	u8  smmu_s1_enable;        /* SMMU stage 1 enabled */
+	u8  uc_ready;              /* uC ready flag */
+	u8  is_db_ddr_mapped;      /* Doorbell DDR mapped */
+
+	/* Hardware group info */
+	u8  num_chips;             /* Number of SoCs in group */
+	u8  num_radios;            /* Total radios (typically 3) */
+
+	/* TX configuration (shared across all SoCs) */
+	u8  tx_client;             /* IPA client*/
+	u8  tx_bank_id;            /* Default TX bank ID */
+	u8  tx_pmac_id;            /* PMAC ID */
+	u8  tx_pkt_offset;         /* Packet offset */
+	u8  tx_is_txr_db_pcie;     /* TXR doorbell PCIe */
+	u8  tx_is_evt_db_pcie;     /* Event doorbell PCIe */
+	u32 tx_num_pkt_buffers;    /* Number of TX buffers */
+	u32 tx_tcl_ring_size;      /* IPA2TCL ring size (8192) */
+	u32 tx_wbm_ring_size;      /* TQM2IPA ring size (8192) */
+	u64 tx_tcl_ring_base_pa;   /* IPA2TCL ring physical address */
+	u64 tx_tcl_hp_paddr;       /* IPA2TCL HP address */
+	u64 tx_wbm_ring_base_pa;   /* TQM2IPA ring physical address */
+	u64 tx_wbm_tp_paddr;       /* TQM2IPA TP address */
+	u64 tx_db_phys;            /* TX doorbell physical address */
+	u64 tx_db_iova;            /* TX doorbell IOVA */
+
+	/* RX configuration (shared across all SoCs) */
+	u8  rx_client;             /* IPA client*/
+	u8  rx_mlo_chip_id;        /* MLO chip ID */
+	u32 rx_pkt_offset;         /* RX packet offset */
+	u32 rx_reo_ring_size;      /* REO2SW5 ring size (4096) */
+	u32 rx_refill_ring_size;   /* IPA2WBM ring size */
+	u64 rx_reo_ring_base_pa;   /* REO2SW5 ring physical address */
+	u64 rx_reo_tp_paddr;       /* REO2SW5 TP address */
+	u64 rx_refill_ring_base_pa;/* IPA2WBM ring physical address */
+	u64 rx_refill_hp_paddr;    /* IPA2WBM HP address */
+	u64 rx_db_phys;            /* RX doorbell physical address */
+	u64 rx_db_iova;            /* RX doorbell IOVA */
+
+	/* Pipe handles (single set for entire group) */
+	u64 tx_uc_db_pa;           /* TX uC doorbell PA */
+	u64 rx_uc_db_pa;           /* RX uC doorbell PA */
+
+	/* State */
+	u8  pipes_enabled;         /* Pipes enabled flag */
+
+	/* Timestamps */
+	u64 pipes_enabled_ns;      /* Pipes enabled timestamp */
+	u64 init_start_ns;         /* Init start timestamp */
+	u64 init_done_ns;          /* Init done timestamp */
+	u64 pipes_disable_ns;      /* Pipes disabled timestamp */
+	u64 deinit_done_ns;        /* Deinit done timestamp */
+};
+
+/**
+ * VP (Virtual Port) configuration
+ *
+ * Captures VP table entry for an interface.
+ */
+struct ath12k_ipa_vp_config {
+	u8  vp_num;                /* VP number (64-255) */
+	u8  ahvif_id;              /* Hardware VIF ID (0-63) */
+	u8  vdev_id;               /* VDEV ID (0-15 per radio) */
+	u8  lmac_id;               /* Radio/LMAC ID (0-2) */
+	u8  bank_id;               /* TX bank ID */
+	u8  entry_valid;           /* Entry valid flag */
+	u8  drop_prec_enable;      /* Drop precedence enable */
+	u8  to_fw_sw;              /* Route to FW/SW */
+	u8  use_ppe_int_pri;       /* Use PPE internal priority */
+	u8  search_idx_reg_num;    /* Search index register */
+	u64 config_timestamp_ns;   /* VP config timestamp */
+};
+
+/**
+ * Interface state
+ *
+ * Captures per-interface state.
+ * Key difference: Uses ahvif_id (group-wide) instead of vdev_id (per-SoC).
+ */
+struct ath12k_ipa_vap_state {
+	/* Interface identification */
+	u8  netdev_name[16];       /* Network device name */
+	u8  bssid[6];              /* BSSID */
+	u8  ahvif_id;              /* Hardware VIF ID (1-63, group-wide) */
+	u8  vdev_id;               /* VDEV ID (0-15, per-radio) */
+	u8  device_id;             /* SoC device ID */
+	u8  lmac_id;               /* Radio/LMAC ID (0-2) */
+	u8  device_mode;           /* Device mode (AP/STA/etc) */
+	u8  active;                /* Interface active */
+	u8  mld_enabled;           /* MLO enabled */
+
+	/* VP configuration */
+	struct ath12k_ipa_vp_config vp; /* VP configuration */
+
+	/* IPA configuration */
+	u8  tx_client;             /* TX client */
+	u8  session_id;            /* Session ID (same as ahvif_id) */
+	u8  wmi_offload_en;        /* WMI offload enabled */
+	u8  wmi_intrabss_val;      /* WMI intrabss value */
+
+	/* Timestamps */
+	u64 reg_timestamp_ns;      /* Registration timestamp */
+	u64 up_timestamp_ns;       /* Interface up timestamp */
+	u64 down_timestamp_ns;     /* Interface down timestamp */
+};
+
+/**
+ * Event entry
+ *
+ * Captures logged IPA events.
+ */
+struct ath12k_ipa_evt_entry {
+	u64 timestamp_ns;          /* Event timestamp */
+	u8  mac_addr[6];           /* MAC address */
+	u8  device_id;             /* SoC device ID */
+	u8  lmac_id;               /* Radio/LMAC ID */
+	u8  vdev_id;               /* VDEV ID (per-radio) */
+	u8  ahvif_id;              /* Hardware VIF ID (group-wide) */
+	u8  vp_num;                /* VP number */
+	u8  bank_id;               /* TX bank ID */
+	u8  log_evt;               /* Event type */
+	u8  ipa_wlan_event;        /* IPA WLAN event */
+	u8  wmi_offload_type;      /* WMI offload type */
+	u8  wmi_enable;            /* WMI enable */
+	u8  mld_enabled;           /* MLO enabled */
+	s32  result;                /* Result code */
+	u8  netdev_name[16];       /* Network device name */
+};
+
+/**
+ * IPA related stats for tlpd-wifi-agent
+ *
+ * Captures entire IPA state and its events.
+ * Single shared IPA context for all chips - NO per-chip data!
+ */
+struct ath12k_ipa_debug_info {
+	/* Header */
+	u8  num_active_chips;      /* Number of active SoCs */
+	u8  cumac_enabled;         /* Cumac architecture enabled */
+	u8  central_chip_id;       /* Central/lead SoC device_id */
+
+	/* Shared IPA initialization (single for entire group) */
+	struct ath12k_ipa_init_params init;
+
+	/* Interface states (group-wide, includes VP config in each vap entry) */
+	u32 num_active_ifaces;     /* Number of active interfaces */
+	struct ath12k_ipa_vap_state vap[ATH12K_IPA_LOG_MAX_IFACE];
+
+	/* Global events (ALL events, no per-chip separation) */
+	u32 global_evt_write_idx;  /* Global event write index */
+	u32 global_evt_total_count;/* Global event total count */
+	struct ath12k_ipa_evt_entry global_evt[ATH12K_IPA_GLOBAL_EVT_DEPTH];
+};
+/* END - TLPD_WIFI_AGENT STRUCTURES */
+
 int ath12k_dp_ipa_plugin_register_ops_extn(struct ath12k_base *ab);
 void ath12k_dp_ipa_plugin_deregister_ops_extn(struct ath12k_base *ab);
 void ath12k_ipa_update_ipa_config(struct ath12k_base *ab);
@@ -364,6 +702,13 @@ struct ath12k_ipa_arch_ops {
 			   enum ipa_dp_evt_type evt,
 			   unsigned long data);
 	void (*debugfs_register)(struct ath12k *ar);
+
+	/**
+	 * evt_entry_add - Add an IPA event to the debug info ring buffer.
+	 * Implemented by ath12k_wifi8; NULL for other generations (no-op).
+	 */
+	void (*evt_entry_add)(struct ath12k_ipa *ipa_ctx,
+			     const struct ath12k_ipa_evt_entry *entry);
 };
 
 struct ath12k_ipa_mac_addr {
@@ -905,6 +1250,10 @@ struct ath12k_ipa {
 	bool is_db_ddr_mapped;
 	bool ipa_first_tx_db_access;
 	struct ath12k_ipa_arch_ops *arch_ops;
+
+	/* Debug info infrastructure (NULL when unsupported) */
+	spinlock_t debug_info_lock;                           /* Protects debug info updates */
+	struct ath12k_ipa_debug_info *debug_info;  /* IPA debug info (present when the feature is supported) */
 };
 
 /**
@@ -1326,5 +1675,17 @@ void ath12k_dp_ipa_vif_notify(struct ath12k_link_vif *arvif,
 int ath12k_dp_ipa_hw_group_init(struct ath12k_base *ab,
 				struct ath12k_dp_hw_group *dp_hw_grp);
 void ath12k_dp_ipa_hw_group_deinit(struct ath12k_dp_hw_group *dp_hw_grp);
+
+/**
+ * ath12k_dp_ipa_arch_op_evt_entry_add - Log an IPA event via arch_ops.
+ * No-op if arch_ops or evt_entry_add is NULL (unsupported generations).
+ */
+static inline void
+ath12k_dp_ipa_arch_op_evt_entry_add(struct ath12k_ipa *ipa_ctx,
+				   const struct ath12k_ipa_evt_entry *entry)
+{
+	if (ipa_ctx && ipa_ctx->arch_ops && ipa_ctx->arch_ops->evt_entry_add)
+		ipa_ctx->arch_ops->evt_entry_add(ipa_ctx, entry);
+}
 
 #endif

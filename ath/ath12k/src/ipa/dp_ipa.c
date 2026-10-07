@@ -471,7 +471,12 @@ void ath12k_dp_ipa_map_ring_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ipa_ctx->ab);
 	u32 rx_ready_doorbell_dmaaddr;
 	u32 tx_comp_doorbell_dmaaddr;
+	u64 tx_db_phys, rx_db_phys;
 	int ret;
+
+	/* Save original physical addresses before SMMU mapping */
+	tx_db_phys = tx_rsc->tx_comp_doorbell_paddr;
+	rx_db_phys = rx_rsc->rx_ready_doorbell_paddr;
 
 	tx_rsc->tx_comp_doorbell_vaddr = ioremap(tx_rsc->tx_comp_doorbell_paddr, 4);
 
@@ -487,6 +492,16 @@ void ath12k_dp_ipa_map_ring_doorbell_paddr(struct ath12k_ipa *ipa_ctx)
 					     &rx_ready_doorbell_dmaaddr, sizeof(u32));
 		rx_rsc->rx_ready_doorbell_paddr = rx_ready_doorbell_dmaaddr;
 		BUG_ON(ret != 0);
+	}
+
+	/* Capture doorbell addresses in debug_info */
+	if (ipa_ctx->debug_info) {
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.tx_db_phys = tx_db_phys;
+		ipa_ctx->debug_info->init.tx_db_iova = tx_rsc->tx_comp_doorbell_paddr;
+		ipa_ctx->debug_info->init.rx_db_phys = rx_db_phys;
+		ipa_ctx->debug_info->init.rx_db_iova = rx_rsc->rx_ready_doorbell_paddr;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
 	}
 }
 
@@ -555,6 +570,24 @@ int ath12k_dp_ipa_enable_pipes(struct ath12k_ipa *ipa_ctx)
 	}
 	/* seeting up REO mapping */
 	ath12k_dp_ipa_setup_ix_reg(ipa_ctx->ab);
+
+	/* LOG: PIPES ENABLED */
+	if (ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		entry.timestamp_ns = ktime_get_ns();
+		entry.device_id = ipa_ctx->ab->device_id;
+		entry.log_evt = ATH12K_IPA_LOG_EVT_PIPES_ENABLED;
+		entry.result = 0;
+		ath12k_dp_ipa_arch_op_evt_entry_add(ipa_ctx, &entry);
+
+		/* Update debug_info */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.pipes_enabled = 1;
+		ipa_ctx->debug_info->init.pipes_enabled_ns = entry.timestamp_ns;
+		ipa_ctx->debug_info->init.init_done_ns = entry.timestamp_ns;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
+
 	return 0;
 }
 
@@ -572,6 +605,22 @@ int ath12k_dp_ipa_disable_pipes(struct ath12k_ipa *ipa_ctx)
 
 	atomic_set(&ipa_ctx->ipa_pipes_enabled, 0);
 	atomic_set(&ipa_ctx->ipa_map_allowed, 0);
+
+	/* LOG: PIPES DISABLED */
+	if (ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		entry.timestamp_ns = ktime_get_ns();
+		entry.device_id = ipa_ctx->ab->device_id;
+		entry.log_evt = ATH12K_IPA_LOG_EVT_PIPES_DISABLED;
+		entry.result = result;
+		ath12k_dp_ipa_arch_op_evt_entry_add(ipa_ctx, &entry);
+
+		/* Update debug_info */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.pipes_enabled = 0;
+		ipa_ctx->debug_info->init.pipes_disable_ns = entry.timestamp_ns;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
 
 	return result;
 }
@@ -882,6 +931,35 @@ int ath12k_dp_ipa_wdi_init(struct ath12k_ipa *ipa_ctx)
 					out.offload_max_pkts :
 					IPA_WDI_OFFLOAD_MAX_PKTS;
 
+	/* Capture WDI init parameters in debug_info */
+	if (ipa_ctx->debug_info) {
+		struct ath12k_hw_group *ag = ipa_ctx->ab->ag;
+
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+
+		ipa_ctx->debug_info->init.wdi_version = in.wdi_version;
+		ipa_ctx->debug_info->init.hdl = out.hdl;
+		ipa_ctx->debug_info->init.inst_id = in.inst_id;
+		ipa_ctx->debug_info->init.over_gsi = out.is_over_gsi;
+		ipa_ctx->debug_info->init.smmu_enabled_ipa = out.is_smmu_enabled;
+		ipa_ctx->debug_info->init.uc_ready = out.is_uC_ready;
+		if (ag) {
+			int i, total_radios = 0;
+
+			ipa_ctx->debug_info->init.num_chips = ag->num_devices;
+
+			/* Count total radios across all chips */
+			for (i = 0; i < ag->num_devices; i++) {
+				if (ag->ab[i] && !ag->ab[i]->is_bypassed)
+					total_radios += ag->ab[i]->num_radios;
+			}
+			ipa_ctx->debug_info->init.num_radios = total_radios;
+		}
+		ipa_ctx->debug_info->init.init_start_ns = ktime_get_ns();
+
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
+
 	ath12k_info(ipa_ctx->ab, "ipa_over_gsi: %d, is_smmu_enabled: %d, handle: %d "
 			"inst_id: %d", ipa_ctx->over_gsi, ipa_ctx->is_smmu_enabled,
 			ipa_ctx->hdl,in.inst_id);
@@ -1115,6 +1193,18 @@ ath12k_dp_ipa_wdi_tx_smmu_params(struct ath12k_ipa *ipa_ctx,
 
 	/* Set Pmac ID, extract pmac_id from first pdev for TX ring */
 	ath12k_dp_ipa_setup_tx_smmu_params_pmac_id(ipa_ctx, tx_smmu);
+
+	/* Capture TX params in debug_info */
+	if (ipa_ctx->debug_info) {
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.tx_client = tx_smmu->client;
+		ipa_ctx->debug_info->init.tx_bank_id = tx_smmu->rx_bank_id;
+		ipa_ctx->debug_info->init.tx_pmac_id = tx_smmu->rx_pmac_id;
+		ipa_ctx->debug_info->init.tx_pkt_offset = tx_smmu->pkt_offset;
+		ipa_ctx->debug_info->init.tx_is_txr_db_pcie = tx_smmu->is_txr_rn_db_pcie_addr;
+		ipa_ctx->debug_info->init.tx_is_evt_db_pcie = tx_smmu->is_evt_rn_db_pcie_addr;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
 }
 
 void
@@ -1172,6 +1262,14 @@ ath12k_dp_ipa_wdi_rx_smmu_params(struct ath12k_ipa *ipa_ctx,
 		((struct ipa_wdi_pipe_setup_info_smmu *)(rx_smmu))->mlo_chip_id = 0xFF;
 
 	ath12k_dp_ipa_arch_op_rx_pipe_set_rdi(ipa_ctx, rx_smmu);
+
+	/* Capture RX params in debug_info */
+	if (ipa_ctx->debug_info) {
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.rx_client = rx_smmu->client;
+		ipa_ctx->debug_info->init.rx_mlo_chip_id = rx_smmu->mlo_chip_id;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
 }
 /* DONE WDI TX/RX SMMU PARAMS settings */
 
@@ -1280,6 +1378,15 @@ int ath12k_dp_ipa_setup(struct ath12k_ipa *ipa_ctx)
 		((struct ipa_wdi_conn_out_params *)&(pipe_out))->is_ddr_mapped;
 
 	ipa_ctx->ipa_first_tx_db_access = true;
+
+	/* Capture doorbell addresses in debug_info */
+	if (ipa_ctx->debug_info) {
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.tx_uc_db_pa = ipa_ctx->ipa_uc_tx_rsc.tx_comp_doorbell_paddr;
+		ipa_ctx->debug_info->init.rx_uc_db_pa = ipa_ctx->ipa_uc_rx_rsc.rx_ready_doorbell_paddr;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
+
 	kfree(pipe_in);
 
 	return ret;
@@ -1488,6 +1595,20 @@ int ath12k_dp_ipa_uc_ol_deinit(struct ath12k_base *ab)
 		g_ipa_is_ready = false;
 
 	ath12k_info(ab, "exit: ret=%d", ret);
+
+	/* Mark deinit timestamp in debug_info */
+	if (ipa_ctx->debug_info) {
+		u64 deinit_ns = ktime_get_ns();
+
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		ipa_ctx->debug_info->init.deinit_done_ns = deinit_ns;
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+
+		/* Free debug_info structure */
+		kfree(ipa_ctx->debug_info);
+		ipa_ctx->debug_info = NULL;
+		ath12k_info(ab, "IPA debug_info freed");
+	}
 out:
 	mutex_unlock(&ipa_ctx->g_init_deinit_lock);
 	return ret;
@@ -1998,6 +2119,48 @@ void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 				 mld_enabled, link_id, ipa_ctx))
 		ath12k_err(ipa_ctx->ab, "ipa_cleanup_iface failed \n");
 
+	/* LOG: VAP DOWN in debug_info - AFTER cleanup */
+	if (ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		int i;
+		u64 timestamp_ns = ktime_get_ns();
+
+		entry.timestamp_ns = timestamp_ns;
+		entry.device_id = ipa_ctx->ab->device_id;
+		entry.vdev_id = session_id;
+		entry.ahvif_id = session_id;  /* For WiFi8, session_id IS ahvif_id */
+		entry.log_evt = ATH12K_IPA_LOG_EVT_VAP_DOWN;
+		entry.ipa_wlan_event = (iface_context->device_mode == ATH12K_IPA_SAP) ? WLAN_AP_DISCONNECT : WLAN_STA_DISCONNECT;
+		entry.mld_enabled = mld_enabled;
+		if (mac_addr)
+			memcpy(entry.mac_addr, mac_addr, ETH_ALEN);
+		snprintf((char *)entry.netdev_name, 16, "%s", ifname);
+
+		/* Log event and mark VAP inactive */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+
+		/* Find and mark VAP inactive, update down timestamp */
+		for (i = 0; i < ATH12K_IPA_LOG_MAX_IFACE; i++) {
+			if (ipa_ctx->debug_info->vap[i].ahvif_id == session_id) {
+				if (ipa_ctx->debug_info->vap[i].active &&
+				    ipa_ctx->debug_info->num_active_ifaces > 0)
+					ipa_ctx->debug_info->num_active_ifaces--;
+				ipa_ctx->debug_info->vap[i].active = 0;
+				ipa_ctx->debug_info->vap[i].down_timestamp_ns = timestamp_ns;
+				break;
+			}
+		}
+
+		/* Log to circular buffer */
+		i = ipa_ctx->debug_info->global_evt_write_idx % ATH12K_IPA_GLOBAL_EVT_DEPTH;
+		memcpy(&ipa_ctx->debug_info->global_evt[i], &entry, sizeof(entry));
+		ipa_ctx->debug_info->global_evt_write_idx =
+			(ipa_ctx->debug_info->global_evt_write_idx + 1) % ATH12K_IPA_GLOBAL_EVT_DEPTH;
+		ipa_ctx->debug_info->global_evt_total_count++;
+
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
+
 	if (iface_context->device_mode == ATH12K_IPA_SAP) {
 		if(ipa_ctx->num_sap_connected > 0) {
 			ipa_ctx->num_sap_connected--;
@@ -2173,6 +2336,73 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 
 	if (device_mode == ATH12K_IPA_SAP)
 		ipa_ctx->num_sap_connected++;
+
+	/* LOG: VAP UP in debug_info - AFTER successful setup */
+	if (ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		int vap_idx;
+		u64 timestamp_ns = ktime_get_ns();
+
+		entry.timestamp_ns = timestamp_ns;
+		entry.device_id = ipa_ctx->ab->device_id;
+		entry.vdev_id = session_id;
+		entry.ahvif_id = session_id;  /* For WiFi8, session_id IS ahvif_id */
+		entry.log_evt = ATH12K_IPA_LOG_EVT_VAP_UP;
+		entry.ipa_wlan_event = (device_mode == ATH12K_IPA_SAP) ? WLAN_AP_CONNECT : WLAN_STA_CONNECT;
+		entry.mld_enabled = is_mlo_vdev;
+		memcpy(entry.mac_addr, mac_addr, ETH_ALEN);
+		snprintf((char *)entry.netdev_name, 16, "%s", net_dev_priv->name);
+
+		/* Log event and update VAP state */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+
+		/* Find or allocate VAP slot */
+		vap_idx = -1;
+		for (i = 0; i < ATH12K_IPA_LOG_MAX_IFACE; i++) {
+			if (ipa_ctx->debug_info->vap[i].ahvif_id == session_id) {
+				vap_idx = i;
+				break;
+			}
+		}
+		if (vap_idx < 0) {
+			for (i = 0; i < ATH12K_IPA_LOG_MAX_IFACE; i++) {
+				if (!ipa_ctx->debug_info->vap[i].active) {
+					vap_idx = i;
+					break;
+				}
+			}
+		}
+
+		/* Update VAP state AFTER successful setup */
+		if (vap_idx >= 0) {
+			if (!ipa_ctx->debug_info->vap[vap_idx].active)
+				ipa_ctx->debug_info->num_active_ifaces++;
+			ipa_ctx->debug_info->vap[vap_idx].active = 1;
+			ipa_ctx->debug_info->vap[vap_idx].ahvif_id = session_id;
+			ipa_ctx->debug_info->vap[vap_idx].vdev_id = session_id;
+			ipa_ctx->debug_info->vap[vap_idx].device_id = ipa_ctx->ab->device_id;
+			ipa_ctx->debug_info->vap[vap_idx].device_mode = device_mode;
+			ipa_ctx->debug_info->vap[vap_idx].session_id = session_id;
+			ipa_ctx->debug_info->vap[vap_idx].mld_enabled = is_mlo_vdev;
+			ipa_ctx->debug_info->vap[vap_idx].reg_timestamp_ns = timestamp_ns;
+			ipa_ctx->debug_info->vap[vap_idx].up_timestamp_ns = timestamp_ns;
+			memcpy(ipa_ctx->debug_info->vap[vap_idx].bssid, mac_addr, ETH_ALEN);
+			snprintf((char *)ipa_ctx->debug_info->vap[vap_idx].netdev_name, 16, "%s",
+				 net_dev_priv->name);
+
+			/* Copy tx_client from init params (already captured during WDI setup) */
+			ipa_ctx->debug_info->vap[vap_idx].tx_client = ipa_ctx->debug_info->init.tx_client;
+		}
+
+		/* Log to circular buffer */
+		i = ipa_ctx->debug_info->global_evt_write_idx % ATH12K_IPA_GLOBAL_EVT_DEPTH;
+		memcpy(&ipa_ctx->debug_info->global_evt[i], &entry, sizeof(entry));
+		ipa_ctx->debug_info->global_evt_write_idx =
+			(ipa_ctx->debug_info->global_evt_write_idx + 1) % ATH12K_IPA_GLOBAL_EVT_DEPTH;
+		ipa_ctx->debug_info->global_evt_total_count++;
+
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
 
 	return status;
 
@@ -2897,6 +3127,33 @@ int ath12k_ipa_send_intrabss_enable_disable(struct ath12k_base *ab,
 		rcu_read_unlock();
 		return ret;
 	}
+
+	/* LOG: WMI INTRABSS event and update vap_state */
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+	if (ipa_ctx && ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		int i;
+
+		entry.timestamp_ns = ktime_get_ns();
+		entry.device_id = ab->device_id;
+		entry.vdev_id = params->vdev_id;
+		entry.log_evt = ATH12K_IPA_LOG_EVT_WMI_INTRABSS;
+		entry.wmi_enable = params->enable;
+		entry.result = 0;
+		ath12k_dp_ipa_arch_op_evt_entry_add(ipa_ctx, &entry);
+
+		/* Update vap_state.wmi_intrabss_val */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		for (i = 0; i < ATH12K_IPA_LOG_MAX_IFACE; i++) {
+			if (ipa_ctx->debug_info->vap[i].vdev_id == params->vdev_id &&
+			    ipa_ctx->debug_info->vap[i].active) {
+				ipa_ctx->debug_info->vap[i].wmi_intrabss_val = params->enable;
+				break;
+			}
+		}
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
+
 	rcu_read_unlock();
 	return 0;
 }
@@ -2930,6 +3187,34 @@ ath12k_ipa_send_uc_offload_enable_disable(struct ath12k_base *ab,
 		rcu_read_unlock();
 		return ret;
 	}
+
+	/* LOG: WMI OFFLOAD event and update vap_state */
+	struct ath12k_ipa *ipa_ctx = IPA_CTX(ab);
+	if (ipa_ctx && ipa_ctx->debug_info) {
+		struct ath12k_ipa_evt_entry entry = {0};
+		int i;
+
+		entry.timestamp_ns = ktime_get_ns();
+		entry.device_id = ab->device_id;
+		entry.vdev_id = params->vdev_id;
+		entry.log_evt = ATH12K_IPA_LOG_EVT_WMI_OFFLOAD;
+		entry.wmi_offload_type = params->offload_type;
+		entry.wmi_enable = params->enable;
+		entry.result = 0;
+		ath12k_dp_ipa_arch_op_evt_entry_add(ipa_ctx, &entry);
+
+		/* Update vap_state.wmi_offload_en */
+		spin_lock_bh(&ipa_ctx->debug_info_lock);
+		for (i = 0; i < ATH12K_IPA_LOG_MAX_IFACE; i++) {
+			if (ipa_ctx->debug_info->vap[i].vdev_id == params->vdev_id &&
+			    ipa_ctx->debug_info->vap[i].active) {
+				ipa_ctx->debug_info->vap[i].wmi_offload_en = params->enable;
+				break;
+			}
+		}
+		spin_unlock_bh(&ipa_ctx->debug_info_lock);
+	}
+
 	rcu_read_unlock();
 	return 0;
 }

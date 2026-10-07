@@ -197,6 +197,11 @@ ath12k_vendor_extap_setup_policy[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX + 1];
 extern const struct nla_policy
 ath12k_vendor_extap_info_policy[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_MAX + 1];
 
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+extern const struct nla_policy
+ath12k_ipa_stats_policy[QCA_WLAN_VENDOR_ATTR_IPA_STATS_MAX + 1];
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
+
 #if LINUX_VERSION_IS_LESS(6,6,116)
 #define MAX(x,y) (x > y ? x : y)
 #endif
@@ -674,6 +679,28 @@ ath12k_vendor_extap_info_handler(struct wiphy *wiphy,
 	return -EOPNOTSUPP;
 }
 
+#ifndef CPTCFG_EXT_IPA_OFFLOAD
+/**
+ * ath12k_vendor_get_ipa_debug_info() - Get IPA debug_info
+ * @wiphy: Wireless hardware description
+ * @wdev: Wireless device state
+ * @data: Vendor command data
+ * @data_len: Length of vendor command data
+ *
+ * Retrieves the IPA debug_info and sends it to userspace.
+ * The debug_info contains the complete state of the IPA offload subsystem for
+ * the entire hardware group.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_vendor_get_ipa_debug_info(struct wiphy *wiphy,
+                                   struct wireless_dev *wdev,
+                                   const void *data, int data_len)
+{
+	return -1;
+}
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
+
 #else
 
 int ath12k_vendor_get_sta_240mhz_info(struct wiphy *wiphy,
@@ -1035,6 +1062,24 @@ int ath12k_vendor_cotdma_e2e_config_extn(struct wiphy *wiphy,
  */
 int ath12k_vendor_suspend_device_extn(struct wiphy *wiphy,
 				     struct ath12k_wifi_generic_params *params);
+#ifdef CPTCFG_EXT_IPA_OFFLOAD
+/**
+ * ath12k_vendor_get_ipa_debug_info() - Get IPA debug_info
+ * @wiphy: Wireless hardware description
+ * @wdev: Wireless device state
+ * @data: Vendor command data
+ * @data_len: Length of vendor command data
+ *
+ * Retrieves the IPA debug_info and sends it via NL Command.
+ * The debug_info contains the complete state of the IPA offload subsystem for
+ * the entire hardware group.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int ath12k_vendor_get_ipa_debug_info(struct wiphy *wiphy,
+                                   struct wireless_dev *wdev,
+                                   const void *data, int data_len);
+#endif /* CPTCFG_EXT_IPA_OFFLOAD */
 
 int ath12k_vendor_wnm_tim_bcast_extn(struct wiphy *wiphy,
 				      struct wireless_dev *wdev,

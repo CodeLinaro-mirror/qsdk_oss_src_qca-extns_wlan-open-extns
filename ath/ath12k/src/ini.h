@@ -419,7 +419,8 @@
 	ATH12K_CFG(ATH12K_CFG_RESET_SCAN_SPCL_VAP_STATS_ENABLE) \
 	ATH12K_CFG(ATH12K_CFG_SPECTRAL_SCAN_COUNT_MAX) \
 	ATH12K_CFG(ATH12K_CFG_SYNC_RCU_EXPEDITE) \
-
+	ATH12K_CFG(ATH12K_CFG_LED_BLINK_ENABLE) \
+	ATH12K_CFG(ATH12K_CFG_LED_BW_PER_IDX) \
 
 #define ATH12K_CFG_REG \
 	ATH12K_CFG(ATH12K_CFG_REG_6GHZ_LOW_POWER_HW_BLOCKLIST_ENABLE) \
@@ -563,6 +564,38 @@
 #define ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP \
 	ATH12K_CFG_INI_BOOL("skip_partner_chip_dump", true, \
 	"Indicate whether partner chip dump collection is needed for cumac hw crash")
+
+/*
+ * ATH12K_CFG_LED_BLINK_ENABLE - Enable data rate based GPIO LED blink
+ *
+ * false = LED blink feature is disabled
+ * true  = LED blink feature is enabled
+ *
+ * Board-level master switch for the data-rate-based GPIO LED blink feature
+ * on PCI chipsets.
+ */
+#define ATH12K_CFG_LED_BLINK_ENABLE \
+	ATH12K_CFG_INI_BOOL("led_blink_enable", true, \
+	"Enable data rate based GPIO LED blink")
+
+#define ATH12K_LED_BW_PER_IDX_MIN     32
+#define ATH12K_LED_BW_PER_IDX_MAX     512
+#define ATH12K_LED_BW_PER_IDX_DEFAULT 64
+
+/*
+ * ATH12K_CFG_LED_BW_PER_IDX - Bandwidth-per-index scaling factor downloaded
+ * to firmware with the data-rate based GPIO LED blink table
+ *
+ * Valid range: 32-512, default 64. Values outside range are clamped.
+ */
+#define ATH12K_CFG_LED_BW_PER_IDX \
+	ATH12K_CFG_INI_UINT("led_bw_per_idx", \
+	ATH12K_LED_BW_PER_IDX_MIN, \
+	ATH12K_LED_BW_PER_IDX_MAX, \
+	ATH12K_LED_BW_PER_IDX_DEFAULT, \
+	ATH12K_CFG_VALUE_OR_CLAMP, \
+	"Bandwidth-per-index for LED blink table (32-512, default 64);" \
+	"values outside range are clamped")
 
 /*
  * ATH12K_CFG_MLO_FORCE_MODE2_RECOVERY - Force Mode2 recovery even when FW

@@ -16422,7 +16422,14 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 			ath12k_vendor_dcs_config_policy, NULL);
 
 	if (ret) {
+		struct nlattr *attr;
+		int rem;
+
 		ath12k_err(NULL, "Invalid attribute in dcs_handler %d\n", ret);
+		nla_for_each_attr(attr, (struct nlattr *)data, data_len, rem)
+			ath12k_err(NULL, "DCS attr: type=%u len=%u payload_len=%u\n",
+				   nla_type(attr), nla_attr_size(nla_len(attr)),
+				   nla_len(attr));
 		return ret;
 	}
 
@@ -16465,6 +16472,11 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_OFF_OBSS_CU])
 			npca_cfg->dis_threshold =
 				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_OFF_OBSS_CU]);
+		ath12k_dbg(ar->ab, ATH12K_DBG_WMI,
+			   "DCS NPCA: enable request pdev=%u link_id=%d "
+			   "bitmap=0x%04x en_thr=%u dis_thr=%u\n",
+			   ar->pdev->pdev_id, link_id, dcs_enable,
+			   npca_cfg->en_threshold, npca_cfg->dis_threshold);
 	}
 
 	ath12k_mac_set_intf_detect(ar, dcs_enable);

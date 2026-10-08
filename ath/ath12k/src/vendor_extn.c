@@ -14377,12 +14377,14 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	}
 
 	vif = wdev_to_ieee80211_vif(wdev);
-	if (!vif) {
-		ath12k_err(NULL, "wdev_to_ieee80211_vif returned NULL\n");
-		return -EINVAL;
-	}
 
 	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_PEER_MAC]) {
+		if (!vif) {
+			ath12k_err(NULL,
+				   "wdev_to_ieee80211_vif returned NULL\n");
+			return -EINVAL;
+		}
+
 		nla_memcpy(peer_addr, tb[QCA_WLAN_VENDOR_ATTR_CONFIG_PEER_MAC], ETH_ALEN);
 
 		rcu_read_lock();
@@ -14394,7 +14396,7 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 			return -ENOENT;
 		}
 		ahsta = ath12k_sta_to_ahsta(sta);
-	} else if (vif->type == NL80211_IFTYPE_STATION) {
+	} else if (vif && vif->type == NL80211_IFTYPE_STATION) {
 		/* STA mode: hostapd does not send PEER_MAC — use the AP
 		 * BSSID from the VIF's BSS config to find the single peer.
 		 */
@@ -14441,6 +14443,12 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 		rcu_read_unlock();
 
 	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]) {
+		if (!vif) {
+			ath12k_err(NULL,
+				   "wdev_to_ieee80211_vif returned NULL\n");
+			return -EINVAL;
+		}
+
 		allow_3addr_mc = nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_CONFIG_ALLOW_3ADDR_MC]);
 
 		if (allow_3addr_mc > 1) {
@@ -14463,6 +14471,12 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 	}
 
 	if (tb[QCA_WLAN_VENDOR_ATTR_CONFIG_DIAGNOSTIC_STA_VAP]) {
+		if (!vif) {
+			ath12k_err(NULL,
+				   "wdev_to_ieee80211_vif returned NULL\n");
+			return -EINVAL;
+		}
+
 		u8 enable = nla_get_u8(
 			tb[QCA_WLAN_VENDOR_ATTR_CONFIG_DIAGNOSTIC_STA_VAP]);
 

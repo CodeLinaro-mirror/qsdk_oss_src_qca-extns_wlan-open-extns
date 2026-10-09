@@ -24,16 +24,22 @@ EXPORT_SYMBOL(cfg80211_is_driver_mac80211_hwsim);
 
 /**
  * cfg80211_support_bootup_cac - check if boot-up CAC is supported
+ * @wiphy: the wiphy to check
+ * @radio_idx: physical radio index to check (must be >= 0)
  *
- * Boot-up CAC is supported by default for the ath12k UD driver.
- * Returns false for mac80211_hwsim (virtual driver), true for real hardware.
+ * Returns false for mac80211_hwsim (virtual driver), when radio_cfg is
+ * not allocated, or when radio_idx is out of range.  Returns the value of
+ * wiphy->radio_cfg[radio_idx].bootup_cac_feature directly.
  */
-bool cfg80211_support_bootup_cac(struct wiphy *wiphy)
+bool cfg80211_support_bootup_cac(struct wiphy *wiphy, int radio_idx)
 {
 	if (cfg80211_is_driver_mac80211_hwsim(wiphy))
 		return false;
 
-	return true;
+	if (!wiphy->radio_cfg || radio_idx < 0 || radio_idx >= wiphy->n_radio)
+		return false;
+
+	return wiphy->radio_cfg[radio_idx].bootup_cac_feature;
 }
 EXPORT_SYMBOL(cfg80211_support_bootup_cac);
 
@@ -51,13 +57,16 @@ EXPORT_SYMBOL(cfg80211_support_bootup_cac);
 bool cfg80211_bootup_cac_is_5g_dfs_chan_extn(struct wiphy *wiphy,
 					      const struct cfg80211_chan_def *chandef)
 {
-	if (!cfg80211_support_bootup_cac(wiphy))
-		return false;
+	int radio_idx;
 
 	if (!chandef || !chandef->chan)
 		return false;
 
 	if (chandef->chan->band != NL80211_BAND_5GHZ)
+		return false;
+
+	radio_idx = cfg80211_get_hw_idx_by_chan(wiphy, chandef->chan);
+	if (!cfg80211_support_bootup_cac(wiphy, radio_idx))
 		return false;
 
 	return cfg80211_chandef_dfs_required(wiphy, chandef,

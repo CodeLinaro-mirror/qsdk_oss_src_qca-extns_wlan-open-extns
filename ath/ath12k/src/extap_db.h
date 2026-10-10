@@ -16,8 +16,8 @@
 #include <linux/types.h>
 #include <net/ipv6.h>
 
-#define MAC_DB_ENTRIES		512
-#define MAC_DB_HASHES		128
+#define MAC_DB_ENTRIES		128
+#define MAC_DB_HASHES		64
 #define MAC_DB_HASHES_MASK	(MAC_DB_HASHES - 1)
 
 struct mac_db;

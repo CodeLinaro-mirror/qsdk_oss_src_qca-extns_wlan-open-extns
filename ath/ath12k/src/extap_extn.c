@@ -380,6 +380,7 @@ void ath12k_extap_stats_dump(struct ath12k_vif *ahvif)
 	pr_info("Unhandled protocol :   %lld\n",
 		atomic64_read(&s->rx_unhandled));
 
+	rcu_read_lock_bh();
 	db = extap_get_db(ee);
 	if (db) {
 		pr_info("DB Entries Created :   %lld\n",
@@ -388,8 +389,8 @@ void ath12k_extap_stats_dump(struct ath12k_vif *ahvif)
 			atomic64_read(&db->stats.deleted));
 		pr_info("DB Add Failures :      %lld\n",
 			atomic64_read(&db->stats.failed));
-		mac_db_deref(db);
 	}
+	rcu_read_unlock_bh();
 }
 EXPORT_SYMBOL(ath12k_extap_stats_dump);
 

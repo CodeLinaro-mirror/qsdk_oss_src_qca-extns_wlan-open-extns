@@ -28,10 +28,10 @@
 struct ath12k_vif;
 
 struct arp_eth {
-        u8 ar_sha[ETH_ALEN];       /* sender hardware address      */
-        u8 ar_sip[4];              /* sender IP address            */
-        u8 ar_tha[ETH_ALEN];       /* target hardware address      */
-        u8 ar_tip[4];              /* target IP address            */
+        u8 sender_mac[ETH_ALEN];       /* sender hardware address      */
+        u8 sender_ip[4];              /* sender IP address            */
+        u8 target_mac[ETH_ALEN];       /* target hardware address      */
+        u8 target_ip[4];              /* target IP address            */
 } __packed;
 
 struct extap_dhcp_hdr {
@@ -67,15 +67,16 @@ struct extap_ndisc_opts {
 struct extap_stats {
 	atomic64_t tx_pkts;		/* EXTAP Tx Packets */
 	atomic64_t tx_conv;		/* outbound SMAC rewrites */
+	atomic64_t tx_learn_error;	/* TX learn failures */
 	atomic64_t rx_pkts;		/* EXTAP Rx Packets */
 	atomic64_t rx_conv;		/* inbound DMAC rewrites */
+	atomic64_t rx_misses;		/* RX DB lookup misses */
+	atomic64_t rx_unhandled;	/* RX unhandled protocols */
 };
 
 /**
  * struct extap_extn - per-VAP ExtAP context
  * @db:         RCU-protected IP-to-MAC table for this VAP
- * @tx_cb:      TX classify hook; set on init, called from dp TX path
- * @rx_cb:      RX classify hook; set on init, called from dp RX path
  * @fdb_nb:     bridge FDB delete notifier; evicts stale entries when
  *              the bridge ages out a client MAC. Instantiated for each VAP
  *              instance to handle per-VAP FDB events independently.
@@ -84,13 +85,9 @@ struct extap_stats {
  * @enabled:	EXTAP enabled/disabled for that VAP
  *
  * Embedded in ath12k_dp_vif_extn. One instance per STA VAP.
- * Both hooks are invoked directly under static_branch_unlikely(&extap_enabled),
- * symmetric with each other — no netfilter involved.
  */
 struct extap_extn {
 	struct mac_db __rcu *db;
-	void (*tx_cb)(struct ath12k_vif *ahvif, struct sk_buff *skb);
-	void (*rx_cb)(struct ath12k_vif *ahvif, struct sk_buff *skb);
 	struct notifier_block fdb_nb;
 	struct extap_stats stats;
 	u8 my_mac[ETH_ALEN];
@@ -113,7 +110,7 @@ int extap_learn(struct extap_extn *ee, struct mac_hash_key *k);
 static inline void ath12k_extap_stats_dump(struct ath12k_vif *ahvif) {}
 static inline void ath12k_extap_info_dump(struct ath12k_vif *ahvif) {}
 
-static inline void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb) {}
+static inline int ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb) { return 0; }
 
 
 static inline void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb) {}
@@ -137,7 +134,7 @@ DECLARE_STATIC_KEY_FALSE(extap_enabled);
 void ath12k_extap_stats_dump(struct ath12k_vif *ahvif);
 void ath12k_extap_info_dump(struct ath12k_vif *ahvif);
 
-void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb);
+int ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb);
 void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb);
 void ath12k_extap_deinit(struct ath12k_vif *ahvif);
 int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients);

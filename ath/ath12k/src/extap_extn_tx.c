@@ -34,13 +34,12 @@
  *
  * Return: 0 on success, -EINVAL on error
  */
-static int __proc_arp_tx(struct extap_extn *ee, struct sk_buff *skb)
+static int __proc_ipv4_arp_tx(struct extap_extn *ee, struct sk_buff *skb)
 {
 	struct mac_hash_key k;
 	struct arphdr *arp;
+	struct arp_eth *ae;
 	u8 skip_tx = 0;
-	__be32 *spa;
-	u8 *sha;
 
 	arp = arp_hdr(skb);
 	skip_tx += ntohs(arp->ar_hrd) != ARPHRD_ETHER;
@@ -48,18 +47,18 @@ static int __proc_arp_tx(struct extap_extn *ee, struct sk_buff *skb)
 	if (skip_tx)
 		return -EINVAL;
 
-	/* ARP payload: SHA(6) SPA(4) THA(6) TPA(4) */
-	sha = (u8 *)(arp + 1);
-	spa = (__be32 *)(sha + ETH_ALEN);
+	ae = (struct arp_eth *)((u8 *)arp + sizeof(*arp));
 
 	k.is_v6 = false;
-	k.ip.v4.s_addr = *spa;
-	ether_addr_copy(k.mac_addr, sha);
+	ether_addr_copy(k.mac_addr, ae->sender_mac);
+	memcpy(&k.ip.v4.s_addr, ae->sender_ip, sizeof(k.ip.v4.s_addr));
 
-	if (extap_learn(ee, &k))
+	if (extap_learn(ee, &k)) {
+		atomic64_inc(&ee->stats.tx_learn_error);
 		return -EINVAL;
+	}
 
-	ether_addr_copy(sha, ee->my_mac);
+	ether_addr_copy(ae->sender_mac, ee->my_mac);
 	ether_addr_copy(eth_hdr(skb)->h_source, ee->my_mac);
 
 	return 0;
@@ -230,8 +229,10 @@ static int __proc_ipv4_tx(struct extap_extn *ee, struct sk_buff *skb)
 	/*
 	 * Learn and update the MAC_DB with the IP --> SMAC tuple
 	 */
-	if (extap_learn(ee, &k))
+	if (extap_learn(ee, &k)) {
+		atomic64_inc(&ee->stats.tx_learn_error);
 		return -EINVAL;
+	}
 
 	/* Always replace Ethernet SMAC with VAP MAC */
 	ether_addr_copy(eth_hdr(skb)->h_source, ee->my_mac);
@@ -283,8 +284,10 @@ static int __proc_ipv6_tx(struct extap_extn *ee, struct sk_buff *skb)
 	ether_addr_copy(k.mac_addr, eth_hdr(skb)->h_source);
 
 	/* Learn source IPv6->MAC for non-multicast, non-any addresses */
-	if (extap_learn(ee, &k))
+	if (extap_learn(ee, &k)) {
+		atomic64_inc(&ee->stats.tx_learn_error);
 		return -EINVAL;
+	}
 
 	/* Always replace Ethernet SMAC with VAP MAC */
 	ether_addr_copy(eth_hdr(skb)->h_source, ee->my_mac);
@@ -331,7 +334,7 @@ void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 	switch (ntohs(eh->h_proto)) {
 	case ETH_P_ARP:
 		ip_pkt = false;
-		proc = __proc_arp_tx;
+		proc = __proc_ipv4_arp_tx;
 		break;
 	case ETH_P_IP:
 		mac_hash_v4_keygen(skb, &k, false);

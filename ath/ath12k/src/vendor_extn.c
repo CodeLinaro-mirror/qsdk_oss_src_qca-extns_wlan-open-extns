@@ -746,6 +746,11 @@ ath12k_vendor_extap_setup_policy[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_EXTAP_MAX_CLIENTS]  = { .type = NLA_U32 },
 };
 
+const struct nla_policy
+ath12k_vendor_extap_info_policy[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_TYPE] = { .type = NLA_U8 },
+};
+
 enum rx_flow_tag_op {
 	RX_FLOW_TAG_ADD,
 	RX_FLOW_TAG_DEL,
@@ -17827,4 +17832,48 @@ int ath12k_vendor_extap_setup_handler(struct wiphy *wiphy,
 	/* TODO: Enable with EXTAP Hook Patch */
 	return 0;
 	//return ath12k_extap_init(ahvif, max_clients);
+}
+
+/**
+ * ath12k_vendor_extap_info_handler - vendor command handler for
+ * QCA_NL80211_VENDOR_SUBCMD_EXTAP_INFO
+ *
+ * Dispatches to print extap Info based on the TYPE attribute.
+ * Output goes to dmesg via pr_info.
+ */
+int ath12k_vendor_extap_info_handler(struct wiphy *wiphy,
+				     struct wireless_dev *wdev,
+				     const void *data,
+				     int data_len)
+{
+	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_MAX + 1];
+	struct ieee80211_vif *vif;
+	struct ath12k_vif *ahvif;
+	int ret;
+
+	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_MAX,
+			data, data_len,
+			ath12k_vendor_extap_info_policy, NULL);
+	if (ret)
+		return ret;
+
+	if (!tb[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_TYPE])
+		return -EINVAL;
+
+	vif = wdev_to_ieee80211_vif(wdev);
+	if (!vif)
+		return -EINVAL;
+
+	ahvif = ath12k_vif_to_ahvif(vif);
+
+	switch (nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_EXTAP_INFO_TYPE])) {
+	case QCA_WLAN_EXTAP_INFO_STATS:
+		/* TODO: Enable during EXTAP Hook enablement */
+		//ath12k_extap_stats_dump(ahvif);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
 }

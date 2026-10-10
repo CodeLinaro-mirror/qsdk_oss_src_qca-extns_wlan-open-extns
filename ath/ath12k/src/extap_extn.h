@@ -81,6 +81,7 @@ struct extap_stats {
  *              instance to handle per-VAP FDB events independently.
  * @my_mac:     VAP MAC address
  * @ab:         ath12k_base for logging; set on init
+ * @enabled:	EXTAP enabled/disabled for that VAP
  *
  * Embedded in ath12k_dp_vif_extn. One instance per STA VAP.
  * Both hooks are invoked directly under static_branch_unlikely(&extap_enabled),
@@ -94,6 +95,7 @@ struct extap_extn {
 	struct extap_stats stats;
 	u8 my_mac[ETH_ALEN];
 	struct ath12k_base *ab;
+	bool enabled;
 };
 
 static inline struct mac_db *extap_get_db(struct extap_extn *ee)
@@ -123,7 +125,14 @@ static inline int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 	return 0;
 }
 
+static inline bool ath12k_vif_has_extap(struct ath12k_vif *ahvif)
+{
+	return false;
+}
+
 #else /* CPTCFG_QCN_EXTN */
+
+DECLARE_STATIC_KEY_FALSE(extap_enabled);
 
 void ath12k_extap_stats_dump(struct ath12k_vif *ahvif);
 void ath12k_extap_info_dump(struct ath12k_vif *ahvif);
@@ -132,6 +141,7 @@ void ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb);
 void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb);
 void ath12k_extap_deinit(struct ath12k_vif *ahvif);
 int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients);
+bool ath12k_vif_has_extap(struct ath12k_vif *ahvif);
 
 #endif /* CPTCFG_QCN_EXTN */
 #endif /* __ATH12K_EXTAP_EXTN_H */

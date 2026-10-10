@@ -194,17 +194,37 @@ static int extap_fdb_event(struct notifier_block *nb, unsigned long event,
 }
 
 /**
+ * ath12k_vif_has_extap() - check if ExtAP is enabled for a VAP
+ * @ahvif: ath12k VIF context
+ *
+ * Return: true if ExtAP is enabled for this VAP, false otherwise
+ */
+bool ath12k_vif_has_extap(struct ath12k_vif *ahvif)
+{
+	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+
+	return ee->enabled;
+}
+EXPORT_SYMBOL(ath12k_vif_has_extap);
+
+/**
  * ath12k_extap_deinit() - tear down ExtAP for a STA VAP
  * @ahvif: ath12k VIF context
  */
 void ath12k_extap_deinit(struct ath12k_vif *ahvif)
 {
-	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+	struct ath12k_dp_vif_extn *dp_extn = &ahvif->dp_vif.dp_extn;
+	struct extap_extn *ee = &dp_extn->extap;
 	struct mac_db *db;
 
 	db = rcu_dereference_protected(ee->db, true);
 	if (!db)
 		return;
+
+	/* Mark ExtAP as disabled for this VAP before cleanup */
+	ee->enabled = false;
+
+	ahvif->dp_vif.dp_features &= ~DP_FEATURE_EXTAP;
 
 	/* Disable static branch if this is the last VAP */
 	if (!atomic_dec_return(&extap_vif_count))
@@ -240,7 +260,8 @@ EXPORT_SYMBOL(ath12k_extap_deinit);
  */
 int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 {
-	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
+	struct ath12k_dp_vif_extn *dp_extn = &ahvif->dp_vif.dp_extn;
+	struct extap_extn *ee = &dp_extn->extap;
 	struct mac_db *db;
 
 	if (rcu_access_pointer(ee->db))
@@ -272,6 +293,11 @@ int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 	 */
 	if (atomic_inc_return(&extap_vif_count) == 1)
 		static_branch_enable(&extap_enabled);
+
+	ahvif->dp_vif.dp_features |= DP_FEATURE_EXTAP;
+
+	/* Mark ExtAP as enabled for this VAP after all initialization is complete */
+	ee->enabled = true;
 
 	return 0;
 }

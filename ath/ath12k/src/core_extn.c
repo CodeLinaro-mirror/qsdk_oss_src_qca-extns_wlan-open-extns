@@ -862,10 +862,16 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 	parent = &dev->kobj;
 
 	/*
-	 * Create radio directory under phyX: radio<radio_idx>,
-	 * determine radio_idx within ah->radio[]
+	 * A scan-radio pdev is split into its own separate wiphy, but that
+	 * wiphy's wiphy_dev() resolves to the same physical device as the
+	 * chip's combined MLO wiphy, so both would independently start
+	 * numbering from radio0 under the same parent kobject. Give it a
+	 * "scan_radio" name instead so it can never collide, mirroring its
+	 * "scanN" netdev naming.
 	 */
-	if (ab->ag->mlo_capable) {
+	if (ath12k_scan_radio_supported(ar->pdev)) {
+		snprintf(rname, sizeof(rname), "scan_radio");
+	} else if (ab->ag->mlo_capable) {
 		for (r = 0; r < ar->ah->num_radio; r++) {
 			if (&ar->ah->radio[r] == ar) {
 				snprintf(rname, sizeof(rname), "radio%d", r);

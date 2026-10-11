@@ -3716,10 +3716,11 @@ static void ath12k_wsi_bypass_workfn(struct work_struct *work)
 {
 	struct ath12k_wsi_remap_work *w =
 	    container_of(work, struct ath12k_wsi_remap_work, work);
-	struct ath12k_base *ab = w->ab;
+	struct ath12k *ar = w->ar;
+	struct ath12k_base *ab = ar->ab;
 	int ret;
 
-	ret = ath12k_mac_dynamic_wsi_remap(ab);
+	ret = ath12k_mac_dynamic_wsi_remap(ab, ar);
 	if (ret) {
 	        ath12k_err(ab, "WSI bypass worker failed: %d\n", ret);
 	}
@@ -7431,7 +7432,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 	        }
 
 	        mutex_lock(&ab->core_lock);
-	        ret = ath12k_wsi_bypass_precheck(ab, value);
+		ret = ath12k_wsi_bypass_precheck(ab, value, ar);
 	        if (ret) {
 	                ath12k_err(ab,
 	                           "set_radio_params: wsi_bypass_precheck failed ret=%d value=%u state=%u is_bypassed=%d\n",
@@ -7460,7 +7461,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 	        }
 
 	        INIT_WORK(&w->work, ath12k_wsi_bypass_workfn);
-	        w->ab = ab;
+		w->ar = ar;
 
 	        queue_work(system_unbound_wq, &w->work);
 

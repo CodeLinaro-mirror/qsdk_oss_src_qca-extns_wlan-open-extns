@@ -4111,19 +4111,54 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
-		if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
-			ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
-			ret = -EINVAL;
-		} else {
+		{
+			struct ieee80211_bss_conf *bss_conf;
+			u16 old_ba_bufsize;
+
+			if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
+				ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
+				return -EINVAL;
+			}
+
+			/* MAC80211 handles RX BA sessions, apply BA buff size in the link level config */
+			bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+			if (!bss_conf || !bss_conf->bss_conf_extn) {
+				ath12k_err(NULL, "ba_bufsize: bss_conf_extn unavailable, ba_bufsize cap not applied\n");
+				return -EINVAL;
+			}
+
+			old_ba_bufsize = bss_conf->bss_conf_extn->ba_bufsize;
+
+			switch (value) {
+			case 2:
+				bss_conf->bss_conf_extn->ba_bufsize = 64;
+				break;
+			case 3:
+				bss_conf->bss_conf_extn->ba_bufsize = 256;
+				break;
+			case 5:
+				bss_conf->bss_conf_extn->ba_bufsize = 512;
+				break;
+			case 6:
+				bss_conf->bss_conf_extn->ba_bufsize = 1024;
+				break;
+			default:
+				/* Use the default BA Size in RX BA negotiation */
+				bss_conf->bss_conf_extn->ba_bufsize = 0;
+				break;
+			}
+
+			/* The firmware handles TX BA session, pass BA buf size to the firmware */
 			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
 					WMI_VDEV_PARAM_BA_MODE,
 					value);
-			if (!ret) {
-				arvif->vap_cfg.ba_bufsize = value;
-			} else {
-				ath12k_err(NULL,
-						"Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
+			if (ret) {
+				ath12k_err(NULL, "ba_bufsize: Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
+				bss_conf->bss_conf_extn->ba_bufsize = old_ba_bufsize;
+				return ret;
 			}
+
+			arvif->vap_cfg.ba_bufsize = value;
 		}
 		break;
 

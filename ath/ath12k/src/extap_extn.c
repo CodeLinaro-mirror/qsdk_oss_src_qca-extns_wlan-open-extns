@@ -14,19 +14,27 @@
 #include "../core.h"
 #include "../debug.h"
 #include "../dp_tx.h"
+#include "../dp_peer.h"
 #include "extap_db.h"
 #include "extap_extn.h"
 
 #ifdef CPTCFG_QCN_EXTN
 
-DEFINE_STATIC_KEY_FALSE(extap_enabled);
-EXPORT_SYMBOL(extap_enabled);
-
-/*
- * extap_vif_count - number of STA VAPs with ExtAP currently active.
- * Gates static_branch_enable/disable(&extap_enabled).
+/**
+ * __extap_peer_flag_set() - set DP_PEER_FEATURE_EXTAP on a peer
  */
-static atomic_t extap_vif_count = ATOMIC_INIT(0);
+static void __extap_peer_flag_set(struct ath12k_dp_peer *peer, void *data)
+{
+	peer->dp_peer_flags |= DP_PEER_FEATURE_EXTAP;
+}
+
+/**
+ * __extap_peer_flag_clear() - clear DP_PEER_FEATURE_EXTAP from a peer
+ */
+static void __extap_peer_flag_clear(struct ath12k_dp_peer *peer, void *data)
+{
+	peer->dp_peer_flags &= ~DP_PEER_FEATURE_EXTAP;
+}
 
 /**
  * extap_parse_ndisc() - Parse NDP options and dispatch handlers
@@ -232,9 +240,9 @@ void ath12k_extap_deinit(struct ath12k_vif *ahvif)
 
 	ahvif->dp_vif.dp_features &= ~DP_FEATURE_EXTAP;
 
-	/* Disable static branch if this is the last VAP */
-	if (!atomic_dec_return(&extap_vif_count))
-		static_branch_disable(&extap_enabled);
+	/* Clear the peer flag so the RX fast-path no longer calls extap_rx */
+	ath12k_dp_peer_iterate_by_vif(&ahvif->ah->dp_hw, ahvif->vif,
+				      __extap_peer_flag_clear, NULL);
 
 	/* Clear pointers to prevent new operations */
 	RCU_INIT_POINTER(ee->db, NULL);
@@ -284,16 +292,14 @@ int ath12k_extap_init(struct ath12k_vif *ahvif, u16 max_clients)
 
 	rcu_assign_pointer(ee->db, db);
 
-	/*
-	 * Enable the hook(s) when the first VIF gets configured for EXTAP
-	 */
-	if (atomic_inc_return(&extap_vif_count) == 1)
-		static_branch_enable(&extap_enabled);
-
 	ahvif->dp_vif.dp_features |= DP_FEATURE_EXTAP;
 
 	/* Mark ExtAP as enabled for this VAP after all initialization is complete */
 	ee->enabled = true;
+
+	/* Stamp the flag on any peers that were created before extap_init was called */
+	ath12k_dp_peer_iterate_by_vif(&ahvif->ah->dp_hw, ahvif->vif,
+				      __extap_peer_flag_set, NULL);
 
 	return 0;
 }

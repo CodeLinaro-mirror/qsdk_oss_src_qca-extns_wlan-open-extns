@@ -14,10 +14,10 @@ void ath12k_wifi6_wmi_init_qcn9074(struct ath12k_base *ab,
 
 	u8 total_vdevs;
 
-	total_vdevs = ath12k_core_get_total_num_vdevs(ab);
+	total_vdevs = ath12k_core_get_drv_supp_vdevs_per_radio(ab);
 	config->num_vdevs = ab->num_radios * total_vdevs;
 	config->num_peers = ab->num_radios *
-		ath12k_core_get_def_max_peers_per_radio(ab);
+		ath12k_core_get_drv_supp_peers_per_radio(ab);
 	config->num_tids = ath12k_core_get_max_num_tids(ab);
 
 	config->num_offload_peers = WIFI6_TARGET_NUM_OFFLD_PEERS;

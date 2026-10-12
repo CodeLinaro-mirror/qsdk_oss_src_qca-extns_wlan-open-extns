@@ -751,6 +751,28 @@ drv_notify_diagnostic_sta_disconnect(struct ieee80211_local *local,
 				     struct ieee80211_sub_if_data *sdata,
 				     unsigned int link_id,
 				     enum ieee80211_diagnostic_sta_disconnect_reason reason);
+/**
+ * ieee80211_bss_conf_extn_alloc - Allocate struct ieee80211_bss_conf_extn
+ *
+ * Called from the common link init path (mac80211 link.c) for every
+ * link_conf, regardless of vif type, so that extension-specific per-link
+ * state (e.g. ba_bufsize) is always available.
+ *
+ * @link_conf: Pointer to BSS conf
+ */
+void
+ieee80211_bss_conf_extn_alloc(struct ieee80211_bss_conf *link_conf);
+
+/**
+ * ieee80211_bss_conf_extn_free - Free struct ieee80211_bss_conf_extn
+ *
+ * Called from the common link stop path (mac80211 link.c). Frees any
+ * extension-specific nested allocations before freeing the container.
+ *
+ * @link_conf: Pointer to BSS conf
+ */
+void
+ieee80211_bss_conf_extn_free(struct ieee80211_bss_conf *link_conf);
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 int  ieee80211_is_mesh_peer(struct ieee80211_sta *sta);

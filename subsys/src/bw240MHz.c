@@ -160,6 +160,8 @@ int ieee802_11_parse_elems_vendor_qcn_extn(const u8 *pos, u8 elen,
 	    pos[2] == 0xf0)) /* WLAN_OUI_QCN */
 		return -1;
 
+	elems->elems_extn.qcn_node = true;
+
 	end = pos + elen;
 	rem_elen = elen - 4;
 	pos += 4;

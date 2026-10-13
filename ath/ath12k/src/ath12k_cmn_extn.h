@@ -424,6 +424,8 @@ struct ath12k_mapc_peer_cache {
 struct ath12k_link_sta_extn {
 	s8 rssi_assoc;
 	struct sa_sta_extn sa_sta;
+	/* True when the peer advertised a valid QCN vendor IE. */
+	bool qcn_node;
 	u8 higher_vhtmcs_supp;
 	u32 he_cap_info_internal;
 	struct ath12k_mapc_peer_cache mapc_cache;

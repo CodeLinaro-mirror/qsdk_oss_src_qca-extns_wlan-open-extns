@@ -393,6 +393,8 @@ struct link_station_parameters_extn {
 
 struct ieee802_11_elems_extn {
 	struct bw240MHz_parameters_extn params_240MHz;
+	/* True when the peer advertised a valid QCN vendor IE. */
+	bool qcn_node;
 	/* VHT MCS 10/11 support advertised by the peer in the QCN IE (attr 0x02).
 	 * true if the peer set the attribute value to 1.
 	 */

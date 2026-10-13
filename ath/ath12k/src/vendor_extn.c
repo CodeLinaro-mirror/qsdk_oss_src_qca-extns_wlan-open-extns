@@ -14500,6 +14500,7 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 		 * BSSID from the VIF's BSS config to find the single peer.
 		 */
 		rcu_read_lock();
+		ether_addr_copy(peer_addr, vif->bss_conf.bssid);
 		sta = ieee80211_find_sta(vif, vif->bss_conf.bssid);
 		if (sta)
 			ahsta = ath12k_sta_to_ahsta(sta);
@@ -14538,6 +14539,20 @@ int ath12k_vendor_set_wifi_config_extn(struct wiphy *wiphy, struct nlattr **tb,
 				arsta->arsta_extn.he_cap_info_internal = he_cap;
 		}
 	}
+
+	if (ahsta && tb[QCA_WLAN_VENDOR_ATTR_CONFIG_QCN_NODE]) {
+		bool qcn_node = !!nla_get_u8(
+			tb[QCA_WLAN_VENDOR_ATTR_CONFIG_QCN_NODE]);
+
+		links_map = ahsta->links_map;
+		for_each_set_bit(link_id, &links_map,
+				 IEEE80211_MLD_MAX_NUM_LINKS) {
+			arsta = ahsta->link[link_id];
+			if (arsta)
+				arsta->arsta_extn.qcn_node = qcn_node;
+		}
+	}
+
 	if (ahsta)
 		rcu_read_unlock();
 

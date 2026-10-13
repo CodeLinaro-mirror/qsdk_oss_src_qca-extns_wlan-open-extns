@@ -163,6 +163,10 @@ void ath12k_wifi8_dp_ipa_iface_setup_set_vp_num(u8 link_id,
 void ath12k_wifi8_dp_ipa_iface_cleanup_vp_num(const char *dev_name, u8 link_id);
 void ath12k_wifi8_dp_ipa_iface_setup_set_intf_idx(struct ipa_wdi_reg_intf_in_params *in,
 						  int intf_idx);
+void ath12k_ipa_cc_init(struct ath12k_base *ab);
+void ath12k_ipa_cc_deinit(struct ath12k_base *ab);
+u32 ath12k_ipa_cc_check(struct ath12k_base *ab);
+ssize_t ath12k_ipa_cc_dump_stats(struct ath12k_base *ab, char *buf, int size);
 
 static inline u8
 ath12k_ipa_cb_get_vap_id(const struct ipa_wdi6_rx_skb_cb *cb)

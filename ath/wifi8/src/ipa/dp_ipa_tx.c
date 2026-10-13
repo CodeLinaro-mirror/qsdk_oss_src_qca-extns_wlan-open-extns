@@ -817,6 +817,8 @@ int ath12k_wifi8_dp_tx_ring_setup_ipa(struct ath12k_base *ab)
 		goto err_buf_free;
 	}
 
+	ath12k_ipa_cc_init(ab);
+
 	return 0;
 
 err_buf_free:
@@ -1038,6 +1040,7 @@ void ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop(struct ath12k_base *ab)
  */
 void ath12k_wifi8_dp_tx_ring_cleanup_ipa(struct ath12k_base *ab)
 {
+	ath12k_ipa_cc_deinit(ab);
 	ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop(ab);
 	ath12k_wifi8_dp_free_tx_rsrc(ab);
 	ath12k_wifi8_dp_ipa_tx_buf_free(ab);

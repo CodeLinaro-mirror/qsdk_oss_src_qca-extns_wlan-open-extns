@@ -39,6 +39,7 @@ struct ipa_header {
 };
 
 #define ath12k_ipa_info(__ab, __log, ...) ath12k_info(__ab, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
+#define ath12k_ipa_warn(__ab, __log, ...) ath12k_warn(__ab, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
 #define ath12k_ipa_err(__ab, __log, ...) ath12k_err(__ab, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
 #define ath12k_ipa_dbg(__ab, __log, ...) ath12k_dbg(__ab, ATH12K_DBG_IPA, "%s[%d]: " __log, __func__, __LINE__, ##__VA_ARGS__)
 
@@ -752,6 +753,46 @@ typedef struct shared_mem {
 	unsigned long memctx;
 } shared_mem_t;
 
+/* IPA TX congestion control thresholds and timing */
+#define ATH12K_IPA_CC_BUF_USED_THRESHOLD_PCT   80
+#define ATH12K_IPA_CC_IDLE_RESET_TICKS         50  /* 5 seconds at 100ms */
+
+/**
+ * struct ath12k_ipa_cc - IPA TX congestion control state
+ * @ipa2tcl_ring_id:    srng index for IPA2TCL (PPE2TCL) ring
+ * @ipa2tcl_entry_size: IPA2TCL srng entry_size
+ * @ipa2tcl_ring_size:  IPA2TCL srng ring_size
+ * @tqm2ipa_entry_size: TQM2IPA srng entry_size
+ * @tqm2ipa_ring_size:  TQM2IPA srng ring_size
+ * @total_tx_bufs:      alloc_tx_buf_cnt at init time
+ * @threshold:          inflight count at which PPE2TCL is halted (80% of total)
+ * @ipa2tcl_hp_prev:    last sampled IPA2TCL HP
+ * @tqm2ipa_hp_prev:    last sampled TQM2IPA HP
+ * @inflight:           running in-flight buffer count
+ * @idle_ticks:         consecutive ticks with no HP movement
+ * @congested:          1 when PPE2TCL is halted
+ * @congestion_events:  total congestion-start events
+ * @recovery_events:    total recovery events
+ * @idle_resets:        total idle-detection resets of inflight counter
+ */
+struct ath12k_ipa_cc {
+	u32  ipa2tcl_ring_id;
+	u32  ipa2tcl_entry_size;
+	u32  ipa2tcl_ring_size;
+	u32  tqm2ipa_entry_size;
+	u32  tqm2ipa_ring_size;
+	u32  total_tx_bufs;
+	u32  threshold;
+	u32  ipa2tcl_hp_prev;
+	u32  tqm2ipa_hp_prev;
+	s32  inflight;
+	u32  idle_ticks;
+	atomic_t congested;
+	u64  congestion_events;
+	u64  recovery_events;
+	u64  idle_resets;
+};
+
 /* IPA uC datapath offload Wlan Tx resources */
 struct ath12k_ipa_dp_tx_rsc {
 	/* Resource info to be passed to IPA */
@@ -1250,7 +1291,7 @@ struct ath12k_ipa {
 	bool is_db_ddr_mapped;
 	bool ipa_first_tx_db_access;
 	struct ath12k_ipa_arch_ops *arch_ops;
-
+	struct ath12k_ipa_cc cc;
 	/* Debug info infrastructure (NULL when unsupported) */
 	spinlock_t debug_info_lock;                           /* Protects debug info updates */
 	struct ath12k_ipa_debug_info *debug_info;  /* IPA debug info (present when the feature is supported) */

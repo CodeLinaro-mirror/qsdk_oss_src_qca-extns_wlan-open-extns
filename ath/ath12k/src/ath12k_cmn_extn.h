@@ -671,7 +671,7 @@ struct ath12k_wsi_remap_work {
 };
 
 /**
- * struct ath12k_wifi6_phyrx_abort_info - PHY abort and SIG field metadata
+ * struct ath12k_phyrx_abort_info - PHY abort and SIG field metadata
  * @phyrx_abort: Set to 1 if PHY aborted the reception of this PPDU
  * @phyrx_abort_reason: PHY abort reason code (valid when phyrx_abort is set)
  * L-SIG/L-SIG-A fields:
@@ -693,8 +693,16 @@ struct ath12k_wsi_remap_work {
  * @he_sig_a_su_crc: HE-SIG-A SU CRC
  * HE-SIG-A MU-DL fields:
  * @he_sig_a_mu_dl_crc: HE-SIG-A MU-DL CRC
+ * EHT-SIG-USR-SU fields:
+ * @eht_sig_a_su_crc: EHT-SIG-USR-SU (non-MU-MIMO) CRC
+ * EHT-SIG-USR MU-DL fields:
+ * @eht_sig_a_mu_dl_crc: EHT-SIG-USR (MU-MIMO) CRC
+ * UHR-SIG-USR-SU fields:
+ * @uhr_sig_a_su_crc: UHR-SIG-USR-SU (non-MU-MIMO) CRC
+ * UHR-SIG-USR MU-DL fields:
+ * @uhr_sig_a_mu_dl_crc: UHR-SIG-USR (MU-MIMO) CRC
  */
-struct ath12k_wifi6_phyrx_abort_info {
+struct ath12k_phyrx_abort_info {
 	bool phyrx_abort;
 	u8   phyrx_abort_reason;
 	u32  l_sig_length:12;
@@ -711,6 +719,10 @@ struct ath12k_wifi6_phyrx_abort_info {
 	u32  vht_crc:8;
 	u32  he_sig_a_su_crc:4;
 	u32  he_sig_a_mu_dl_crc:4;
+	u32  eht_sig_a_su_crc:4;
+	u32  eht_sig_a_mu_dl_crc:4;
+	u32  uhr_sig_a_su_crc:4;
+	u32  uhr_sig_a_mu_dl_crc:4;
 };
 
 /**
@@ -728,7 +740,7 @@ struct hal_mon_ppdu_info_extn {
 	s8 rssi[8];
 	u8 sw_frame_group_id;
 	struct hal_rx_frm_type_info frm_type_info;
-	struct ath12k_wifi6_phyrx_abort_info *phyrx_abort_info;
+	struct ath12k_phyrx_abort_info *phyrx_abort_info;
 };
 
 /* PHY error reason codes 0-53 are valid; codes 54-63 are reserved */
@@ -763,7 +775,7 @@ struct ath12k_pdev_mon_dp_extn {
 	struct ath12k_dp_mon_tlv_logger *rx_tlv_log;
 	struct ath12k_dp_mon_tlv_logger *tx_tlv_log;
 	struct ath12k_wifi6_undecoded_metadata *undecoded_meta;
-	struct ath12k_wifi6_phyrx_abort_info *phyrx_abort_info;
+	struct ath12k_phyrx_abort_info *phyrx_abort_info;
 };
 
 struct ath12k *ath12k_get_ar_from_wdev(struct wireless_dev *wdev, u8 link_id);

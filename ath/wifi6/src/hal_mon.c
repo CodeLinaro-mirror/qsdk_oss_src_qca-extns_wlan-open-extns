@@ -89,7 +89,7 @@ ath12k_wifi6_hal_mon_parse_vht_sig_a(const void *tlv_data,
 		ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_MU_MIMO;
 
 	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
-		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+		struct ath12k_phyrx_abort_info *abort_info =
 			ppdu_info->ppdu_info_extn.phyrx_abort_info;
 
 		abort_info->vht_no_txop_ps =
@@ -120,7 +120,7 @@ ath12k_wifi6_hal_mon_parse_ht_sig(const void *tlv_data,
 	ppdu_info->is_stbc = HAL_RX_GET(ht_sig_info, HT_SIG_INFO_1, STBC);
 
 	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
-		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+		struct ath12k_phyrx_abort_info *abort_info =
 			ppdu_info->ppdu_info_extn.phyrx_abort_info;
 
 		abort_info->ht_length =
@@ -278,7 +278,7 @@ ath12k_wifi6_hal_mon_parse_l_sig_a(const void *tlv_data,
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
 
 	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
-		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+		struct ath12k_phyrx_abort_info *abort_info =
 			ppdu_info->ppdu_info_extn.phyrx_abort_info;
 
 		abort_info->l_sig_length =
@@ -552,7 +552,7 @@ ath12k_wifi6_hal_mon_parse_he_sig_mu(const void *tlv_data,
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_MU_MIMO;
 
 	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
-		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+		struct ath12k_phyrx_abort_info *abort_info =
 			ppdu_info->ppdu_info_extn.phyrx_abort_info;
 
 		abort_info->he_sig_a_mu_dl_crc =
@@ -715,7 +715,7 @@ ath12k_wifi6_hal_mon_parse_he_sig_su(const void *tlv_data,
 	ppdu_info->reception_type = HAL_RX_RECEPTION_TYPE_SU;
 
 	if (ppdu_info->ppdu_info_extn.phyrx_abort_info) {
-		struct ath12k_wifi6_phyrx_abort_info *abort_info =
+		struct ath12k_phyrx_abort_info *abort_info =
 			ppdu_info->ppdu_info_extn.phyrx_abort_info;
 
 		abort_info->he_sig_a_su_crc =

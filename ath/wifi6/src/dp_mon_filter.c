@@ -210,6 +210,7 @@ ath12k_wifi6_dp_mon_setup_ext_mon_filter(struct dp_mon_rx_filter *filter,
 	if (config) {
 		if (ath12k_dp_ext_mon_is_mode_enabled(&config->target_neighbor)) {
 			tlv_filter->enable_md = 1;
+			tlv_filter->enable_mon_mac_filter = 1;
 			tlv_filter->md_mgmt_filter =
 				config->target_neighbor.filter[ATH12K_EXT_MON_FRAME_MGMT];
 			tlv_filter->md_ctrl_filter =
@@ -239,6 +240,7 @@ ath12k_wifi6_dp_mon_setup_ext_mon_filter(struct dp_mon_rx_filter *filter,
 		}
 	} else {
 		tlv_filter->enable_md = 0;
+		tlv_filter->enable_mon_mac_filter = 0;
 		tlv_filter->md_mgmt_filter = 0;
 		tlv_filter->md_ctrl_filter = 0;
 		tlv_filter->md_data_filter = 0;

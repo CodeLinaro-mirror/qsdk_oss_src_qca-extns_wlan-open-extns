@@ -17,6 +17,8 @@
 #include <linux/uuid.h>
 #include <linux/time.h>
 #include <linux/of.h>
+#include <crypto/aead.h>
+#include <crypto/aes.h>
 #include "../core.h"
 #include "../ce.h"
 #include "../hw.h"
@@ -25,6 +27,10 @@
 #include "../peer.h"
 #include "ath12k_cmn_extn.h"
 #include "../net/mac80211/ieee80211_i.h"
+#include "../net/mac80211/wpa.h"
+#include "../net/mac80211/aes_ccm.h"
+#include "../net/mac80211/aes_gcm.h"
+#include "../net/mac80211/key.h"
 #include "esp_extn.h"
 #include "vendor_extn.h"
 #include "qcn_extns/cbs_extn.h"
@@ -846,14 +852,427 @@ static void ath12k_sysfs_setup_vif_entry(struct ath12k *ar,
 	entry->radio_idx = radio_idx;
 }
 
+struct ath12k_mcast_kobj {
+	struct kobject kobj;
+	struct ath12k *ar;
+};
+
+/* CCMP/GCMP AAD length used by ieee80211_{ccmp,gcmp}_special_blocks(). */
+#define ATH12K_MCAST_AAD_LEN	32
+
+/* kref release callback; called when the last reference is dropped. */
+static void ath12k_mcast_key_release(struct kref *ref)
+{
+	struct ath12k_mcast_key *key = container_of(ref, struct ath12k_mcast_key, ref);
+
+	crypto_free_aead(key->tfm);
+	kfree(key);
+}
+
+/* Drops a reference taken via mcast_encrypt_key install or a datapath
+ * lookup; frees the key once the last reference is gone.
+ */
+static void ath12k_mcast_key_put(struct ath12k_mcast_key *key)
+{
+	kref_put(&key->ref, ath12k_mcast_key_release);
+}
+
+static ssize_t mcast_encrypt_addr_show(struct kobject *kobj,
+				       struct kobj_attribute *attr, char *buf)
+{
+	struct ath12k_mcast_kobj *mk = container_of(kobj, struct ath12k_mcast_kobj, kobj);
+	struct ath12k *ar = mk->ar;
+
+	return scnprintf(buf, PAGE_SIZE, "%pM\n", ar->ar_extn.mcast_encrypt_addr);
+}
+
+static ssize_t mcast_encrypt_addr_store(struct kobject *kobj,
+					struct kobj_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct ath12k_mcast_kobj *mk = container_of(kobj, struct ath12k_mcast_kobj, kobj);
+	struct ath12k *ar = mk->ar;
+	struct ath12k_mcast_key *old_key;
+	u8 addr[ETH_ALEN];
+
+	if (sscanf(buf, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+		   &addr[0], &addr[1], &addr[2],
+		   &addr[3], &addr[4], &addr[5]) != ETH_ALEN)
+		return -EINVAL;
+
+	spin_lock_bh(&ar->ar_extn.mcast_key_lock);
+	memcpy(ar->ar_extn.mcast_encrypt_addr, addr, ETH_ALEN);
+	/* clear stale key when address changes */
+	old_key = ar->ar_extn.mcast_encrypt_key;
+	ar->ar_extn.mcast_encrypt_key = NULL;
+	spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+
+	if (old_key)
+		ath12k_mcast_key_put(old_key);
+
+	return count;
+}
+
+/*
+ * key store format: "<cipher> <keylen> <hexkey>"
+ * cipher: ccmp | gcmp | gcmp-256
+ * keylen: 16 (CCMP/GCMP) or 32 (GCMP-256)
+ * hexkey: 32 or 64 hex chars, no separators
+ */
+static ssize_t mcast_encrypt_key_store(struct kobject *kobj,
+				       struct kobj_attribute *attr,
+				       const char *buf, size_t count)
+{
+	struct ath12k_mcast_kobj *mk = container_of(kobj, struct ath12k_mcast_kobj, kobj);
+	struct ath12k *ar = mk->ar;
+	char cipher_str[16];
+	unsigned int keylen;
+	u8 key_data[32];
+	u32 cipher;
+	unsigned int i;
+	const char *hex;
+	size_t hex_len;
+	struct ath12k_mcast_key *new_key, *old_key;
+
+	if (sscanf(buf, "%15s %u ", cipher_str, &keylen) != 2)
+		return -EINVAL;
+
+	if (!strcasecmp(cipher_str, "ccmp") && keylen == 16)
+		cipher = WLAN_CIPHER_SUITE_CCMP;
+	else if (!strcasecmp(cipher_str, "gcmp") && keylen == 16)
+		cipher = WLAN_CIPHER_SUITE_GCMP;
+	else if (!strcasecmp(cipher_str, "gcmp-256") && keylen == 32)
+		cipher = WLAN_CIPHER_SUITE_GCMP_256;
+	else
+		return -EINVAL;
+
+	if (keylen > sizeof(key_data))
+		return -EINVAL;
+
+	/* skip past "cipher keylen " to the hex key */
+	hex = strchr(buf, ' ');
+	if (!hex)
+		return -EINVAL;
+	hex = strchr(hex + 1, ' ');
+	if (!hex)
+		return -EINVAL;
+	hex++;
+
+	/* the hex string must be exactly keylen * 2 digits, optionally
+	 * followed by a single newline
+	 */
+	hex_len = count - (size_t)(hex - buf);
+	if (hex_len && hex[hex_len - 1] == '\n')
+		hex_len--;
+	if (hex_len != (size_t)keylen * 2)
+		return -EINVAL;
+
+	for (i = 0; i < keylen; i++) {
+		int hi = hex_to_bin(hex[2 * i]);
+		int lo = hex_to_bin(hex[2 * i + 1]);
+
+		if (hi < 0 || lo < 0)
+			return -EINVAL;
+		key_data[i] = (hi << 4) | lo;
+	}
+
+	new_key = kzalloc(sizeof(*new_key), GFP_KERNEL);
+	if (!new_key)
+		return -ENOMEM;
+
+	new_key->cipher = cipher;
+	new_key->keyidx = 0;
+	new_key->mic_len = (cipher == WLAN_CIPHER_SUITE_CCMP) ?
+			   IEEE80211_CCMP_MIC_LEN : IEEE80211_GCMP_MIC_LEN;
+	atomic64_set(&new_key->tx_pn, 0);
+	kref_init(&new_key->ref);
+
+	new_key->tfm = crypto_alloc_aead((cipher == WLAN_CIPHER_SUITE_CCMP ||
+					  cipher == WLAN_CIPHER_SUITE_CCMP_256) ?
+					 "ccm(aes)" : "gcm(aes)",
+					 0, CRYPTO_ALG_ASYNC);
+	if (IS_ERR(new_key->tfm)) {
+		int err = PTR_ERR(new_key->tfm);
+
+		kfree(new_key);
+		return err;
+	}
+	if (crypto_aead_setkey(new_key->tfm, key_data, keylen) ||
+	    crypto_aead_setauthsize(new_key->tfm, new_key->mic_len)) {
+		crypto_free_aead(new_key->tfm);
+		kfree(new_key);
+		return -EINVAL;
+	}
+
+	spin_lock_bh(&ar->ar_extn.mcast_key_lock);
+	old_key = ar->ar_extn.mcast_encrypt_key;
+	ar->ar_extn.mcast_encrypt_key = new_key;
+	spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+
+	if (old_key)
+		ath12k_mcast_key_put(old_key);
+
+	return count;
+}
+
+static struct kobj_attribute mcast_addr_attr =
+	__ATTR(addr, 0644, mcast_encrypt_addr_show, mcast_encrypt_addr_store);
+static struct kobj_attribute mcast_key_attr =
+	__ATTR(key, 0200, NULL, mcast_encrypt_key_store);
+
+static struct attribute *ath12k_mcast_encrypt_attrs[] = {
+	&mcast_addr_attr.attr,
+	&mcast_key_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group ath12k_mcast_encrypt_attr_group = {
+	.attrs = ath12k_mcast_encrypt_attrs,
+};
+
+static const struct attribute_group *ath12k_mcast_encrypt_default_groups[] = {
+	&ath12k_mcast_encrypt_attr_group,
+	NULL,
+};
+
+static void ath12k_mcast_kobj_release(struct kobject *kobj)
+{
+	struct ath12k_mcast_kobj *mk = container_of(kobj, struct ath12k_mcast_kobj, kobj);
+
+	kfree(mk);
+}
+
+static struct kobj_type ath12k_mcast_ktype = {
+	.sysfs_ops = &kobj_sysfs_ops,
+	.default_groups = ath12k_mcast_encrypt_default_groups,
+	.release = ath12k_mcast_kobj_release,
+};
+
+/*
+ * ath12k_mcast_decrypt_mon_extn - SW CCMP/GCMP decrypt for mcast monitor frames
+ *
+ * Called from ath12k_dp_mon_rx_deliver_skb before passing to ieee80211_rx_napi.
+ * Decrypts in-place when addr1 matches mcast_encrypt_addr and protected bit is set.
+ * Clears the protected bit on success; drops the skb on failure.
+ */
+/* Returns true only if the skb was consumed (freed) because
+ * decryption failed. Returns false when the frame is not applicable
+ * (not protected, different address, no key, too short) or was
+ * decrypted successfully; the caller then continues to deliver it.
+ */
+bool ath12k_mcast_decrypt_mon_extn(struct ath12k *ar, struct sk_buff *skb)
+{
+	struct ieee80211_hdr *hdr;
+	struct ath12k_mcast_key *key;
+	u8 b_0[AES_BLOCK_SIZE], aad[ATH12K_MCAST_AAD_LEN];
+	u8 pn[IEEE80211_CCMP_PN_LEN];
+	u8 peek_buf[2 + 2 + ETH_ALEN];
+	int hdrlen, data_len, ret;
+	bool is_ccmp;
+	u8 *pos;
+	int header_offset;
+
+	header_offset = skb_headlen(skb);
+
+	hdr = skb_header_pointer(skb, header_offset, sizeof(peek_buf), peek_buf);
+	if (!hdr)
+		return false;
+
+	if (!ieee80211_has_protected(hdr->frame_control))
+		return false;
+
+	spin_lock_bh(&ar->ar_extn.mcast_key_lock);
+	if (!is_multicast_ether_addr(hdr->addr1) ||
+	    !ether_addr_equal(hdr->addr1, ar->ar_extn.mcast_encrypt_addr) ||
+	    !ar->ar_extn.mcast_encrypt_key) {
+		spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+		return false;
+	}
+	key = ar->ar_extn.mcast_encrypt_key;
+	if (!kref_get_unless_zero(&key->ref)) {
+		spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+		return false;
+	}
+	spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+
+	if (skb_linearize(skb)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_DP_MON,
+			   "mcast_decrypt_extn: skb_linearize failed\n");
+		ath12k_mcast_key_put(key);
+		dev_kfree_skb_any(skb);
+		return true;
+	}
+
+	skb_pull(skb, header_offset);
+	hdr = (struct ieee80211_hdr *)skb->data;
+
+	hdrlen = ieee80211_hdrlen(hdr->frame_control);
+	/* Decryption of a protected frame:
+	 *   [802.11 hdr][CCMP/GCMP hdr 8B (has PN)][data][MIC]
+	 * 1. Too short for the above: malformed, so skip decryption and
+	 *    return false; the frame goes up unchanged (not dropped).
+	 * 2. Otherwise get the PN from the crypto header, build the nonce
+	 *    and AAD, then decrypt the data in place and verify the MIC.
+	 * 3. MIC fails: drop the frame. MIC ok: remove the crypto header
+	 *    and MIC and clear the Protected bit.
+	 */
+	if (skb->len < hdrlen + IEEE80211_CCMP_HDR_LEN + key->mic_len) {
+		skb_push(skb, header_offset);
+		ath12k_mcast_key_put(key);
+		return false;
+	}
+
+	is_ccmp = key->cipher == WLAN_CIPHER_SUITE_CCMP ||
+		  key->cipher == WLAN_CIPHER_SUITE_CCMP_256;
+
+	data_len = skb->len - hdrlen - IEEE80211_CCMP_HDR_LEN - key->mic_len;
+	pos = skb->data + hdrlen + IEEE80211_CCMP_HDR_LEN;
+
+	if (is_ccmp) {
+		ieee80211_ccmp_hdr2pn(pn, skb->data + hdrlen);
+		ieee80211_ccmp_special_blocks(skb, pn, b_0, aad, false);
+		ret = ieee80211_aes_ccm_decrypt(key->tfm, b_0, aad, pos,
+						data_len, pos + data_len);
+	} else {
+		ieee80211_gcmp_hdr2pn(pn, skb->data + hdrlen);
+		ieee80211_gcmp_special_blocks(skb, pn, b_0, aad, false);
+		ret = ieee80211_aes_gcm_decrypt(key->tfm, b_0, aad, pos,
+						data_len, pos + data_len);
+	}
+
+	if (ret) {
+		ath12k_mcast_key_put(key);
+		dev_kfree_skb_any(skb);
+		return true;
+	}
+
+	/* strip crypto header + MIC, clear PROTECTED */
+	memmove(skb->data + IEEE80211_CCMP_HDR_LEN,
+		skb->data, hdrlen);
+
+	skb_pull(skb, IEEE80211_CCMP_HDR_LEN);
+	skb_trim(skb, skb->len - key->mic_len);
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	hdr->frame_control &= ~cpu_to_le16(IEEE80211_FCTL_PROTECTED);
+
+	/* Restore radiotap at skb->data */
+	skb_push(skb, header_offset);
+
+	ath12k_mcast_key_put(key);
+	return false;
+}
+EXPORT_SYMBOL(ath12k_mcast_decrypt_mon_extn);
+
+/*
+ * ath12k_mcast_encrypt_mon_extn - SW CCMP/GCMP encrypt for mcast raw TX.
+ *
+ * Called from ath12k_custom_tx_extn() before the frame is queued to WMI for
+ * transmission. Encrypts in-place when addr1 matches mcast_encrypt_addr and
+ * a key is set. tx_pn is a local counter, independent of the real GTK PN
+ * sequence - do not use this path with a key also used for normal traffic.
+ * Returns true if the skb was consumed (dropped on error); false if untouched.
+ */
+bool ath12k_mcast_encrypt_mon_extn(struct ath12k *ar, struct sk_buff *skb)
+{
+	struct ieee80211_hdr *hdr;
+	struct ath12k_mcast_key *key;
+	u8 b_0[AES_BLOCK_SIZE], aad[ATH12K_MCAST_AAD_LEN];
+	u8 pn[IEEE80211_CCMP_PN_LEN];
+	int hdrlen, data_len, ret;
+	bool is_ccmp;
+	u64 pn64;
+	u8 *pos;
+
+	/* raw TX frames come from userspace: validate length before
+	 * reading any header field
+	 */
+	if (skb->len < sizeof(__le16))
+		return false;
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	if (!ieee80211_is_data_present(hdr->frame_control))
+		return false;
+
+	hdrlen = ieee80211_hdrlen(hdr->frame_control);
+	if (skb->len < hdrlen)
+		return false;
+
+	spin_lock_bh(&ar->ar_extn.mcast_key_lock);
+	if (!is_multicast_ether_addr(hdr->addr1) ||
+	    !ether_addr_equal(hdr->addr1, ar->ar_extn.mcast_encrypt_addr) ||
+	    !ar->ar_extn.mcast_encrypt_key) {
+		spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+		return false;
+	}
+	key = ar->ar_extn.mcast_encrypt_key;
+	if (!kref_get_unless_zero(&key->ref)) {
+		spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+		return false;
+	}
+	spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+
+	/* need room for the crypto header (head) and MIC (tail) */
+	if (skb_cow_head(skb, IEEE80211_CCMP_HDR_LEN) ||
+	    pskb_expand_head(skb, 0, key->mic_len, GFP_ATOMIC)) {
+		ath12k_mcast_key_put(key);
+		dev_kfree_skb_any(skb);
+		return true;
+	}
+	hdr = (struct ieee80211_hdr *)skb->data;
+	data_len = skb->len - hdrlen;
+
+	pos = skb_push(skb, IEEE80211_CCMP_HDR_LEN);
+	memmove(pos, pos + IEEE80211_CCMP_HDR_LEN, hdrlen);
+	pos += hdrlen;
+
+	pn64 = atomic64_inc_return(&key->tx_pn);
+	pn[5] = pn64;
+	pn[4] = pn64 >> 8;
+	pn[3] = pn64 >> 16;
+	pn[2] = pn64 >> 24;
+	pn[1] = pn64 >> 32;
+	pn[0] = pn64 >> 40;
+
+	is_ccmp = key->cipher == WLAN_CIPHER_SUITE_CCMP ||
+		  key->cipher == WLAN_CIPHER_SUITE_CCMP_256;
+
+	if (is_ccmp) {
+		ieee80211_ccmp_pn2hdr(pos, pn, key->keyidx);
+		pos += IEEE80211_CCMP_HDR_LEN;
+		ieee80211_ccmp_special_blocks(skb, pn, b_0, aad, false);
+		ret = ieee80211_aes_ccm_encrypt(key->tfm, b_0, aad, pos,
+						data_len, skb_put(skb, key->mic_len));
+	} else {
+		ieee80211_gcmp_pn2hdr(pos, pn, key->keyidx);
+		pos += IEEE80211_CCMP_HDR_LEN;
+		ieee80211_gcmp_special_blocks(skb, pn, b_0, aad, false);
+		ret = ieee80211_aes_gcm_encrypt(key->tfm, b_0, aad, pos,
+						data_len, skb_put(skb, key->mic_len));
+	}
+	if (ret) {
+		ath12k_mcast_key_put(key);
+		dev_kfree_skb_any(skb);
+		return true;
+	}
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
+	ath12k_mcast_key_put(key);
+	return false;
+}
+
 void ath12k_sysfs_init_extn(struct ath12k *ar)
 {
 	struct wiphy *wiphy = ar->ah->hw->wiphy;
 	struct device *dev = wiphy_dev(wiphy);
 	struct kobject *parent;
 	struct ath12k_base *ab = ar->ab;
+	struct ath12k_mcast_kobj *mk;
 	char rname[16];
 	int i, r;
+
+	spin_lock_init(&ar->ar_extn.mcast_key_lock);
 
 	if (!dev)
 		return;
@@ -914,12 +1333,38 @@ void ath12k_sysfs_init_extn(struct ath12k *ar)
 		ath12k_sysfs_setup_vif_entry(ar, entry, i, r);
 		ar->ar_extn.vif_entries[i] = entry;
 	}
+
+	/* Create mcast_encrypt sub-directory under radioN */
+	mk = kzalloc(sizeof(*mk), GFP_KERNEL);
+	if (!mk)
+		return;
+	mk->ar = ar;
+	kobject_init(&mk->kobj, &ath12k_mcast_ktype);
+	if (kobject_add(&mk->kobj, ar->ar_extn.radio_kobj, "mcast_encrypt")) {
+		kobject_put(&mk->kobj);
+		return;
+	}
+	ar->ar_extn.mcast_kobj = &mk->kobj;
 }
 
 void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 {
 	int i;
 	struct ath12k_vif_sysfs_entry *entry;
+	struct ath12k_mcast_key *old_key;
+
+	if (ar->ar_extn.mcast_kobj) {
+		kobject_put(ar->ar_extn.mcast_kobj);
+		ar->ar_extn.mcast_kobj = NULL;
+	}
+
+	spin_lock_bh(&ar->ar_extn.mcast_key_lock);
+	old_key = ar->ar_extn.mcast_encrypt_key;
+	ar->ar_extn.mcast_encrypt_key = NULL;
+	spin_unlock_bh(&ar->ar_extn.mcast_key_lock);
+
+	if (old_key)
+		ath12k_mcast_key_put(old_key);
 
 	if (ar->ar_extn.vifs_kobj) {
 		for (i = 0; i <= 16; i++) {

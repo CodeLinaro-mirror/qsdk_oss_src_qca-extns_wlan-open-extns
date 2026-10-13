@@ -675,6 +675,18 @@ int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 
 		__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
 
+		/* SW mcast encrypt for acfg raw TX: encrypt matching unprotected
+		 * mcast data frames in place before they are queued to WMI. The
+		 * helper no-ops for frames that do not match the configured
+		 * mcast_encrypt_addr/key, and frees the skb itself on encrypt
+		 * failure. The skb is already unlinked from pkt_list here, so on
+		 * consume just roll back the tracking slot added above and skip.
+		 */
+		if (ath12k_mcast_encrypt_mon_extn(ar, skb)) {
+			raw_pkt_ctx->num_tracked_skbs--;
+			continue;
+		}
+
 		/* Queue the SKB to WMI management TX queue */
 		skb_queue_tail(q, skb);
 

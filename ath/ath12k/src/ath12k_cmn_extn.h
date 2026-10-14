@@ -743,10 +743,25 @@ struct hal_mon_ppdu_info_extn {
 	struct ath12k_phyrx_abort_info *phyrx_abort_info;
 };
 
-/* PHY error reason codes 0-53 are valid; codes 54-63 are reserved */
 #define ATH12K_WIFI6_PHYRX_ERR_MAX	64
+#define ATH12K_PHYRX_ERR_MAX		128
+#define ATH12K_PHYRX_ERR_MASK_WORD_BITS	BITS_PER_TYPE(u32)
 /* Bit shift to position the upper 32-bit half of the 64-bit PHY error mask */
 #define ATH12K_WIFI6_PHYRX_ERR_MASK_CONT_SHIFT	32
+
+enum ath12k_phyrx_err_mask_word {
+	ATH12K_PHYRX_ERR_MASK_WORD_0,
+	ATH12K_PHYRX_ERR_MASK_WORD_1,
+	ATH12K_PHYRX_ERR_MASK_WORD_2,
+	ATH12K_PHYRX_ERR_MASK_WORD_3,
+};
+
+struct ath12k_undecoded_phy_err_mask_cfg {
+	u32 mask;
+	u32 mask_cont;
+	u32 mask_cont2;
+	u32 mask_cont3;
+};
 
 /**
  * struct ath12k_undecoded_metadata - Undecoded metadata capture state
@@ -760,8 +775,10 @@ struct ath12k_undecoded_metadata {
 	bool undecoded_metadata_capture;
 	u32  phyrx_error_mask;
 	u32  phyrx_error_mask_cont;
+	u32  phyrx_error_mask_cont2;
+	u32  phyrx_error_mask_cont3;
 	u32  rx_undecoded_count;
-	u32  rx_undecoded_error[ATH12K_WIFI6_PHYRX_ERR_MAX];
+	u32  rx_undecoded_error[ATH12K_PHYRX_ERR_MAX];
 };
 
 /**

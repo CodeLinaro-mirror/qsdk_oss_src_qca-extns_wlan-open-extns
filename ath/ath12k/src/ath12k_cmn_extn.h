@@ -749,14 +749,14 @@ struct hal_mon_ppdu_info_extn {
 #define ATH12K_WIFI6_PHYRX_ERR_MASK_CONT_SHIFT	32
 
 /**
- * struct ath12k_wifi6_undecoded_metadata - Undecoded metadata capture state
+ * struct ath12k_undecoded_metadata - Undecoded metadata capture state
  * @undecoded_metadata_capture: Flag indicating capture is currently armed
  * @phyrx_error_mask: Lower 32 bits of the PHY RX error mask (errors 0-31)
  * @phyrx_error_mask_cont: Upper 32 bits of the PHY RX error mask (errors 32-63)
  * @rx_undecoded_count: Total count of undecoded PPDUs processed
  * @rx_undecoded_error: Per-error-code count of undecoded PPDUs
  */
-struct ath12k_wifi6_undecoded_metadata {
+struct ath12k_undecoded_metadata {
 	bool undecoded_metadata_capture;
 	u32  phyrx_error_mask;
 	u32  phyrx_error_mask_cont;
@@ -774,7 +774,7 @@ struct ath12k_wifi6_undecoded_metadata {
 struct ath12k_pdev_mon_dp_extn {
 	struct ath12k_dp_mon_tlv_logger *rx_tlv_log;
 	struct ath12k_dp_mon_tlv_logger *tx_tlv_log;
-	struct ath12k_wifi6_undecoded_metadata *undecoded_meta;
+	struct ath12k_undecoded_metadata *undecoded_meta;
 	struct ath12k_phyrx_abort_info *phyrx_abort_info;
 };
 

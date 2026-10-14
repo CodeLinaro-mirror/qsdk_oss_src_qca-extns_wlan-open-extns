@@ -221,6 +221,18 @@ struct sta_240mhz_info {
 /* Checks if Tx Params configured by User */
 #define ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN(ar) (ar->ar_extn.raw_pkt_ctx.tx_param.tx_param_configured)
 
+/* Checks whether the off-channel TX parameter TLV will be populated. */
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+#define ATH12K_TX_PARAMS_VALID_EXTN(cb) \
+	(ATH12K_IS_MONRAW_TXPKT(cb) || \
+	 (ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN((cb)->u.ar) && \
+	  ATH12K_IS_CUSTOM_PKT(cb)))
+#else
+#define ATH12K_TX_PARAMS_VALID_EXTN(cb) \
+	(ATH12K_CUSTOM_TX_PARAM_CONFIGURED_EXTN((cb)->u.ar) && \
+	 ATH12K_IS_CUSTOM_PKT(cb))
+#endif
+
 /* Band types used in offchan tx */
 enum band_type {
 	BAND_DEFAULT,

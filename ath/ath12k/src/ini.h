@@ -416,6 +416,7 @@
 	ATH12K_CFG(ATH12K_CFG_MGMT_RX_DESC_COUNT_PER_CHIP) \
 	ATH12K_CFG(ATH12K_CFG_CUMAC_BAND_PRIORITY) \
 	ATH12K_CFG(ATH12K_CFG_RF_SWITCH_CONFIG) \
+	ATH12K_CFG(ATH12K_CFG_RADIO_ORDER) \
 	ATH12K_CFG(ATH12K_CFG_NUM_VDEVS) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_RADIO_TX_ON_DFS) \
 	ATH12K_CFG(ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP) \
@@ -564,6 +565,15 @@
 #define ATH12K_CFG_RF_SWITCH_CONFIG \
 	ATH12K_CFG_INI_BOOL("rf_switch_config", false, \
 	"RF path: false=primary/full 5G range (default), true=secondary/high 5G range")
+
+/*
+ * ATH12K_CFG_RADIO_ORDER: per-SoC pdev band order (4 bits/slot, enum
+ * ath12k_band_id); valid only inside a "[SOCn]" section.
+ */
+#define ATH12K_CFG_RADIO_ORDER \
+	ATH12K_CFG_INI_UINT("radio_order", \
+	0, 0xFFFFFFFF, 0, \
+	ATH12K_CFG_VALUE_OR_DEFAULT, "Per-SoC radio/pdev band order override")
 
 /*
  * ATH12K_CFG_SKIP_PARTNER_CHIP_DUMP - Skip partner chip DUMP collection
@@ -1435,6 +1445,9 @@ struct ath12k_cfg_values {
 #define ATH12K_CFG_256M_SECTION "256M"
 #define ATH12K_CFG_512M_SECTION "512M"
 
+/* Per-SoC section: "SOC0", "SOC1", ... */
+#define ATH12K_CFG_SOC_SECTION_FMT "SOC%d"
+
 /* Memory + Band combined sections for 256M only */
 #define ATH12K_CFG_256M_2G_SECTION "256M_2G"
 #define ATH12K_CFG_256M_5G_SECTION "256M_5G"
@@ -1519,6 +1532,9 @@ void ath12k_cfg_global_deinit(void);
  * Return: void
  */
 void ath12k_cfg_parse_pdev_section(struct ath12k_base *ab);
+
+/* Parse per-SoC "SOC<soc_key>" section into ab's config store. */
+void ath12k_cfg_parse_soc_section_extn(struct ath12k_base *ab, u32 soc_key);
 
 void ath12k_ini_override_runtime_params(struct ath12k_base *ab);
 

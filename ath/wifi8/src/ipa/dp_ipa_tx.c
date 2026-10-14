@@ -947,8 +947,13 @@ static void ath12k_dp_ipa_tqm2sw6_poll_timer(struct timer_list *t)
 {
 	struct ath12k_dp_wifi8_ipa *dp_wifi8_ipa =
 		from_timer(dp_wifi8_ipa, t, tqm2sw6_poll_timer);
+	struct ath12k_base *ab = dp_wifi8_ipa->dp_wifi8->dp->ab;
 
 	dp_wifi8_ipa->tqm2sw6_stats.timer_fires++;
+
+	if (test_bit(ATH12K_GROUP_FLAG_SHUTDOWN, &ab->ag->flags))
+		return;
+
 	napi_schedule(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
 	mod_timer(&dp_wifi8_ipa->tqm2sw6_poll_timer,
 		  jiffies + msecs_to_jiffies(ATH12K_TQM2SW6_POLL_INTERVAL_MS));

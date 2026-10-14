@@ -33,6 +33,10 @@ void ath12k_dp_rx_undecoded_stats_update(
 		undecoded_meta->phyrx_error_mask;
 	telemetry_vif_stats->rx_undecoded_stats.phyrx_error_mask_cont =
 		undecoded_meta->phyrx_error_mask_cont;
+	telemetry_vif_stats->rx_undecoded_stats.phyrx_error_mask_cont2 =
+		undecoded_meta->phyrx_error_mask_cont2;
+	telemetry_vif_stats->rx_undecoded_stats.phyrx_error_mask_cont3 =
+		undecoded_meta->phyrx_error_mask_cont3;
 	memcpy(telemetry_vif_stats->rx_undecoded_stats.rx_undecoded_error,
 	       undecoded_meta->rx_undecoded_error,
 	       sizeof(undecoded_meta->rx_undecoded_error));

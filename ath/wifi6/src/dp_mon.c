@@ -693,6 +693,7 @@ void ath12k_wifi6_dp_mon_rx_buf_ring_buf_free(struct ath12k_dp *dp)
 		rx_desc_pool->mon_desc_pool[i].in_use = 0;
 	}
 
+	ath12k_dp_mon_page_frag_cache_drain(&rx_desc_pool->rx_mon_pf_cache);
 	spin_unlock_bh(&rx_desc_pool->rx_mon_desc_lock);
 }
 

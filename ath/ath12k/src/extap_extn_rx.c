@@ -319,32 +319,42 @@ static int __proc_ipv6_rx(struct extap_extn *ee, struct sk_buff *skb)
 {
 	const struct ipv6hdr *ip6h = ipv6_hdr(skb);
 	const struct icmp6hdr *icmp6h;
+	bool proc_mcast;
+	u8 type;
 
-	/* Multicast packet doesn't need DMAC xlate, replace with mcast mac */
-	if (unlikely(ipv6_addr_is_multicast(&ip6h->daddr))) {
-		__proc_ipv6_mcast_rx(ee, skb);
-		return 0;
-	}
+	proc_mcast = ipv6_addr_is_multicast(&ip6h->daddr);
 
-	/*
-	 * ICMPv6 packets with ND options has to be processed
-	 * differently
-	 */
 	if (unlikely(ip6h->nexthdr == IPPROTO_ICMPV6)) {
 		const int offset = ICMPV6_OFFSET;
 
-		/* Re-fetch icmp6h after potential reallocation */
 		skb_set_transport_header(skb, offset);
 		icmp6h = (struct icmp6hdr *)skb_transport_header(skb);
 
-		switch (icmp6h->icmp6_type) {
-		case NDISC_NEIGHBOUR_SOLICITATION:
+		type = icmp6h->icmp6_type;
+		switch (type) {
 		case NDISC_NEIGHBOUR_ADVERTISEMENT:
+			/* Note: this is fall through we want to skip
+			 * proc_mcast processing for NA; learning is already
+			 * done as part of ndisc processing
+			 */
+			proc_mcast = false;
+			fallthrough;
+		case NDISC_NEIGHBOUR_SOLICITATION:
+			/* NS targets a solicited-node multicast address; learn
+			 * the SLLAO mapping first, then let proc_mcast dispatch
+			 * it to __proc_ipv6_mcast_rx() — DMAC xlate is skipped.
+			 */
 			extap_parse_ndisc(ee, skb, ndisc_opts);
 			break;
 		default:
 			break;
 		}
+	}
+
+	/* Multicast frames need mac rewrite, not DMAC xlate */
+	if (proc_mcast) {
+		__proc_ipv6_mcast_rx(ee, skb);
+		return 0;
 	}
 
 	return extap_xlate_dmac(ee, skb);

@@ -153,6 +153,7 @@ const struct ath12k_dp_arch_mon_ops ath12k_wifi6_dp_arch_mon_quad_ring_ops = {
 	.ext_mon_free = ath12k_dp_ext_mon_free,
 	.ext_mon_validate_request = ath12k_wifi6_dp_ext_mon_validate_request,
 	.ext_mon_set_rx_filter = ath12k_wifi6_dp_ext_mon_set_rx_filter,
+	.ext_mon_handle_rx_peer = ath12k_wifi6_ext_mon_handle_rx_peer,
 };
 
 static int ath12k_wifi6_dp_mon_rx_buf_replenish(struct ath12k_dp *dp);
@@ -2449,5 +2450,41 @@ ath12k_wifi6_dp_ext_mon_set_rx_filter(struct ath12k_pdev_dp *dp_pdev,
 		ath12k_wifi6_dp_ext_mon_update_rx_config(dp_mon_pdev, new_config);
 	}
 
+	return ret;
+}
+
+int
+ath12k_wifi6_ext_mon_handle_rx_peer(struct ath12k_pdev_dp *dp_pdev,
+				    const struct ath12k_ext_mon_peer_info *peer_info,
+				    enum ath12k_ext_mon_peer_action action, u32 vdev_id,
+				    struct list_head *peers_to_wmi,
+				    struct ath12k_ext_mon_wmi_entry *entry,
+				    struct ath12k_dp_ext_mon_peer *peer)
+{
+	struct ath12k_pdev_mon_dp *dp_mon_pdev = dp_pdev->dp_mon_pdev;
+	int ret = 0;
+
+	lockdep_assert_held(&dp_mon_pdev->rx_ext_mon_lock);
+
+	if (action == ATH12K_EXT_MON_PEER_ACTION_ADD) {
+		struct ath12k_dp_ext_mon_peer *new_peer;
+
+		new_peer = kzalloc(sizeof(*new_peer), GFP_ATOMIC);
+		if (!new_peer)
+			return -ENOMEM;
+
+		memcpy(&new_peer->peer_info, peer_info, sizeof(*peer_info));
+		entry->param.vdev_id = vdev_id;
+		entry->param.action  = WMI_FILTER_NRP_ACTION_ADD;
+		ether_addr_copy(entry->param.nrp_addr, peer_info->mac_addr);
+		entry->peer = new_peer;
+	} else {
+		entry->peer = peer;
+		entry->param.vdev_id = vdev_id;
+		entry->param.action  = WMI_FILTER_NRP_ACTION_REMOVE;
+		ether_addr_copy(entry->param.nrp_addr, peer_info->mac_addr);
+	}
+
+	list_add_tail(&entry->list, peers_to_wmi);
 	return ret;
 }

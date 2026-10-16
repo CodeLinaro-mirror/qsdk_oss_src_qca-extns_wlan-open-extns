@@ -1399,7 +1399,7 @@ cleanup:
 	return ret;
 
 }
-EXPORT_SYMBOL(ieee80211_vendor_mesh_add_local_peer);
+EXPORT_SYMBOL_GPL(ieee80211_vendor_mesh_add_local_peer);
 
 /**
  * ieee80211_vendor_mesh_authorize_peer: Mesh peer authorize handler.
@@ -1472,7 +1472,7 @@ int ieee80211_vendor_mesh_authorize_peer(struct wiphy *wiphy, struct ieee80211_v
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_vendor_mesh_authorize_peer);
+EXPORT_SYMBOL_GPL(ieee80211_vendor_mesh_authorize_peer);
 
 /**
  * ieee80211_mesh_send_deauth - send a deauth frame to a mesh peer, encrypting
@@ -1678,7 +1678,7 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 
 	return ret;
 }
-EXPORT_SYMBOL(ieee80211_vendor_mesh_delete_local_peer);
+EXPORT_SYMBOL_GPL(ieee80211_vendor_mesh_delete_local_peer);
 
 /**
  * ieee80211_vendor_mesh_set_peer_timeout_cnt - Set mesh peer inactivity timeout count.
@@ -1723,7 +1723,7 @@ int ieee80211_vendor_mesh_set_peer_timeout_cnt(struct wiphy *wiphy,
 
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_vendor_mesh_set_peer_timeout_cnt);
+EXPORT_SYMBOL_GPL(ieee80211_vendor_mesh_set_peer_timeout_cnt);
 
 /**
  * ieee80211_calc_beacon_ie_checksum_raw - Calculate checksum of critical IEs
@@ -2277,7 +2277,7 @@ int ieee80211_extn_get_key_material(struct ieee80211_vif *vif,
 	rcu_read_unlock();
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_extn_get_key_material);
+EXPORT_SYMBOL_GPL(ieee80211_extn_get_key_material);
 
 
 /**
@@ -2639,7 +2639,7 @@ ieee80211_process_mesh_peer_deauth_disassoc(struct ieee80211_rx_data *rx)
 
 	return RX_DROP_MONITOR;
 }
-EXPORT_SYMBOL(ieee80211_process_mesh_peer_deauth_disassoc);
+EXPORT_SYMBOL_GPL(ieee80211_process_mesh_peer_deauth_disassoc);
 
 /**
  * ieee80211_process_mesh_peer_beacon - Process beacon from mesh peer
@@ -2968,7 +2968,7 @@ int ieee80211_vendor_mesh_get_key(struct wiphy *wiphy,
 	rcu_read_unlock();
 	return 0;
 }
-EXPORT_SYMBOL(ieee80211_vendor_mesh_get_key);
+EXPORT_SYMBOL_GPL(ieee80211_vendor_mesh_get_key);
 
 /**
  * Vendor mesh operations structure - provides function pointers

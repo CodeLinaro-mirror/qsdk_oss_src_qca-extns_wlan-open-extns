@@ -206,6 +206,42 @@ static int ath12k_wmi_lowi_oem_resp_tlv_iter_extn(struct ath12k_base *ab,
 	return 0;
 }
 
+/**
+ * ath12k_ranging_get_any_ar() - find this chip's radio for routing a LOWI
+ * OEM response event
+ * @ab: ath12k device the event arrived on
+ *
+ * ath12k_mac_get_any_ar() resolves via ab->pdevs_active[], which mac80211
+ * only populates once ath12k_mac_op_start() (.start()) has run for that
+ * radio -- a gate this event doesn't need, since the response is already
+ * scoped to the @ab it arrived on and that ab's ar/pdev object exists from
+ * early probe (ath12k_mac_hw_allocate()), well before any interface start.
+ * Reading ab->pdevs[] directly avoids spuriously dropping the response
+ * ("invalid ar for LOWI OEM data event") on a radio whose link hasn't been
+ * started yet, e.g. in a multi-chip MLO bundle where per-chip readiness can
+ * be staggered.
+ *
+ * Return: the ar for @ab's radio, or NULL if none is allocated yet.
+ */
+static struct ath12k *ath12k_ranging_get_any_ar(struct ath12k_base *ab)
+{
+	struct ath12k_pdev *pdev;
+	struct ath12k *ar = NULL;
+	int i;
+
+	spin_lock_bh(&ab->base_lock);
+	for (i = 0; i < ab->num_radios; i++) {
+		pdev = &ab->pdevs[i];
+		if (pdev->ar) {
+			ar = pdev->ar;
+			break;
+		}
+	}
+	spin_unlock_bh(&ab->base_lock);
+
+	return ar;
+}
+
 void ath12k_wmi_lowi_oem_response_event_extn(struct ath12k_base *ab,
 					     struct sk_buff *skb)
 {
@@ -238,15 +274,12 @@ void ath12k_wmi_lowi_oem_response_event_extn(struct ath12k_base *ab,
 		return;
 	}
 
-	rcu_read_lock();
-	ar = ath12k_mac_get_any_ar(ab);
+	ar = ath12k_ranging_get_any_ar(ab);
 	if (!ar) {
-		rcu_read_unlock();
 		ath12k_warn(ab, "invalid ar for LOWI OEM data event\n");
 		return;
 	}
 	hw = ar->ah->hw;
-	rcu_read_unlock();
 
 	len = resp.len1 + resp.len2;
 	if (!resp.len2) {
@@ -1194,7 +1227,15 @@ int ath12k_vendor_oem_data_lowi_extn(struct wiphy *wiphy,
 		int i;
 
 		for_each_ar(ah, ar, i) {
-			pdev_id = ar->pdev ? ar->pdev->pdev_id : ar->pdev_idx + 1;
+			if (!ar)
+				continue;
+
+			if (!ar->pdev) {
+				ath12k_err(NULL, "pdev under this ar is NULL");
+				continue;
+			}
+
+			pdev_id = ar->pdev->pdev_id;
 			reinit_completion(&ar->ar_extn.lowi_oem_done);
 			ret = ath12k_wmi_send_lowi_oem_data_extn(ar, pdev_id,
 							    payload_len, data_ptr);

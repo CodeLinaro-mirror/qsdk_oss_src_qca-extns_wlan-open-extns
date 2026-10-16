@@ -218,4 +218,25 @@ extern atomic64_t ipa_tx_busy_count;
 extern atomic64_t ipa_tx_total_sw_count;
 extern atomic64_t ipa_tx_queue_count[];
 
+/* Per-reason not-eligible counters */
+enum ipa_notelig_reason {
+	NOTELIG_UNKNOWN = 0,
+	NOTELIG_IPA_CTX_NULL,
+	NOTELIG_HANDLE_NOT_INIT,
+	NOTELIG_OFFLOAD_NOT_SUPPORTED,
+	NOTELIG_NO_HW_ENCAP,
+	NOTELIG_MCAST,
+	NOTELIG_EAPOL,
+	NOTELIG_4ADDR_WDS,
+	NOTELIG_NAWDS,
+	NOTELIG_RAW_MODE,
+	NOTELIG_P2P_GO,
+	NOTELIG_AP_VLAN,
+	NOTELIG_SAWF_SDWF,
+	NOTELIG_MAX,
+};
+
+extern atomic64_t ipa_tx_notelig_count[];
+extern const char * const ipa_notelig_reason_str[];
+
 #endif /* __ATH12K_WIFI8_EXTNS_DP_IPA_H__ */

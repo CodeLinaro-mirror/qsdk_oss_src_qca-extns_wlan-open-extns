@@ -11,6 +11,7 @@ static int ipa_tx_stats_show(struct seq_file *m, void *v)
 	struct ath12k_ipa *ctx = m->private;
 	int outstanding = ctx ? atomic_read(&ctx->tx_outstanding) : -1;
 	int max_pkts    = ctx ? (int)ctx->offload_max_pkts : -1;
+	int i;
 
 	seq_printf(m, "ipa_tx:      %lld\n", atomic64_read(&ipa_tx_ipa_count));
 	seq_printf(m, "sw_tx:       %lld\n", atomic64_read(&ipa_tx_sw_count));
@@ -27,6 +28,15 @@ static int ipa_tx_stats_show(struct seq_file *m, void *v)
 	seq_printf(m, "\nqueue_stuck: %s\n",
 		   atomic64_read(&ipa_tx_qstop_count) >
 		   atomic64_read(&ipa_tx_qwake_count) ? "YES" : "no");
+
+	seq_puts(m, "\nnot_eligible breakdown:\n");
+	for (i = 0; i < NOTELIG_MAX; i++) {
+		long long cnt = atomic64_read(&ipa_tx_notelig_count[i]);
+
+		if (cnt)
+			seq_printf(m, "  %-28s %lld\n",
+				   ipa_notelig_reason_str[i], cnt);
+	}
 	return 0;
 }
 

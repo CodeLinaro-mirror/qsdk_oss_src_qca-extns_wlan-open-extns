@@ -16730,6 +16730,8 @@ int ath12k_get_dp_rx_undecoded_stats_len(void)
 	total_size += nla_total_size(sizeof(stats.rx_undecoded_count));
 	total_size += nla_total_size(sizeof(stats.phyrx_error_mask));
 	total_size += nla_total_size(sizeof(stats.phyrx_error_mask_cont));
+	total_size += nla_total_size(sizeof(stats.phyrx_error_mask_cont2));
+	total_size += nla_total_size(sizeof(stats.phyrx_error_mask_cont3));
 	total_size += nla_total_size(sizeof(stats.rx_undecoded_error));
 	total_size = nla_total_size_nested(total_size);
 	return total_size;
@@ -16767,6 +16769,20 @@ int ath12k_fill_rx_undecoded_stats(struct sk_buff *vendor_event,
 	if (nla_put_u32(vendor_event,
 			QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_PHY_ERR_MASK_CONT,
 			rx_undecoded_stats->phyrx_error_mask_cont)) {
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_PHY_ERR_MASK_CONT2,
+			rx_undecoded_stats->phyrx_error_mask_cont2)) {
+		nla_nest_cancel(vendor_event, attr);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put_u32(vendor_event,
+			QCA_WLAN_VENDOR_ATTR_RX_UNDECODED_STATS_PHY_ERR_MASK_CONT3,
+			rx_undecoded_stats->phyrx_error_mask_cont3)) {
 		nla_nest_cancel(vendor_event, attr);
 		return -EMSGSIZE;
 	}

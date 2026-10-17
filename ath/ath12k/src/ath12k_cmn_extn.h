@@ -472,7 +472,7 @@ struct wlan_intf_extn {
 #define ATH12K_MAX_CAC_TIMEOUT_MS	(24 * 60 * 60 * ATH12K_MSEC_PER_SEC)
 #define ATH12K_MAX_CAC_TIMEOUT_SEC	(ATH12K_MAX_CAC_TIMEOUT_MS / ATH12K_MSEC_PER_SEC)
 #define NO_CAC_OVERRIDE		          -1
-#define ATH12K_MAX_NUM_5GHZ_CHAN          30
+#define ATH12K_MAX_NUM_5GHZ_CHAN	  35
 
 /**
  * enum ath12k_dfs_chan_state - Per-channel DFS state tracked in ath12k

@@ -46,7 +46,7 @@
 #define ATH12K_BAND5_CHAN_SPACING_MHZ           5
 #define FIRST_DFS_CHAN_NUM                     36
 #define CHAN_NUM_SPACING                        4
-#define NUM_DFS_CHANS                          30
+#define NUM_DFS_CHANS			       35
 #define INVALID_INDEX                         (-1)
 
 struct ath12k_vendor_nol_bin_hdr {

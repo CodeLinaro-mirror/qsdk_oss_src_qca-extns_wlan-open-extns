@@ -547,6 +547,7 @@ static void ath12k_dcs_npca_intf_monitor(struct ath12k *ar,
 	u8 en_threshold;
 	u8 dis_threshold;
 	u8 cu;
+	u8 idle_cu;
 	u32 npca_clients;
 	bool npca_enabled;
 
@@ -557,8 +558,9 @@ static void ath12k_dcs_npca_intf_monitor(struct ath12k *ar,
 	}
 
 	cu = (u8)min_t(u32, metrics->reg_unused_cu, 100);
-	en_threshold = npca_intf->en_threshold ?: 50;
-	dis_threshold = npca_intf->dis_threshold ?: 20;
+	idle_cu = 100 - metrics->reg_total_cu;
+	en_threshold = idle_cu < 10 ? 25: 40;
+	dis_threshold = idle_cu < 10 ? 10 : 20;
 	link_conf = rcu_dereference(arvif->ahvif->vif->link_conf[
 					 arvif->link_id]);
 	npca_enabled = link_conf &&

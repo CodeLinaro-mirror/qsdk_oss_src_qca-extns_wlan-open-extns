@@ -1382,8 +1382,7 @@ static int ath12k_vendor_home_offchan_tx_rx_frame(struct ath12k_home_offchan_par
 	/* TX function - block transmission on NO_IR and DISABLED channels */
 	if (func != QCA_VENDOR_WLAN_HOME_OFFCHAN_TX_RX_FUNC_RX) {
 		if (is_home_channel) {
-			if (!cfg80211_chandef_usable(wdev->wiphy, &ctx->def,
-					IEEE80211_CHAN_DISABLED | IEEE80211_CHAN_NO_IR)) {
+			if (!ath12k_mac_is_link_conf_tx_allowed(ar, arvif)) {
 				rcu_read_unlock();
 				ath12k_err(NULL, "Homechannel TX is disallowed\n");
 				return -EINVAL;

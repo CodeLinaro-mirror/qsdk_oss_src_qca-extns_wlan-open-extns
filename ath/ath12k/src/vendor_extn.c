@@ -712,6 +712,8 @@ ath12k_vendor_dcs_config_policy[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1] = {
 	[QCA_WLAN_VENDOR_ATTR_DCS_COCHANNEL_INTERFERENCE_THRESHOLD] = {.type = NLA_U8},
 	[QCA_WLAN_VENDOR_ATTR_DCS_MAX_CU] = {.type = NLA_U8},
 	[QCA_WLAN_VENDOR_ATTR_DCS_INTERFERENCE_BITMAP] = {.type = NLA_U32},
+	[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_ON_OBSS_CU] = {.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_OFF_OBSS_CU] = {.type = NLA_U8},
 };
 
 const struct nla_policy
@@ -15918,6 +15920,7 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 	struct ath12k *ar;
 	struct nlattr *tb[QCA_WLAN_VENDOR_ATTR_DCS_MAX + 1];
 	struct dcs_wlan_intr_user_cfg *cfg;
+	struct npca_intf_extn *npca_cfg;
 
 	ret = nla_parse(tb, QCA_WLAN_VENDOR_ATTR_DCS_MAX, data, data_len,
 			ath12k_vendor_dcs_config_policy, NULL);
@@ -15957,6 +15960,16 @@ int ath12k_vendor_dcs_config_handler(struct wiphy *wihpy,
 	ar = ath12k_get_ar_from_wdev(wdev, link_id);
 	if (!ar)
 		return -ENODATA;
+
+	if (dcs_enable & ATH12K_DCS_NPCA_AUTO) {
+		npca_cfg = &ar->ar_extn.npca_intf;
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_ON_OBSS_CU])
+			npca_cfg->en_threshold =
+				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_ON_OBSS_CU]);
+		if (tb[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_OFF_OBSS_CU])
+			npca_cfg->dis_threshold =
+				nla_get_u8(tb[QCA_WLAN_VENDOR_ATTR_DCS_NPCA_OFF_OBSS_CU]);
+	}
 
 	ath12k_mac_set_intf_detect(ar, dcs_enable);
 

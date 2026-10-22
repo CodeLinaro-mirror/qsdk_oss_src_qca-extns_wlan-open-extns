@@ -352,12 +352,21 @@ void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 {
 	int (*proc)(struct extap_extn *ee, struct sk_buff *skb);
 	struct extap_extn *ee = &ahvif->dp_vif.dp_extn.extap;
-	struct ethhdr *eh = eth_hdr(skb);
-	struct mac_hash_key k;
 	bool use_fastpath = true;
+	struct mac_hash_key k;
+	struct ethhdr *eh;
 	int err = 0;
 
 	atomic64_inc(&ee->stats.tx_pkts);
+
+	/* PPE-VP fast xmit delivers the skb with mac_header unset, so anchor
+	 * the headers before eth_hdr() and the keygen (ip_hdr) lookups.
+	 */
+	if (!skb_mac_header_was_set(skb)) {
+		skb_reset_mac_header(skb);
+		skb_set_network_header(skb, ETH_HLEN);
+	}
+	eh = eth_hdr(skb);
 
 	/* Parse the L3 protocol */
 	switch (ntohs(eh->h_proto)) {
@@ -367,16 +376,14 @@ void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 		break;
 	case ETH_P_IP:
 		mac_hash_v4_keygen(skb, &k, false);
-		ether_addr_copy(k.mac_addr, eth_hdr(skb)->h_source);
-		skb_set_network_header(skb, ETH_HLEN);
+		ether_addr_copy(k.mac_addr, eh->h_source);
 
 		/* Fallback function */
 		proc = __proc_ipv4_tx;
 		break;
 	case ETH_P_IPV6:
 		mac_hash_v6_keygen(skb, &k, false);
-		ether_addr_copy(k.mac_addr, eth_hdr(skb)->h_source);
-		skb_set_network_header(skb, ETH_HLEN);
+		ether_addr_copy(k.mac_addr, eh->h_source);
 
 		if (__ipv6_is_ndisc(skb))
 			use_fastpath = false;

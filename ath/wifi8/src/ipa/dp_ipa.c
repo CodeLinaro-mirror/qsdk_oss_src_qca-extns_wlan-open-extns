@@ -715,6 +715,27 @@ atomic64_t ipa_tx_busy_count  = ATOMIC64_INIT(0);
 atomic64_t ipa_tx_total_sw_count = ATOMIC64_INIT(0);
 atomic64_t ipa_tx_queue_count[IEEE80211_NUM_ACS];
 
+/* Per-reason not-eligible counters (indexed by enum ipa_notelig_reason) */
+atomic64_t ipa_tx_notelig_count[NOTELIG_MAX];
+EXPORT_SYMBOL(ipa_tx_notelig_count);
+
+const char * const ipa_notelig_reason_str[NOTELIG_MAX] = {
+	[NOTELIG_UNKNOWN]              = "unknown",
+	[NOTELIG_IPA_CTX_NULL]         = "ipa_ctx NULL",
+	[NOTELIG_HANDLE_NOT_INIT]      = "handle_initialized=false",
+	[NOTELIG_OFFLOAD_NOT_SUPPORTED] = "offload_supported=false",
+	[NOTELIG_NO_HW_ENCAP]          = "no HW_80211_ENCAP",
+	[NOTELIG_MCAST]                = "mcast",
+	[NOTELIG_EAPOL]                = "EAPOL",
+	[NOTELIG_4ADDR_WDS]            = "4addr WDS",
+	[NOTELIG_NAWDS]                = "NAWDS",
+	[NOTELIG_RAW_MODE]             = "raw mode",
+	[NOTELIG_P2P_GO]               = "P2P-GO",
+	[NOTELIG_AP_VLAN]              = "AP_VLAN",
+	[NOTELIG_SAWF_SDWF]            = "SAWF/SDWF mark",
+};
+EXPORT_SYMBOL(ipa_notelig_reason_str);
+
 static void ath12k_wifi8_ipa_vif_netdev_stop(void *data, u8 *mac,
 					     struct ieee80211_vif *vif)
 {
@@ -771,6 +792,19 @@ static void ath12k_wifi8_dp_ipa_tx_complete(struct ath12k_ipa *ipa_ctx,
 	dev_kfree_skb_any(skb);
 }
 
+static int ath12k_wifi8_dp_ipa_sw_fallback(struct sk_buff *skb)
+{
+	if (likely(skb->ip_summed != CHECKSUM_PARTIAL))
+		return 0;
+
+	if (skb_is_gso(skb)) {
+		WARN_ON_ONCE(1);
+		return -EOPNOTSUPP;
+	}
+
+	return skb_checksum_help(skb);
+}
+
 int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
 			      const struct ath12k_skb_cb *skb_cb,
 			      struct ath12k_vif *ahvif,
@@ -779,7 +813,7 @@ int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
 			      bool is_mcast)
 {
 	struct ath12k_ipa *ipa_ctx;
-	const char *notelig_reason = "unknown";
+	enum ipa_notelig_reason notelig_reason = NOTELIG_UNKNOWN;
 	u16 qmap;
 	int ret;
 
@@ -791,15 +825,15 @@ int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
 
 	ipa_ctx = IPA_CTX(ar->ab);
 	if (!ipa_ctx) {
-		notelig_reason = "ipa_ctx NULL";
+		notelig_reason = NOTELIG_IPA_CTX_NULL;
 		goto not_eligible;
 	}
 	if (!READ_ONCE(ipa_ctx->handle_initialized)) {
-		notelig_reason = "handle_initialized=false";
+		notelig_reason = NOTELIG_HANDLE_NOT_INIT;
 		goto not_eligible;
 	}
 	if (!ipa_ctx->offload_supported) {
-		notelig_reason = "offload_supported=false";
+		notelig_reason = NOTELIG_OFFLOAD_NOT_SUPPORTED;
 		goto not_eligible;
 	}
 
@@ -807,37 +841,37 @@ int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
 
 	/* Only Ethernet-encap (HW 802.11 encap) — IPA parses Ethernet frames */
 	if (!(skb_cb->flags & ATH12K_SKB_HW_80211_ENCAP)) {
-		notelig_reason = "no HW_80211_ENCAP";
+		notelig_reason = NOTELIG_NO_HW_ENCAP;
 		goto not_eligible;
 	}
 
 	/* Unicast only — multicast needs per-link copy and GSN for MLO */
 	if (is_mcast) {
-		notelig_reason = "mcast";
+		notelig_reason = NOTELIG_MCAST;
 		goto not_eligible;
 	}
 
 	/* EAPOL must reach firmware for key negotiation */
 	if (skb->protocol == cpu_to_be16(ETH_P_PAE)) {
-		notelig_reason = "EAPOL";
+		notelig_reason = NOTELIG_EAPOL;
 		goto not_eligible;
 	}
 
 	/* 4-addr WDS needs per-peer AST index override in TCL metadata */
 	if (ahsta && ahsta->use_4addr_set) {
-		notelig_reason = "4addr WDS";
+		notelig_reason = NOTELIG_4ADDR_WDS;
 		goto not_eligible;
 	}
 
 	/* NAWDS requires SW multicast-to-unicast conversion */
 	if (arvif->nawds_support) {
-		notelig_reason = "NAWDS";
+		notelig_reason = NOTELIG_NAWDS;
 		goto not_eligible;
 	}
 
 	/* Raw mode: verbatim 802.11 frames; IPA expects Ethernet */
 	if (test_bit(ATH12K_GROUP_FLAG_RAW_MODE, &ar->ab->ag->flags)) {
-		notelig_reason = "raw mode";
+		notelig_reason = NOTELIG_RAW_MODE;
 		goto not_eligible;
 	}
 
@@ -850,17 +884,17 @@ int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
 
 	/* AP_VLAN (WDS client) and P2P-GO (NOA IE injection) */
 	if (ahvif->vdev_type == WMI_VDEV_TYPE_AP && ahvif->vif->p2p) {
-		notelig_reason = "P2P-GO";
+		notelig_reason = NOTELIG_P2P_GO;
 		goto not_eligible;
 	}
 	if (ahvif->vif->type == NL80211_IFTYPE_AP_VLAN) {
-		notelig_reason = "AP_VLAN";
+		notelig_reason = NOTELIG_AP_VLAN;
 		goto not_eligible;
 	}
 
 	/* SAWF/SDWF QoS-tagged frames need TCL per-TID queue steering */
 	if (skb->mark & (SDWF_VALID_MASK | QOS_TAG_MASK)) {
-		notelig_reason = "SAWF/SDWF mark";
+		notelig_reason = NOTELIG_SAWF_SDWF;
 		goto not_eligible;
 	}
 
@@ -907,13 +941,22 @@ int ath12k_wifi8_dp_ipa_xmit(struct ath12k *ar, struct sk_buff *skb,
 	}
 
 	atomic64_inc(&ipa_tx_total_sw_count);
+	if (ath12k_wifi8_dp_ipa_sw_fallback(skb))
+		goto drop;
 	return ret;
 
 not_eligible:
 	rcu_read_unlock();
+	atomic64_inc(&ipa_tx_notelig_count[notelig_reason]);
 	atomic64_inc(&ipa_tx_sw_count);
 	atomic64_inc(&ipa_tx_total_sw_count);
+	if (ath12k_wifi8_dp_ipa_sw_fallback(skb))
+		goto drop;
 	return -EINVAL;
+
+drop:
+	dev_kfree_skb_any(skb);
+	return 0;
 }
 EXPORT_SYMBOL(ath12k_wifi8_dp_ipa_xmit);
 

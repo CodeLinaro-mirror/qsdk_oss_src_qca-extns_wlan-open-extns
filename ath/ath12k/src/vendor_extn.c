@@ -13455,6 +13455,8 @@ static u32 ath12k_get_cac_half_bw(enum nl80211_chan_width width)
 		return 40;
 	case NL80211_CHAN_WIDTH_160:
 		return 80;
+	case NL80211_CHAN_WIDTH_320:
+		return 160;
 	default:
 		return 10;
 	}
@@ -13673,18 +13675,32 @@ void ath12k_dfs_init_chan_state(struct ath12k *ar)
 	}
 }
 
-void ath12k_dfs_update_chan_state(struct ath12k *ar,
-				  struct ieee80211_channel *chan,
-				  enum ath12k_dfs_chan_state state)
+/**
+ * ath12k_dfs_update_20mhz_chan_state() - Update one 20 MHz channel state
+ * @ar: Pointer to ath12k radio instance
+ * @chan: 20 MHz channel whose state is updated
+ * @state: DFS state to assign to the channel
+ */
+static void ath12k_dfs_update_20mhz_chan_state(struct ath12k *ar,
+					       struct ieee80211_channel *chan,
+					       enum ath12k_dfs_chan_state state)
 {
 	int idx;
 	bool is_non_dfs;
 
-	if (!ar || !chan)
+	if (!ar || !chan) {
+		ath12k_dbg(ar ? ar->ab : NULL, ATH12K_DBG_REG,
+			   "DFS state update skipped: invalid ar=%p chan=%p\n",
+			   ar, chan);
 		return;
+	}
 
-	if (!ath12k_is_chan_in_ar(ar, chan))
+	if (!ath12k_is_chan_in_ar(ar, chan)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS state update skipped: chan %u (%u MHz) outside radio range\n",
+			   chan->hw_value, chan->center_freq);
 		return;
+	}
 
 	idx = ath12k_convert_5g_freq_to_index(chan);
 	if (idx == INVALID_INDEX) {
@@ -13694,13 +13710,88 @@ void ath12k_dfs_update_chan_state(struct ath12k *ar,
 	}
 
 	is_non_dfs = !(chan->flags & IEEE80211_CHAN_RADAR);
-	if (is_non_dfs && state != ATH12K_DFS_CHAN_STATE_NON_DFS) {
-		ath12k_err(ar->ab, "Setting state %u for non-dfs chan %d\n",
-			   state, chan->center_freq);
+	if (is_non_dfs) {
+		ar->ar_extn.dfs_chan_state[idx] =
+			ATH12K_DFS_CHAN_STATE_NON_DFS;
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS state assigned: chan %u (%u MHz) NON_DFS\n",
+			   chan->hw_value, chan->center_freq);
 		return;
 	}
 
 	ar->ar_extn.dfs_chan_state[idx] = state;
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "DFS state assigned: chan %u (%u MHz) state %u\n",
+		   chan->hw_value, chan->center_freq, state);
+}
+
+/**
+ * ath12k_dfs_update_chan_range() - Update states for a channel range
+ * @ar: Pointer to ath12k radio instance
+ * @center_freq: Center frequency of the channel range in MHz
+ * @width_mhz: Width of the channel range in MHz
+ * @state: DFS state to assign to each 20 MHz channel
+ */
+static void ath12k_dfs_update_chan_range(struct ath12k *ar, u32 center_freq,
+					 int width_mhz,
+					 enum ath12k_dfs_chan_state state)
+{
+	struct wiphy *wiphy = ar->ah->hw->wiphy;
+	u32 start_freq, end_freq, freq;
+	struct ieee80211_channel *chan;
+
+	start_freq = center_freq - width_mhz / 2 + 10;
+	end_freq = center_freq + width_mhz / 2 - 10;
+
+	for (freq = start_freq; freq <= end_freq; freq += 20) {
+		chan = ieee80211_get_channel(wiphy, freq);
+		if (chan)
+			ath12k_dfs_update_20mhz_chan_state(ar, chan, state);
+	}
+}
+
+/**
+ * ath12k_dfs_update_chan_state() - Update DFS state for an agile CAC chandef
+ * @ar: Pointer to ath12k radio instance
+ * @chan: Primary channel of the active agile CAC chandef
+ * @state: DFS state to assign to the covered 20 MHz channels
+ */
+void ath12k_dfs_update_chan_state(struct ath12k *ar,
+				  struct ieee80211_channel *chan,
+				  enum ath12k_dfs_chan_state state)
+{
+	const struct cfg80211_chan_def *chandef;
+	int width_mhz;
+
+	if (!ar || !chan) {
+		ath12k_dbg(ar ? ar->ab : NULL, ATH12K_DBG_REG,
+			   "DFS chandef state update skipped: invalid ar=%p chan=%p\n",
+			   ar, chan);
+		return;
+	}
+
+	chandef = &ar->agile_chandef;
+	if (!chandef->chan || chandef->chan->center_freq != chan->center_freq) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS chandef state update skipped: chan %u (%u MHz) is not the active agile channel\n",
+			   chan->hw_value, chan->center_freq);
+		return;
+	}
+
+	width_mhz = nl80211_chan_width_to_mhz(chandef->width);
+	if (width_mhz <= 0) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS chandef state update skipped: invalid width %d for chan %u (%u MHz)\n",
+			   chandef->width, chan->hw_value, chan->center_freq);
+		return;
+	}
+
+	ath12k_dfs_update_chan_range(ar, chandef->center_freq1, width_mhz,
+				     state);
+
+	if (chandef->width == NL80211_CHAN_WIDTH_80P80 &&
+	    chandef->center_freq2)
+		ath12k_dfs_update_chan_range(ar, chandef->center_freq2, 80, state);
 }
 
 static enum ath12k_dfs_chan_state

@@ -345,7 +345,6 @@ static int __proc_misc_tx(struct extap_extn *ee, struct sk_buff *skb)
  * @ahvif: ath12k VIF context
  * @skb: outgoing Ethernet frame
  *
- * Called via ee->tx() under static_branch_unlikely(&extap_enabled).
  * Learns src IP->MAC and replaces Ethernet SMAC with the STA VAP MAC.
  */
 void ath12k_extap_tx(struct ath12k_vif *ahvif, struct sk_buff *skb)

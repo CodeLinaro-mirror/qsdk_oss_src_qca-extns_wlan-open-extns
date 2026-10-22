@@ -369,7 +369,6 @@ static int __proc_eapol_rx(struct extap_extn *ee, struct sk_buff *skb)
  * @ahvif: ath12k VIF context
  * @skb: inbound Ethernet frame
  *
- * Called via ee->rx() under static_branch_unlikely(&extap_enabled).
  * Rewrites Ethernet DMAC to the real end device MAC.
  * Returns true if the frame should be dropped, false otherwise.
  */

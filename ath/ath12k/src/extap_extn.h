@@ -7,7 +7,6 @@
 #define __ATH12K_EXTAP_EXTN_H
 
 #include <linux/atomic.h>
-#include <linux/jump_label.h>
 #include <linux/notifier.h>
 #include <linux/skbuff.h>
 #include <linux/types.h>
@@ -16,6 +15,9 @@
 #include "extap_db.h"
 
 #include <linux/etherdevice.h>
+
+struct ath12k_vif;
+struct ath12k_dp_peer;
 
 #define DHCP_BOOT_REQ 1
 #define DHCP_REPLY 2
@@ -128,8 +130,6 @@ static inline bool ath12k_vif_has_extap(struct ath12k_vif *ahvif)
 }
 
 #else /* CPTCFG_QCN_EXTN */
-
-DECLARE_STATIC_KEY_FALSE(extap_enabled);
 
 void ath12k_extap_stats_dump(struct ath12k_vif *ahvif);
 void ath12k_extap_info_dump(struct ath12k_vif *ahvif);

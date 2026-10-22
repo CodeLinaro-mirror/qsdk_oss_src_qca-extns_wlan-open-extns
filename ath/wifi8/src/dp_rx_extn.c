@@ -97,18 +97,16 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 			if ((flow_metadata & ATH12K_RX_FSE_FLOW_MATCH_USE_PPE)) {
 				dp->device_stats.fast_rx[ring_id][device_id]++;
 #ifdef CPTCFG_QCN_EXTN
-				if (static_branch_unlikely(&extap_enabled)) {
+				if (unlikely(ath12k_dp_peer_feature_enabled(peer, DP_PEER_FEATURE_EXTAP))) {
 					struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(peer->vif);
 
-					if (ahvif && ath12k_vif_has_extap(ahvif)) {
-						if (ath12k_extap_rx(ahvif, msdu) > 0) {
-							struct ath12k_link_vif *arvif =
-								rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
-							if (arvif)
-								arvif->link_stats.rx_dropped++;
-							dev_kfree_skb_any(msdu);
-							return;
-						}
+					if (ahvif && ath12k_extap_rx(ahvif, msdu) > 0) {
+						struct ath12k_link_vif *arvif =
+							rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
+						if (arvif)
+							arvif->link_stats.rx_dropped++;
+						dev_kfree_skb_any(msdu);
+						return;
 					}
 				}
 #endif
@@ -123,18 +121,16 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		stats->sent_to_stack_ucast_fast_bytes += msdu->len;
 
 #ifdef CPTCFG_QCN_EXTN
-		if (static_branch_unlikely(&extap_enabled)) {
+		if (unlikely(ath12k_dp_peer_feature_enabled(peer, DP_PEER_FEATURE_EXTAP))) {
 			struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(peer->vif);
 
-			if (ahvif && ath12k_vif_has_extap(ahvif)) {
-				if (ath12k_extap_rx(ahvif, msdu) > 0) {
-					struct ath12k_link_vif *arvif =
-						rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
-					if (arvif)
-						arvif->link_stats.rx_dropped++;
-					dev_kfree_skb_any(msdu);
-					return;
-				}
+			if (ahvif && ath12k_extap_rx(ahvif, msdu) > 0) {
+				struct ath12k_link_vif *arvif =
+					rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
+				if (arvif)
+					arvif->link_stats.rx_dropped++;
+				dev_kfree_skb_any(msdu);
+				return;
 			}
 		}
 #endif
@@ -194,18 +190,16 @@ void ath12k_wifi8_deliver_ethernet_frame(struct ath12k_pdev_dp *dp_pdev,
 		msdu->priority = rx_mpdu_info->tid;
 
 #ifdef CPTCFG_QCN_EXTN
-		if (static_branch_unlikely(&extap_enabled)) {
+		if (unlikely(ath12k_dp_peer_feature_enabled(peer, DP_PEER_FEATURE_EXTAP))) {
 			struct ath12k_vif *ahvif = ath12k_vif_to_ahvif(peer->vif);
 
-			if (ahvif && ath12k_vif_has_extap(ahvif)) {
-				if (ath12k_extap_rx(ahvif, msdu) > 0) {
-					struct ath12k_link_vif *arvif =
-						rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
-					if (arvif)
-						arvif->link_stats.rx_dropped++;
-					dev_kfree_skb_any(msdu);
-					return;
-				}
+			if (ahvif && ath12k_extap_rx(ahvif, msdu) > 0) {
+				struct ath12k_link_vif *arvif =
+					rcu_dereference(ahvif->link[rx_mpdu_info->src_link_id]);
+				if (arvif)
+					arvif->link_stats.rx_dropped++;
+				dev_kfree_skb_any(msdu);
+				return;
 			}
 		}
 #endif

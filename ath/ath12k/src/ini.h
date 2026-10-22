@@ -396,6 +396,7 @@
 #define ATH12K_CFG_CP \
 	ATH12K_CFG(ATH12K_CFG_MAX_DESC) \
 	ATH12K_CFG(ATH12K_CFG_LOW_MEM_SYSTEM) \
+	ATH12K_CFG(ATH12K_CFG_POWER_SAVE_MODE) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_REPEAT_PROBE_TIME) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_PROBE_SPACING_TIME) \
 	ATH12K_CFG(ATH12K_CFG_SCAN_PROBE_DELAY) \
@@ -557,6 +558,10 @@
 #define ATH12K_CFG_LOW_MEM_SYSTEM \
 	ATH12K_CFG_INI_BOOL("low_mem_system", false, \
 	"Low Memory System")
+
+#define ATH12K_CFG_POWER_SAVE_MODE \
+	ATH12K_CFG_INI_BOOL("power_save_mode", true, \
+	"Enable power save mode teardown/power-down of Q6 when idle")
 
 /**
  * ATH12K_CFG_RF_SWITCH_CONFIG - Boot-time 5G RF path selection

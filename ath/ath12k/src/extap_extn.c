@@ -9,7 +9,6 @@
 #include <linux/skbuff.h>
 #include <net/cfg80211.h>
 #include <net/ndisc.h>
-#include <net/switchdev.h>
 
 #include "../core.h"
 #include "../debug.h"
@@ -158,15 +157,12 @@ int extap_xlate_dmac(struct extap_extn *ee, struct sk_buff *skb)
 /**
  * extap_fdb_event() - bridge FDB delete notifier callback
  * @nb:     notifier block embedded in struct extap_extn
- * @event:  switchdev event type
- * @ptr:    pointer to struct switchdev_notifier_fdb_info
+ * @event:  BR_FDB_EVENT_ADD or BR_FDB_EVENT_DEL
+ * @ptr:    pointer to struct br_fdb_event
  *
  * Called when the bridge ages out a client MAC. Evicts the corresponding
  * IP->MAC entry from the per-VAP table so stale rewrites are not made for
  * a client that is no longer reachable.
- *
- * Only processes events for client MACs (not infrastructure MACs like the
- * bridge itself or locally-administered addresses).
  *
  * Return: NOTIFY_OK if the event was handled, NOTIFY_DONE otherwise.
  */
@@ -174,19 +170,11 @@ static int extap_fdb_event(struct notifier_block *nb, unsigned long event,
 			   void *ptr)
 {
 	struct extap_extn *ee = container_of(nb, struct extap_extn, fdb_nb);
-	const struct switchdev_notifier_fdb_info *info = ptr;
+	const struct br_fdb_event *info = ptr;
 	struct mac_db *db;
 	u8 skip_mac = 0;
 
-	switch (event) {
-	case SWITCHDEV_FDB_DEL_TO_BRIDGE:
-	case SWITCHDEV_FDB_DEL_TO_DEVICE:
-		break;
-	default:
-		return NOTIFY_DONE;
-	}
-
-	if (!info->addr)
+	if (event != BR_FDB_EVENT_DEL)
 		return NOTIFY_DONE;
 
 	/* Skip infrastructure MACs: multicast, broadcast, locally-administered */

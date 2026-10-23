@@ -7305,7 +7305,7 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
 	        }
 
 	        mutex_lock(&ab->core_lock);
-	        ret = ath12k_wsi_bypass_precheck(ab, value);
+	        ret = ath12k_wsi_bypass_precheck(ab, value, ar);
 	        if (ret) {
 	                ath12k_err(ab,
 	                           "set_radio_params: wsi_bypass_precheck failed ret=%d value=%u state=%u is_bypassed=%d\n",

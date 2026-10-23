@@ -84,7 +84,8 @@ struct ath12k_dp_wifi8_ipa_tqm2sw6_stats {
  * @reo2sw5: reo dst ring used by IPA for processing RX packets
  * @ipa2tcl_ring: TX data ring to which IPA enqueues packets
  * @tqm2ipa_ring: TX completion ring from which IPA consumes free buffers
- * @tqm2sw6_ring: Experimental TX completion ring (tqm2sw6)
+ * @tqm2sw6_ring: TX completion ring (tqm2sw6)
+ * @tqm2sw6_poller_active: Flag to synchronize the tqm2sw6 NAPI scheduling
  * @tqm2sw6_napi_ctxt: Standalone NAPI context for polling tqm2sw6_ring
  * @tqm2sw6_poll_timer: Periodic timer that schedules tqm2sw6 NAPI poll
  * @tqm2sw6_stats: Runtime statistics for the tqm2sw6 poller
@@ -97,6 +98,7 @@ struct ath12k_dp_wifi8_ipa {
 	struct dp_srng ipa2tcl_ring;
 	struct dp_srng tqm2ipa_ring;
 	struct dp_srng tqm2sw6_ring;
+	bool tqm2sw6_poller_active;
 	struct ath12k_dp_wifi8_ipa_napi tqm2sw6_napi_ctxt;
 	struct timer_list tqm2sw6_poll_timer;
 	struct ath12k_dp_wifi8_ipa_tqm2sw6_stats tqm2sw6_stats;

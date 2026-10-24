@@ -656,10 +656,20 @@ ieee80211_vht_11ng_enabled_extn(struct ieee80211_vif *vif,
 }
 #else
 
+#ifdef QCN_IE
 u8 *
 ieee80211_add_qcn_vendor_ie_extn(struct sk_buff *skb,
 				 struct ieee80211_bss_extn *bss_extn,
 				 enum ieee80211_conn_mode mode);
+#else
+static inline u8 *
+ieee80211_add_qcn_vendor_ie_extn(struct sk_buff *skb,
+				 struct ieee80211_bss_extn *bss_extn,
+				 int mode)
+{
+	return NULL;
+}
+#endif /* QCN_IE */
 
 void
 ieee80211_240mhz_cap_to_eht_cap_extn(struct ieee80211_sub_if_data *sdata,
@@ -681,9 +691,18 @@ ieee802_11_determine_ap_chan_extn(const struct ieee802_11_elems *elems,
 				  struct cfg80211_chan_def *chandef,
 				  struct ieee80211_sub_if_data *sdata);
 
+#ifdef QCN_IE
 size_t
 ieee802_11_qcn_ie_len_extn(struct cfg80211_bss *cbss,
 			   struct ieee80211_local *local);
+#else
+static inline size_t
+ieee802_11_qcn_ie_len_extn(struct cfg80211_bss *cbss,
+				   struct ieee80211_local *local)
+{
+	return 0;
+}
+#endif /* QCN_IE */
 
 struct ieee80211_240mhz_vendor_oper_extn*
 drv_get_240mhz_cap_extn(struct ieee80211_local *local,

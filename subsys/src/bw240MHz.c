@@ -216,6 +216,7 @@ int ieee802_11_parse_elems_vendor_qcn_extn(const u8 *pos, u8 elen,
 	return 0;
 }
 
+#ifdef QCN_IE
 static u8 *ieee80211_add_qcn_version_vendor_ie_extn(u8 *buf)
 {
 	*buf++ = WLAN_OUI_QCN_ATTR_VER; /* OUI QCN Attribute version */
@@ -285,6 +286,7 @@ ieee80211_add_qcn_vendor_ie_extn(struct sk_buff *skb,
 
 	return pos;
 }
+#endif /* QCN_IE */
 
 int
 ieee802_11_determine_ap_chan_extn(const struct ieee802_11_elems *elems,
@@ -346,6 +348,7 @@ void ieee80211_inform_bss_extn(struct cfg80211_bss *cbss,
 	bss->bss_extn.he_2xltf_160_80p80_supp = elems->elems_extn.he_2xltf_160_80p80_supp;
 }
 
+#ifdef QCN_IE
 size_t
 ieee802_11_qcn_ie_len_extn(struct cfg80211_bss *cbss,
 			   struct ieee80211_local *local)
@@ -364,6 +367,7 @@ ieee802_11_qcn_ie_len_extn(struct cfg80211_bss *cbss,
 
 	return size;
 }
+#endif /* QCN_IE */
 
 void ieee80211_modify_bw_limit_for_240mhz(bool is_5ghz,
 					  struct ieee80211_conn_settings *conn)

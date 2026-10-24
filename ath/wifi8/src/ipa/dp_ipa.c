@@ -1277,6 +1277,54 @@ static struct ath12k_ipa_arch_ops ipa_wifi8_arch_ops = {
 	.evt_entry_add = ath12k_wifi8_ipa_evt_entry_add,
 };
 
+ssize_t
+ath12k_wifi8_dump_ipa_ring_stats(struct ath12k_base *ab,
+				 struct ath12k_dp_wifi8 *dp_wifi8,
+				 char *buf, int size)
+{
+	struct ath12k_dp_wifi8_ipa *dp_ipa;
+	int len = 0;
+
+	if (!ab->is_cumac_chip)
+		return 0;
+
+	dp_ipa = ath12k_wifi8_get_ipa_dp(dp_wifi8);
+	if (!dp_ipa)
+		return 0;
+
+	len += ath12k_hal_dump_ipa_ring_stats(ab, HAL_PPE2TCL,
+					      dp_ipa->ipa2tcl_ring.ring_id,
+					      "IPA2TCL",
+					      buf + len, size - len);
+
+	len += ath12k_hal_dump_ipa_ring_stats(ab, HAL_TQM2PPE,
+					      dp_ipa->tqm2ipa_ring.ring_id,
+					      "TQM2IPA",
+					      buf + len, size - len);
+
+	len += ath12k_hal_dump_ipa_ring_stats(ab, HAL_REO_DST,
+					      dp_ipa->reo2sw5.ring_id,
+					      "IPA_Reo_dst",
+					      buf + len, size - len);
+
+	len += ath12k_hal_dump_ipa_ring_stats(ab, HAL_PPE2WBM_BUF,
+					      dp_ipa->ipa2wbm_ring[ATH12K_DP_WIFI8_IPA2WBM_IPA].ring_id,
+					      "WBM_IPA_buf_ipa",
+					      buf + len, size - len);
+
+	len += ath12k_hal_dump_ipa_ring_stats(ab, HAL_PPE2WBM_BUF,
+					      dp_ipa->ipa2wbm_ring[ATH12K_DP_WIFI8_IPA2WBM_HOST].ring_id,
+					      "WBM_IPA_buf_host",
+					      buf + len, size - len);
+
+	len += ath12k_hal_dump_ipa_ring_stats(ab, HAL_PPE2WBM_IDLE_BUF,
+					      dp_ipa->ipa2wbm_idle_buf_ring.ring_id,
+					      "WBM_IPA_idle_buf",
+					      buf + len, size - len);
+
+	return len;
+}
+
 int
 ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab)
 {

@@ -103,6 +103,9 @@ struct ath12k_dp_wifi8_ipa {
 };
 
 int ath12k_wifi8_dp_ipa_init(struct ath12k_base *ab);
+ssize_t ath12k_wifi8_dump_ipa_ring_stats(struct ath12k_base *ab,
+					 struct ath12k_dp_wifi8 *dp_wifi8,
+					 char *buf, int size);
 
 #define ATH12K_DP_IPA_VP_MIN	64
 #define ATH12K_DP_IPA_VP_MAX	255

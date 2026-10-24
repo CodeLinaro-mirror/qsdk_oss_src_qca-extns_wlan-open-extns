@@ -80,7 +80,14 @@ struct mesh_recv_hdr_s {
 #define METAHDR_FLAG_TX_USED_ALT_RATE   (1<<2) /* used alternate bitrate */
 #define METAHDR_FLAG_INFO_UPDATED       (1<<3)
 #define METAHDR_FLAG_AUTO_RATE          (1<<5)
-#define METAHDR_FLAG_NOENCRYPT          (1<<6)
+#define METAHDR_FLAG_ENCRYPT            (1<<6) /* should be used inside the code */
+
+/* should be used only in the config path.
+ * this duplicate entry is retained to avoid impact in automation.
+ * to be removed in future after automation is updated to handle this change.
+ */
+#define METAHDR_FLAG_NOENCRYPT_CFG_IF   (1<<6)
+
 #define METAHDR_FLAG_NOQOS              (1<<7)
 
 #define METAHDR_FLAG_RX_ERR             (1<<3) /* failed crc check */

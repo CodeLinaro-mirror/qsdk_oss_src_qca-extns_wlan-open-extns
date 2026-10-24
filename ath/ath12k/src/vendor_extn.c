@@ -2748,6 +2748,7 @@ int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 	struct ath12k *ar;
 	struct ath12k_base *ab;
 	int preamble_type;
+	uint32_t flags;
 
 	/* Validate arvif, ar, and ab pointers first to get ab for logging */
 	if (!arvif || !arvif->ar || !arvif->ar->ab) {
@@ -2773,8 +2774,17 @@ int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 		return -EINVAL;
 	}
 
-	preamble_type = (mhdr >> MESH_DBG_PRAMBLE_OFFSET) & MESH_NIBBLE_MASK;
+	flags = mhdr >> MESH_DBG_FLAGS_OFFSET;
 
+	if (flags & METAHDR_FLAG_NOENCRYPT_CFG_IF)
+		flags &= ~METAHDR_FLAG_ENCRYPT;
+	else
+		flags |= METAHDR_FLAG_ENCRYPT;
+
+	mhdr = mhdr & 0x00FFFFFF;
+	mhdr = mhdr | (flags << MESH_DBG_FLAGS_OFFSET);
+
+	preamble_type = (mhdr >> MESH_DBG_PRAMBLE_OFFSET) & MESH_NIBBLE_MASK;
 	if (preamble_type > METAHDR_PREAMBLE_EHT) {
 		pr_err("ERR: preamble type is greater than EHT\n");
 		return -EINVAL;

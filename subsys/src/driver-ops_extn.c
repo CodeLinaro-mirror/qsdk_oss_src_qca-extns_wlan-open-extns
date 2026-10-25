@@ -16,7 +16,7 @@
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 #define SUPPORTED_RATES_LEN 8
 
-unsigned int mmeshsim = 1;
+unsigned int mmeshsim;
 EXPORT_SYMBOL(mmeshsim);
 module_param_named(mmeshsim, mmeshsim, uint, 0644);
 MODULE_PARM_DESC(mmeshsim, "mmeshsim");

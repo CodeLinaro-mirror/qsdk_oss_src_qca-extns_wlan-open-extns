@@ -110,6 +110,21 @@ int ath12k_mac_op_mesh_peer_update_caps_extn(struct ieee80211_hw *hw,
 	ath12k_peer_assoc_prepare(ar, arvif, arsta,
 				  peer_arg, true, link_sta);
 
+	/* ML-specific fields: only applicable when the peer is ML-upgraded */
+	if (sta->sta_extn.peer_info.mld.upgraded) {
+		/* For SLO the peer-add link is always the assoc link; assoc_link is not
+		 * serialized in WMI when ml.enabled=false so this is a no-op for non-ML peers.
+		 * TODO: for MLO partner links, track peer-add link ID and compute properly. */
+		peer_arg->ml.assoc_link = true;
+		peer_arg->ml.ieee_link_id = arsta->link_id;
+		peer_arg->ml.peer_id_valid = false;
+		peer_arg->ml.num_partner_links = 0;
+		peer_arg->ml.logical_link_idx_valid = true;
+		peer_arg->ml.logical_link_idx = arsta->link_idx;
+		peer_arg->ml.enabled = true;
+		ether_addr_copy(peer_arg->ml.mld_addr, sta->sta_extn.peer_info.mld.mld_mac);
+	}
+
 	/* Update mesh peer phymode and nss from the prepared peer assoc args */
 	sta->sta_extn.peer_info.mesh_peer_phymode = peer_arg->peer_phymode;
 	sta->sta_extn.peer_info.mesh_peer_nss = peer_arg->peer_nss;

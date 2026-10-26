@@ -653,7 +653,7 @@ struct ath12k_reg_info_extn {
 
 /**
  * struct offchan_event_work_with_txn - Work structure for off-channel event
- * @work: Work structure for scheduling the event
+ * @work: Per-wiphy work structure for scheduling the event
  * @wdev: Pointer to the wireless device
  * @transaction_id: Transaction ID for correlation with user-space request
  * @raw_pkt_ctx: Pointer to raw packet context for per-packet status
@@ -662,7 +662,7 @@ struct ath12k_reg_info_extn {
  * with transaction ID support for request-response correlation.
  */
 struct offchan_event_work_with_txn {
-	struct work_struct work;
+	struct wiphy_work work;
 	struct wireless_dev *wdev;
 	u32 transaction_id;
 	struct ath12k_raw_pkt_ctx *raw_pkt_ctx;

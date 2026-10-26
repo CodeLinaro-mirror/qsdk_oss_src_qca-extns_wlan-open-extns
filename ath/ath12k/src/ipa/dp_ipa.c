@@ -14,7 +14,7 @@
 #include "../../ini.h"
 
 static void ath12k_dp_ipa_w2i(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
-bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(struct ath12k_base *ab);
 
 /* global control for IPA status */
 atomic_t g_instances_added;
@@ -482,7 +482,7 @@ static int ath12k_dp_ipa_alt_tx_ipa_uc_attach(struct ath12k_base *ab)
 	u8 ring_id;
 	u8 rbm_id;
 
-	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(ab))
 		return retval;
 
 	unsigned int uc_tx_buf_sz = IPA_UC_TX_BUF_SIZE_DEFAULT;
@@ -608,7 +608,7 @@ static void ath12k_dp_ipa_alt_tx_ipa_uc_detach(struct ath12k_base *ab)
 	struct sk_buff *skb;
 	int idx;
 
-	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(ab))
 		return;
 
 	if (!ab->ath12k_base_extn.ipa_ctx->ipa_uc_tx_alt_rsc.tx_buf_pool_vaddr_unaligned) {
@@ -871,7 +871,7 @@ static int ath12k_dp_ipa_alt_tx_buf_smmu_map_unmap(struct ath12k_base *ab, bool 
 	struct sk_buff *skb;
 	u32 buf_len;
 
-	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(ab))
 		return 0;
 
 	if (!ipa_is_ready()) {
@@ -2433,7 +2433,7 @@ static void ath12k_dp_ipa_setup_tx_alt_pipe(struct ath12k_wlan_ipa_priv *ipa_ctx
 	struct ath12k_pci *pci_priv = ath12k_pci_priv(ipa_ctx->ab);
 	bool is_smmu_enabled = ipa_ctx->is_smmu_enabled && pci_priv->ath12k_pci_extn.smmu_s1_enable;
 
-	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+	if (!ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(ipa_ctx->ab))
 		return;
 
 	pipe_in->is_tx1_used = true;
@@ -3334,17 +3334,15 @@ bool ipa_config_is_enabled(void)
 	return g_ipa_config ? wlan_ipa_is_enabled(g_ipa_config) : 0;
 }
 
-static inline bool
-wlan_ipa_is_two_tx_pipes_enabled(struct wlan_ipa_config *ipa_cfg)
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(struct ath12k_base *ab)
 {
-	return WLAN_IPA_IS_CONFIG_ENABLED(ipa_cfg,
-					  WLAN_IPA_TWO_TX_PIPES_ENABLE_MASK);
-}
+	if (!g_ipa_config || !ipa_config_is_enabled())
+		return false;
 
-bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void)
-{
-	return g_ipa_config ? (ipa_config_is_enabled() ?
-		wlan_ipa_is_two_tx_pipes_enabled(g_ipa_config) : 0) : 0;
+	if (ab->cfg_ctx && !ath12k_cfg_get(ab, ATH12K_CFG_DP_IPA_TWO_TX_PIPES_ENABLE))
+		return false;
+
+	return ath12k_dp_ipa_is_alt_tx_required(ab);
 }
 EXPORT_SYMBOL(ath12k_dp_ipa_is_two_tx_pipes_enabled_extn);
 
@@ -3389,14 +3387,14 @@ static void
 ath12k_wlan_ipa_setup_iface_alt_pipe(struct wlan_ipa_iface_context *iface_context,
 				     bool alt_pipe)
 {
-	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(iface_context->ipa_ctx->ab))
 		iface_context->alt_pipe = alt_pipe;
 }
 
 static void
 ath12k_wlan_ipa_cleanup_iface_alt_pipe(struct wlan_ipa_iface_context *iface_context)
 {
-	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn())
+	if (ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(iface_context->ipa_ctx->ab))
 		iface_context->alt_pipe = false;
 }
 

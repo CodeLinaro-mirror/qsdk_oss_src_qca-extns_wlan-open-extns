@@ -1046,7 +1046,11 @@ static void ath12k_dp_ipa_tqm2sw6_poll_timer(struct timer_list *t)
 
 	dp_wifi8_ipa->tqm2sw6_stats.timer_fires++;
 
-	if (test_bit(ATH12K_GROUP_FLAG_SHUTDOWN, &ab->ag->flags))
+	if (!READ_ONCE(dp_wifi8_ipa->tqm2sw6_poller_active))
+		return;
+
+	if (!ab || !ab->ag || test_bit(ATH12K_GROUP_FLAG_SHUTDOWN, &ab->ag->flags) ||
+	    test_bit(ATH12K_GROUP_FLAG_RECOVERY, &ab->ag->flags))
 		return;
 
 	napi_schedule(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
@@ -1090,6 +1094,7 @@ int ath12k_wifi8_dp_ipa_tqm2sw6_poller_start(struct ath12k_base *ab)
 			      ath12k_dp_ipa_tqm2sw6_poll,
 			      NAPI_POLL_WEIGHT);
 
+	WRITE_ONCE(dp_wifi8_ipa->tqm2sw6_poller_active, true);
 	napi_enable(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
 
 	timer_setup(&dp_wifi8_ipa->tqm2sw6_poll_timer,
@@ -1121,6 +1126,10 @@ void ath12k_wifi8_dp_ipa_tqm2sw6_poller_stop(struct ath12k_base *ab)
 	if (!dp_wifi8_ipa)
 		return;
 
+	if (!dp_wifi8_ipa->tqm2sw6_poller_active)
+		return;
+
+	WRITE_ONCE(dp_wifi8_ipa->tqm2sw6_poller_active, false);
 	del_timer_sync(&dp_wifi8_ipa->tqm2sw6_poll_timer);
 	napi_disable(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);
 	netif_napi_del(&dp_wifi8_ipa->tqm2sw6_napi_ctxt.napi);

@@ -283,10 +283,6 @@ static int __proc_ipv4_rx(struct extap_extn *ee, struct sk_buff *skb)
 
 	skb_set_transport_header(skb, offset);
 
-	/* Skip processing local broadcast packets */
-	if (unlikely(ipv4_is_lbcast(iph->daddr)))
-		return -EINVAL;
-
 	/*
 	 * Process Multicast packets differently
 	 */
@@ -304,6 +300,10 @@ static int __proc_ipv4_rx(struct extap_extn *ee, struct sk_buff *skb)
 		if (unlikely(ntohs(udp_hdr(skb)->source) == DHCP_SERVER_PORT))
 			return __proc_ipv4_dhcp_rx(ee, skb);
 	}
+
+	/* Skip processing local broadcast packets */
+	if (unlikely(ipv4_is_lbcast(iph->daddr)))
+		return -EINVAL;
 
 	return extap_xlate_dmac(ee, skb);
 }
@@ -371,7 +371,8 @@ static int __proc_ipv6_rx(struct extap_extn *ee, struct sk_buff *skb)
 static int __proc_eapol_rx(struct extap_extn *ee, struct sk_buff *skb)
 {
 	ether_addr_copy(eth_hdr(skb)->h_dest, ee->my_mac);
-	return 0;
+	/* EAPOL must reach wpa_supplicant via mac80211 */
+	return EXTAP_RX_BYPASS;
 }
 
 /**
@@ -433,7 +434,7 @@ int ath12k_extap_rx(struct ath12k_vif *ahvif, struct sk_buff *skb)
 	default: /* Unhandled protocol */
 		ip_pkt = false;
 		atomic64_inc(&ee->stats.rx_unhandled);
-		return 0;
+		return EXTAP_RX_BYPASS;
 	}
 
 	/*
@@ -475,7 +476,7 @@ proc_pkt:
 	atomic64_add(!err, &ee->stats.rx_conv);
 	rcu_read_unlock_bh();
 
-	return err > 0 ? err : 0;
+	return err;
 }
 EXPORT_SYMBOL(ath12k_extap_rx);
 

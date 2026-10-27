@@ -40,6 +40,7 @@
 #include "dp_mon_extn.h"
 #include "extap_extn.h"
 #include "../dp_mon.h"
+#include "../dp_tx_mon.h"
 #include "../net/mac80211/ieee80211_i.h"
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
@@ -3779,6 +3780,11 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
 			   "rx_mon_fill_lvl: set requested val=%u\n", value);
 		ret = ath12k_dp_mon_set_fill_level(&ar->dp, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_MON_FILL_LVL:
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "tx_mon_fill_lvl: set requested val=%u\n", value);
+		ret = ath12k_dp_tx_mon_set_fill_level(&ar->dp, value);
 		break;
 	case PARAM_RADIO_TXCHAINSOFT:
 		ret = ath12k_set_chainmask(ar, value, true,
@@ -11964,6 +11970,12 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
 			   "rx_mon_fill_lvl: get cur_fill_lvl=%llu\n", *value);
 		ret = 0;
+		break;
+	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_MON_FILL_LVL: {
+		ret = ath12k_dp_tx_mon_get_fill_level(&ar->dp, value);
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "tx_mon_fill_lvl: get cur_fill_lvl=%llu\n", *value);
 		break;
 	}
 	case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:

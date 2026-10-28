@@ -48,6 +48,7 @@ struct wmi_scan_event;
 struct sk_buff;
 struct wmi_scan_blanking_params_info;
 struct wmi_vdev_ratemask_arg;
+struct ath12k_srng_dump_filter;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -1339,8 +1340,9 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
 	return len;
 }
 
-int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
-					   int len)
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt,
+					   const struct ath12k_srng_dump_filter *filter,
+					   char *buf, int size, int len)
 {
 	return len;
 }
@@ -2278,8 +2280,9 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
  * @len: Length used
  * @size: Max size of the buffer
  */
-int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
-					   int len);
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt,
+					   const struct ath12k_srng_dump_filter *filter,
+					   char *buf, int size, int len);
 
 /**
  * ath12k_wifi8_mgmt_dump_ring_sizes_extn - Dump mgmt ring sizes including highpri

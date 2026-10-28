@@ -53,7 +53,11 @@ static int __proc_ipv4_arp_tx(struct extap_extn *ee, struct sk_buff *skb)
 	ether_addr_copy(k.mac_addr, ae->sender_mac);
 	memcpy(&k.ip.v4.s_addr, ae->sender_ip, sizeof(k.ip.v4.s_addr));
 
-	if (extap_learn(ee, &k)) {
+	/* Skip learning ARP probes (sender_ip=0.0.0.0) — a cached 0.0.0.0
+	 * entry would cause DHCP Discovers to hit the fast path and bypass
+	 * the broadcast flag logic in __proc_ipv4_dhcp_tx.
+	 */
+	if (!ipv4_is_zeronet(k.ip.v4.s_addr) && extap_learn(ee, &k)) {
 		atomic64_inc(&ee->stats.tx_learn_error);
 		return -EINVAL;
 	}
@@ -98,7 +102,8 @@ static int __proc_ipv4_dhcp_tx(struct extap_extn *ee, struct sk_buff *skb)
 	/* Set broadcast flag to ensure server replies to broadcast */
 	dhcph->flags |= DHCP_BROADCAST_FLAG;
 
-	/* Recompute UDP checksum after flag modification */
+	/* Recompute UDP checksum; zero first so old value doesn't feed into csum_partial() */
+	udph->check = 0;
 	udph->check = csum_tcpudp_magic(iph->saddr, iph->daddr,
 					ntohs(udph->len), IPPROTO_UDP,
 					csum_partial(udph, ntohs(udph->len), 0));
@@ -231,10 +236,10 @@ static int __proc_ipv4_tx(struct extap_extn *ee, struct sk_buff *skb)
 	mac_hash_v4_keygen(skb, &k, false);
 	ether_addr_copy(k.mac_addr, eth_hdr(skb)->h_source);
 
-	/*
-	 * Learn and update the MAC_DB with the IP --> SMAC tuple
+	/* Skip learning 0.0.0.0 — caching it would cause DHCP frames to hit
+	 * the fast path and bypass the broadcast-flag logic in dhcp_tx.
 	 */
-	if (extap_learn(ee, &k)) {
+	if (!ipv4_is_zeronet(iph->saddr) && extap_learn(ee, &k)) {
 		atomic64_inc(&ee->stats.tx_learn_error);
 		return -EINVAL;
 	}

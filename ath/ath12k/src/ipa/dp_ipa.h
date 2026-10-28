@@ -116,7 +116,7 @@ struct ipa_header {
 #define WLAN_IPA_SESSION_ID_SHIFT 1
 #define DP_IPA_PDEV_ID_2G	1
 
-bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(struct ath12k_base *ab);
+bool ath12k_dp_ipa_is_two_tx_pipes_enabled_extn(void);
 int ath12k_ipa_plugin_register_ops(struct ath12k_base *ab);
 void ath12k_ipa_plugin_deregister_ops(struct ath12k_base *ab);
 

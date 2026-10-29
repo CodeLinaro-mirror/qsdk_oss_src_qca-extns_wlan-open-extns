@@ -200,14 +200,45 @@ struct sta_240mhz_info {
 	struct list_head list;
 };
 
+/**
+ * enum ath12k_scan_radio_pwr_prio - scan radio power mode selection priority
+ * @ATH12K_SCAN_RADIO_PWR_PRIO_MAX: sentinel for the highest possible priority
+ * @ATH12K_SCAN_RADIO_PWR_PRIO_NORMAL: subchannel is covered by a country reg
+ *	rule with no TX restriction
+ * @ATH12K_SCAN_RADIO_PWR_PRIO_NO_IR: subchannel is covered by a country reg
+ *	rule but TX is prohibited right now. (e.g before afc power event)
+ * @ATH12K_SCAN_RADIO_PWR_PRIO_HW_BLOCKLIST: subchannel is HW-blocklisted for
+ *	the current power mode
+ * @ATH12K_SCAN_RADIO_PWR_PRIO_NON_COUNTRY: subchannel is outside the country
+ *	reg coverage for the current power mode (CAN_MONITOR), RX-only
+ * @ATH12K_SCAN_RADIO_PWR_PRIO_MIN: sentinel one past the lowest priority
+ *
+ */
+enum ath12k_scan_radio_pwr_prio {
+	ATH12K_SCAN_RADIO_PWR_PRIO_MAX,
+	ATH12K_SCAN_RADIO_PWR_PRIO_NORMAL = ATH12K_SCAN_RADIO_PWR_PRIO_MAX,
+	ATH12K_SCAN_RADIO_PWR_PRIO_NO_IR,
+	ATH12K_SCAN_RADIO_PWR_PRIO_HW_BLOCKLIST,
+	ATH12K_SCAN_RADIO_PWR_PRIO_NON_COUNTRY,
+	ATH12K_SCAN_RADIO_PWR_PRIO_MIN,
+};
+
+/**
+ * struct ath12k_scan_radio_pwr_result - per-power-mode evaluation for a chandef
+ * @pwr_mode: evaluated 6 GHz regulatory power mode
+ * @prio: worst subchannel priority across the chandef
+ * @pwr_value: minimum effective EIRP across the chandef, in dBm
+ */
+struct ath12k_scan_radio_pwr_result {
+	enum nl80211_regulatory_power_modes pwr_mode;
+	enum ath12k_scan_radio_pwr_prio prio;
+	s16 pwr_value;
+};
+
 /* Maximum wait time for off-channel operations (milliseconds). */
 #define ATH12K_MAX_OFFCHAN_WAIT        50
 /* Off Rx timemout delay for scan radio (ms) */
 #define ATH12K_SCAN_RADIO_OFFCHAN_RX_DELAY	150
-/* ATH12K_MIN_TX_POWER is not picked up by selection algorithms;
- * makes the value selectable for NO_IR or HW-blocklisted channels.
- */
-#define ATH12K_MIN_SELECTABLE_TX_POWER (ATH12K_MIN_TX_POWER + 1)
 /* Maximum number of custom pkts for tx per request */
 #define ATH12K_MAX_CUSTOM_TX_PKT	20
 /* Checks whether SKB has custom pkt */
@@ -495,7 +526,7 @@ struct npca_intf_extn {
 #define ATH12K_MAX_CAC_TIMEOUT_MS	(24 * 60 * 60 * ATH12K_MSEC_PER_SEC)
 #define ATH12K_MAX_CAC_TIMEOUT_SEC	(ATH12K_MAX_CAC_TIMEOUT_MS / ATH12K_MSEC_PER_SEC)
 #define NO_CAC_OVERRIDE		          -1
-#define ATH12K_MAX_NUM_5GHZ_CHAN          30
+#define ATH12K_MAX_NUM_5GHZ_CHAN	  35
 
 /**
  * enum ath12k_dfs_chan_state - Per-channel DFS state tracked in ath12k

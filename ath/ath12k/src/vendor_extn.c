@@ -2748,6 +2748,7 @@ int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 	struct ath12k *ar;
 	struct ath12k_base *ab;
 	int preamble_type;
+	uint32_t flags;
 
 	/* Validate arvif, ar, and ab pointers first to get ab for logging */
 	if (!arvif || !arvif->ar || !arvif->ar->ab) {
@@ -2773,8 +2774,17 @@ int ath12k_mac_vif_setmhdr(struct ath12k_link_vif *arvif, uint32_t mhdr)
 		return -EINVAL;
 	}
 
-	preamble_type = (mhdr >> MESH_DBG_PRAMBLE_OFFSET) & MESH_NIBBLE_MASK;
+	flags = mhdr >> MESH_DBG_FLAGS_OFFSET;
 
+	if (flags & METAHDR_FLAG_NOENCRYPT_CFG_IF)
+		flags &= ~METAHDR_FLAG_ENCRYPT;
+	else
+		flags |= METAHDR_FLAG_ENCRYPT;
+
+	mhdr = mhdr & 0x00FFFFFF;
+	mhdr = mhdr | (flags << MESH_DBG_FLAGS_OFFSET);
+
+	preamble_type = (mhdr >> MESH_DBG_PRAMBLE_OFFSET) & MESH_NIBBLE_MASK;
 	if (preamble_type > METAHDR_PREAMBLE_EHT) {
 		pr_err("ERR: preamble type is greater than EHT\n");
 		return -EINVAL;
@@ -4111,19 +4121,54 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		break;
 
 	case QCA_WLAN_VENDOR_VDEV_PARAM_BA_BUFSIZE:
-		if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
-			ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
-			ret = -EINVAL;
-		} else {
+		{
+			struct ieee80211_bss_conf *bss_conf;
+			u16 old_ba_bufsize;
+
+			if (value > ATH12K_CONFIG_MAX_BA_BUFSIZE) {
+				ath12k_err(NULL, "Max buffer size is %d\n", ATH12K_CONFIG_MAX_BA_BUFSIZE);
+				return -EINVAL;
+			}
+
+			/* MAC80211 handles RX BA sessions, apply BA buff size in the link level config */
+			bss_conf = ath12k_mac_get_link_bss_conf(arvif);
+			if (!bss_conf || !bss_conf->bss_conf_extn) {
+				ath12k_err(NULL, "ba_bufsize: bss_conf_extn unavailable, ba_bufsize cap not applied\n");
+				return -EINVAL;
+			}
+
+			old_ba_bufsize = bss_conf->bss_conf_extn->ba_bufsize;
+
+			switch (value) {
+			case 2:
+				bss_conf->bss_conf_extn->ba_bufsize = 64;
+				break;
+			case 3:
+				bss_conf->bss_conf_extn->ba_bufsize = 256;
+				break;
+			case 5:
+				bss_conf->bss_conf_extn->ba_bufsize = 512;
+				break;
+			case 6:
+				bss_conf->bss_conf_extn->ba_bufsize = 1024;
+				break;
+			default:
+				/* Use the default BA Size in RX BA negotiation */
+				bss_conf->bss_conf_extn->ba_bufsize = 0;
+				break;
+			}
+
+			/* The firmware handles TX BA session, pass BA buf size to the firmware */
 			ret = ath12k_wmi_vdev_set_param_cmd(ar, arvif->vdev_id,
 					WMI_VDEV_PARAM_BA_MODE,
 					value);
-			if (!ret) {
-				arvif->vap_cfg.ba_bufsize = value;
-			} else {
-				ath12k_err(NULL,
-						"Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
+			if (ret) {
+				ath12k_err(NULL, "ba_bufsize: Failed to send WMI_VDEV_PARAM_BA_MODE to firmware\n");
+				bss_conf->bss_conf_extn->ba_bufsize = old_ba_bufsize;
+				return ret;
 			}
+
+			arvif->vap_cfg.ba_bufsize = value;
 		}
 		break;
 
@@ -5111,6 +5156,60 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 			   !!(arvif->ahvif->dp_vif.dp_features & DP_FEATURE_HLOS));
 		ret = 0;
 		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_PEER_NSS: {
+		struct ath12k_link_sta *arsta = NULL;
+		struct peer_nss *peer_nss;
+		struct ieee80211_sta *sta;
+		u8 sta_found = 0;
+		u8 addr[ETH_ALEN];
+		u8 max_nss;
+		u16 aid;
+		u32 bkt;
+
+		if (!data || data_len != sizeof(struct peer_nss)) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: invalid data or len %u\n", data_len);
+			return -EINVAL;
+		}
+
+		peer_nss = (struct peer_nss *)data;
+		aid = peer_nss->aid;
+		if (aid < 1 || aid > 2007) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: invalid AID %d\n", aid);
+			return -EINVAL;
+		}
+
+		max_nss = ath12k_vendor_get_max_tx_nss(ar);
+		if (peer_nss->nss > max_nss) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: nss %u exceeds radio max nss %u\n",
+				   peer_nss->nss, max_nss);
+			return -EINVAL;
+		}
+
+		spin_lock_bh(&ar->arsta_lock);
+		ath12k_link_sta_for_each(ar, bkt, arsta) {
+			if (arsta && !arsta->is_self_peer) {
+				sta = ath12k_ahsta_to_sta(arsta->ahsta);
+				if (sta->aid == aid) {
+					sta_found = 1;
+					ether_addr_copy(addr, arsta->addr);
+					goto found;
+				}
+			}
+		}
+found:
+		spin_unlock_bh(&ar->arsta_lock);
+		if (!sta_found) {
+			ath12k_dbg(NULL, ATH12K_DBG_CFG,
+				   "peer_nss: STA not found for AID %d\n", aid);
+			return -ENOTCONN;
+		}
+		ret = ath12k_wmi_set_peer_param(ar, addr, arvif->vdev_id,
+						WMI_PEER_NSS, peer_nss->nss);
+		break;
+	}
 	default:
 		ath12k_dbg(NULL, ATH12K_DBG_CFG,
 			   "Un-supported param: %d\n", param);
@@ -13455,6 +13554,8 @@ static u32 ath12k_get_cac_half_bw(enum nl80211_chan_width width)
 		return 40;
 	case NL80211_CHAN_WIDTH_160:
 		return 80;
+	case NL80211_CHAN_WIDTH_320:
+		return 160;
 	default:
 		return 10;
 	}
@@ -13673,18 +13774,32 @@ void ath12k_dfs_init_chan_state(struct ath12k *ar)
 	}
 }
 
-void ath12k_dfs_update_chan_state(struct ath12k *ar,
-				  struct ieee80211_channel *chan,
-				  enum ath12k_dfs_chan_state state)
+/**
+ * ath12k_dfs_update_20mhz_chan_state() - Update one 20 MHz channel state
+ * @ar: Pointer to ath12k radio instance
+ * @chan: 20 MHz channel whose state is updated
+ * @state: DFS state to assign to the channel
+ */
+static void ath12k_dfs_update_20mhz_chan_state(struct ath12k *ar,
+					       struct ieee80211_channel *chan,
+					       enum ath12k_dfs_chan_state state)
 {
 	int idx;
 	bool is_non_dfs;
 
-	if (!ar || !chan)
+	if (!ar || !chan) {
+		ath12k_dbg(ar ? ar->ab : NULL, ATH12K_DBG_REG,
+			   "DFS state update skipped: invalid ar=%p chan=%p\n",
+			   ar, chan);
 		return;
+	}
 
-	if (!ath12k_is_chan_in_ar(ar, chan))
+	if (!ath12k_is_chan_in_ar(ar, chan)) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS state update skipped: chan %u (%u MHz) outside radio range\n",
+			   chan->hw_value, chan->center_freq);
 		return;
+	}
 
 	idx = ath12k_convert_5g_freq_to_index(chan);
 	if (idx == INVALID_INDEX) {
@@ -13694,13 +13809,88 @@ void ath12k_dfs_update_chan_state(struct ath12k *ar,
 	}
 
 	is_non_dfs = !(chan->flags & IEEE80211_CHAN_RADAR);
-	if (is_non_dfs && state != ATH12K_DFS_CHAN_STATE_NON_DFS) {
-		ath12k_err(ar->ab, "Setting state %u for non-dfs chan %d\n",
-			   state, chan->center_freq);
+	if (is_non_dfs) {
+		ar->ar_extn.dfs_chan_state[idx] =
+			ATH12K_DFS_CHAN_STATE_NON_DFS;
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS state assigned: chan %u (%u MHz) NON_DFS\n",
+			   chan->hw_value, chan->center_freq);
 		return;
 	}
 
 	ar->ar_extn.dfs_chan_state[idx] = state;
+	ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+		   "DFS state assigned: chan %u (%u MHz) state %u\n",
+		   chan->hw_value, chan->center_freq, state);
+}
+
+/**
+ * ath12k_dfs_update_chan_range() - Update states for a channel range
+ * @ar: Pointer to ath12k radio instance
+ * @center_freq: Center frequency of the channel range in MHz
+ * @width_mhz: Width of the channel range in MHz
+ * @state: DFS state to assign to each 20 MHz channel
+ */
+static void ath12k_dfs_update_chan_range(struct ath12k *ar, u32 center_freq,
+					 int width_mhz,
+					 enum ath12k_dfs_chan_state state)
+{
+	struct wiphy *wiphy = ar->ah->hw->wiphy;
+	u32 start_freq, end_freq, freq;
+	struct ieee80211_channel *chan;
+
+	start_freq = center_freq - width_mhz / 2 + 10;
+	end_freq = center_freq + width_mhz / 2 - 10;
+
+	for (freq = start_freq; freq <= end_freq; freq += 20) {
+		chan = ieee80211_get_channel(wiphy, freq);
+		if (chan)
+			ath12k_dfs_update_20mhz_chan_state(ar, chan, state);
+	}
+}
+
+/**
+ * ath12k_dfs_update_chan_state() - Update DFS state for an agile CAC chandef
+ * @ar: Pointer to ath12k radio instance
+ * @chan: Primary channel of the active agile CAC chandef
+ * @state: DFS state to assign to the covered 20 MHz channels
+ */
+void ath12k_dfs_update_chan_state(struct ath12k *ar,
+				  struct ieee80211_channel *chan,
+				  enum ath12k_dfs_chan_state state)
+{
+	const struct cfg80211_chan_def *chandef;
+	int width_mhz;
+
+	if (!ar || !chan) {
+		ath12k_dbg(ar ? ar->ab : NULL, ATH12K_DBG_REG,
+			   "DFS chandef state update skipped: invalid ar=%p chan=%p\n",
+			   ar, chan);
+		return;
+	}
+
+	chandef = &ar->agile_chandef;
+	if (!chandef->chan || chandef->chan->center_freq != chan->center_freq) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS chandef state update skipped: chan %u (%u MHz) is not the active agile channel\n",
+			   chan->hw_value, chan->center_freq);
+		return;
+	}
+
+	width_mhz = nl80211_chan_width_to_mhz(chandef->width);
+	if (width_mhz <= 0) {
+		ath12k_dbg(ar->ab, ATH12K_DBG_REG,
+			   "DFS chandef state update skipped: invalid width %d for chan %u (%u MHz)\n",
+			   chandef->width, chan->hw_value, chan->center_freq);
+		return;
+	}
+
+	ath12k_dfs_update_chan_range(ar, chandef->center_freq1, width_mhz,
+				     state);
+
+	if (chandef->width == NL80211_CHAN_WIDTH_80P80 &&
+	    chandef->center_freq2)
+		ath12k_dfs_update_chan_range(ar, chandef->center_freq2, 80, state);
 }
 
 static enum ath12k_dfs_chan_state

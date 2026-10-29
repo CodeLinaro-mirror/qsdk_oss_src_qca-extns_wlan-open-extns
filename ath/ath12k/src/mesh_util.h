@@ -93,7 +93,7 @@ static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 109,
 #define MESH_DBG_RETRIES_OFFSET 16
 #define MESH_DBG_KEYIX_OFFSET 20
 #define MESH_DBG_FLAGS_OFFSET 24
-#define MESH_DBG_HDR 0x000f0004
+#define MESH_DBG_HDR 0x400f0004
 
 struct ath12k_vif_mesh_params {
 	u_int32_t mhdr;

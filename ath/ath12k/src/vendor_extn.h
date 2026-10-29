@@ -46,7 +46,7 @@
 #define ATH12K_BAND5_CHAN_SPACING_MHZ           5
 #define FIRST_DFS_CHAN_NUM                     36
 #define CHAN_NUM_SPACING                        4
-#define NUM_DFS_CHANS                          30
+#define NUM_DFS_CHANS			       35
 #define INVALID_INDEX                         (-1)
 
 struct ath12k_vendor_nol_bin_hdr {
@@ -137,6 +137,11 @@ struct ath12k_band_desc {
 
 struct chmask_per_sta {
 	u_int8_t mac[ETH_ALEN];
+	u_int8_t nss;
+};
+
+struct peer_nss {
+	u_int16_t aid;
 	u_int8_t nss;
 };
 

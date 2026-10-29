@@ -463,6 +463,73 @@ int ieee80211_get_scan_radio_best_6ghz_pm_extn(struct ieee80211_local *local,
 						freq, center_freq, bw);
 }
 
+/**
+ * ieee80211_bss_conf_extn_alloc - Allocate struct ieee80211_bss_conf_extn
+ *
+ * Called from the common link init path for every link_conf, regardless
+ * of vif type, so extension-specific per-link state (e.g. ba_bufsize) is
+ * always available to the driver.
+ *
+ * @link_conf: Pointer to BSS conf
+ */
+void ieee80211_bss_conf_extn_alloc(struct ieee80211_bss_conf *link_conf)
+{
+	if (!link_conf)
+		return;
+
+	if (link_conf->bss_conf_extn) {
+		pr_warn("bss_conf_extn already allocated, skipping\n");
+		return;
+	}
+
+	link_conf->bss_conf_extn = kzalloc(sizeof(struct ieee80211_bss_conf_extn),
+					   GFP_KERNEL);
+	if (!link_conf->bss_conf_extn)
+		pr_err("failed to alloc bss_conf_extn\n");
+}
+
+/**
+ * ieee80211_bss_conf_extn_free - Free struct ieee80211_bss_conf_extn
+ *
+ * Called from the common link stop path. Frees mesh-specific nested
+ * allocations first (if any), then the bss_conf_extn container itself.
+ *
+ * @link_conf: Pointer to BSS conf
+ */
+void ieee80211_bss_conf_extn_free(struct ieee80211_bss_conf *link_conf)
+{
+	if (!link_conf || !link_conf->bss_conf_extn)
+		return;
+
+#ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
+	ieee80211_free_mesh_vap_caps(link_conf);
+#endif /* CPTCFG_QCN_EXTN_MESH_SUPPORT */
+
+	kfree(link_conf->bss_conf_extn);
+	link_conf->bss_conf_extn = NULL;
+}
+
+/**
+ * ieee80211_cap_rx_ba_bufsize_extn - Cap the negotiated RX BA buffer size
+ *
+ * @link_conf: Pointer to BSS conf
+ * @buf_size: Buffer size negotiated from the ADDBA request
+ *
+ * Return: buf_size capped to link_conf->bss_conf_extn->ba_bufsize when a
+ * non-zero limit is configured, otherwise buf_size unchanged.
+ */
+u16 ieee80211_cap_rx_ba_bufsize_extn(struct ieee80211_bss_conf *link_conf, u16 buf_size)
+{
+	if (!link_conf)
+		return buf_size;
+
+	if (link_conf->bss_conf_extn && link_conf->bss_conf_extn->ba_bufsize &&
+	    buf_size > link_conf->bss_conf_extn->ba_bufsize)
+		return link_conf->bss_conf_extn->ba_bufsize;
+
+	return buf_size;
+}
+
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)
 {
@@ -584,11 +651,9 @@ int ieee80211_mesh_ap_config_save(struct cfg80211_ap_settings *params,
 	pr_debug_ratelimited("managed_mesh_dbg ap_config_save: wpa_versions=0x%x beacon_tail_len=%zu\n",
 			    params->crypto.wpa_versions, params->beacon.tail_len);
 
-	link_conf->bss_conf_extn = kzalloc(sizeof(struct ieee80211_bss_conf_extn),
-					   GFP_KERNEL);
 	if (!link_conf->bss_conf_extn) {
-		pr_err("managed_mesh_dbg ap_config_save: failed to alloc bss_conf_extn\n");
-		return -ENOMEM;
+		pr_err("managed_mesh_dbg ap_config_save: bss_conf_extn is NULL\n");
+		return -EINVAL;
 	}
 
 	mesh_conf = &link_conf->bss_conf_extn->mesh_bss_caps;
@@ -707,8 +772,6 @@ void ieee80211_free_mesh_vap_caps(struct ieee80211_bss_conf *link_conf)
 		kfree(mesh_conf->rsn_conf->rsn_ie);
 		kfree(mesh_conf->rsn_conf);
 	}
-	kfree(link_conf->bss_conf_extn);
-	link_conf->bss_conf_extn = NULL;
 }
 
 enum ieee80211_encrypt {

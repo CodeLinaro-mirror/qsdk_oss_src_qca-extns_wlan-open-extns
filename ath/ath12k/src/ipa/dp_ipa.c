@@ -8,6 +8,7 @@
 #include "dp_ipa.h"
 #include "../../wmi.h"
 #include "../../dp_peer.h"
+#include "../../net/mac80211/ieee80211_i.h"
 #ifdef CPTCFG_EXT_IPA_STATS
 #include "dp_ipa_stats.h"
 #endif
@@ -2012,7 +2013,7 @@ bool ipa_is_wds_enabled(void)
 }
 
 int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id,
-			 bool mld_enabled, u8 link_id, struct ath12k_ipa *ipa_ctx)
+			 bool mld_enabled, struct ath12k_ipa *ipa_ctx)
 {
 	int ret;
 	ret = ipa_wdi_dereg_intf_per_inst_mlo(ifname, hdl, session_id, mld_enabled);
@@ -2020,8 +2021,8 @@ int dp_ipa_cleanup_iface(char *ifname, ipa_wdi_hdl_t hdl, u16 session_id,
 		ath12k_err(NULL, "ipa_wdi_dereg_intf: IPA pipe deregistration failed: ret=%d \n", ret);
 		return -EPERM;
 	}
-
-	ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx, ifname, link_id);
+	ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx,
+						       (u8)session_id, ipa_ctx->ab);
 
 	return 0;
 }
@@ -2104,8 +2105,7 @@ static int dp_ipa_setup_iface(struct ath12k_ipa_iface_context *iface_context,
 
 void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 			    const u8 *mac_addr, ipa_wdi_hdl_t hdl,
-			    u16 session_id, bool mld_enabled,
-			    u8 link_id)
+			    u16 session_id, bool mld_enabled)
 {
 	struct ath12k_ipa *ipa_ctx = iface_context->ipa_ctx;
 	char *ifname;
@@ -2116,7 +2116,7 @@ void wlan_ipa_cleanup_iface(struct ath12k_ipa_iface_context *iface_context,
 	ifname = wlan_ipa_get_iface_ifname(iface_context);
 
 	if (dp_ipa_cleanup_iface(ifname, hdl, session_id,
-				 mld_enabled, link_id, ipa_ctx))
+				 mld_enabled, ipa_ctx))
 		ath12k_err(ipa_ctx->ab, "ipa_cleanup_iface failed \n");
 
 	/* LOG: VAP DOWN in debug_info - AFTER cleanup */
@@ -2222,11 +2222,11 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 
 			wlan_ipa_cleanup_iface(iface_context, NULL,
 					       ipa_ctx->hdl, session_id,
-					       is_mlo_vdev, link_id);
+					       is_mlo_vdev);
 		} else if (iface_context->session_id == session_id) {
 			wlan_ipa_cleanup_iface(iface_context, NULL,
 					       ipa_ctx->hdl, session_id,
-					       is_mlo_vdev, link_id);
+					       is_mlo_vdev);
 		}
 	}
 
@@ -2409,7 +2409,7 @@ int wlan_ipa_setup_iface(struct ath12k_ipa *ipa_ctx,
 end:
 	if (iface_context)
 		wlan_ipa_cleanup_iface(iface_context, mac_addr, ipa_ctx->hdl, session_id,
-				       is_mlo_vdev, link_id);
+				       is_mlo_vdev);
 
 	return status;
 }
@@ -2520,10 +2520,6 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		return 0;
 	}
 
-	if (pdev_idx >= ab->num_radios || pdev_idx >= MAX_RADIOS) {
-		ath12k_err(ab, "Invalid pdev_idx %d\n", pdev_idx);
-		return -EINVAL;
-	}
 
 	if (session_id >= ipa_ctx->max_session_id) {
 		ath12k_err(ab, "Invalid session_id %d\n", session_id);
@@ -2560,7 +2556,6 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			ath12k_err(ab, "STA iface_ctx is NULL\n");
 	}
 
-	is_tx1_used = ath12k_ipa_get_is_tx1_used(ab, pdev_idx);
 	enum ath12k_ipa_opmode device_mode = ath12k_ipa_mode(mode);
 
 	ipa_ctx->stats.event[event]++;
@@ -2580,7 +2575,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 				mlo = iface_ctx->is_mlo_vdev;
 				ipa_ctx->sta_connected--;
 				wlan_ipa_cleanup_iface(iface_ctx, NULL, ipa_ctx->hdl,
-						       id, mlo, link_id);
+						       id, mlo);
 			}
 			if (ath12k_wlan_ipa_send_msg(ipa_ctx, WLAN_STA_DISCONNECT,
 						     mac, dev, mlo, id) != 0) {
@@ -2666,7 +2661,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 			if (iface) {
 				ath12k_info(ab, "Found existing STA iface\n");
 				wlan_ipa_cleanup_iface(iface, mac, ipa_ctx->hdl,
-						       session_id, is_mlo, link_id);
+						       session_id, is_mlo);
 			}
 			return -EINVAL;
 		}
@@ -2690,7 +2685,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 		if (iface_ctx) {
 			ath12k_info(ab, "Found existing STA iface\n");
 			wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
-					       session_id, is_mlo, link_id);
+					       session_id, is_mlo);
 		}
 		mutex_unlock(&ipa_ctx->event_lock);
 		ath12k_info(ab, "STA connected = %d, vdev_to_iface[%u] = %u\n",
@@ -2722,7 +2717,7 @@ int ath12k_ipa_wlan_evt(struct ath12k_ipa *ipa_ctx,
 							       dev, session_id)) {
 				ath12k_info(ab, "Found matching AP iface\n");
 				wlan_ipa_cleanup_iface(iface_ctx, mac, ipa_ctx->hdl,
-						       session_id, is_mlo, link_id);
+						       session_id, is_mlo);
 				break;
 			}
 		}
@@ -3065,6 +3060,301 @@ void ath12k_ipa_enqueue_evt(enum ipa_wlan_event event, struct ath12k_link_vif *a
 	queue_work(system_unbound_wq, &ipa_global_ctx->work);
 }
 EXPORT_SYMBOL(ath12k_ipa_enqueue_evt);
+
+/**
+ * ath12k_ipa_enqueue_evt_apvlan() - Enqueue IPA event for AP_VLAN (WDS-EXT) interface
+ * @event:        IPA event (WLAN_AP_CONNECT / WLAN_AP_DISCONNECT)
+ * @apvlan_ahvif: AP_VLAN's ath12k_vif — provides the AP_VLAN netdev
+ * @parent_arvif: Parent AP's link_vif — provides ar/ab/chanctx/vdev_id
+ * @mac:          AP_VLAN MAC address
+ * @is_mlo:       MLO flag
+ *
+ * AP_VLAN has no vdev of its own and no chanctx. This function uses the
+ * parent AP's arvif for radio/channel context while registering the
+ * AP_VLAN's netdev with IPA. The event is processed by
+ * ath12k_wlan_ipa_evt_handler() in process context, ensuring
+ * ipa_wdi_reg_intf_per_inst() is called from a sleepable context.
+ *
+ * The mandatory WDS-EXT fields are sourced as follows:
+ *   iface_name  — AP_VLAN's netdev name  (ev->dev.name)
+ *   intf_idx    — AP_VLAN's netdev index (ev->dev.ifindex)
+ *   vdev_id     — parent AP's vdev_id   (shared in firmware)
+ *   band        — parent AP's chanctx band
+ */
+static void ath12k_ipa_enqueue_evt_apvlan(enum ipa_wlan_event event,
+					  struct ath12k_vif *apvlan_ahvif,
+					  struct ath12k_link_vif *parent_arvif,
+					  const u8 mac[ETH_ALEN], bool is_mlo)
+{
+	struct ath12k_base *ab = parent_arvif->ar->ab;
+	struct ieee80211_vif *vif = apvlan_ahvif->vif;
+	struct wireless_dev *wdev = ieee80211_vif_to_wdev(vif);
+	struct ath12k_dp_hw_group *dp_hw_grp = ab->dp->dp_hw_grp;
+	struct ath12k_dp_hw_group_ipa *ipa_global_ctx = dp_hw_grp->extn.ipa;
+	struct ieee80211_chanctx_conf *chanctx = &parent_arvif->chanctx;
+	struct wlan_ipa_evt_wq_args *ev;
+	struct net_device *dev;
+
+	if (!ipa_global_ctx) {
+		ath12k_err(ab, "AP_VLAN IPA: ipa_global_ctx not initialized\n");
+		return;
+	}
+
+	if (!wdev || !wdev->netdev) {
+		ath12k_warn(ab, "AP_VLAN IPA: invalid wdev/netdev for %pM\n", mac);
+		return;
+	}
+
+	dev = wdev->netdev;
+
+	if (!chanctx || !chanctx->def.chan) {
+		ath12k_warn(ab, "AP_VLAN IPA: parent AP has no chanctx for %pM\n", mac);
+		return;
+	}
+
+	ev = kzalloc(sizeof(*ev), GFP_ATOMIC);
+	if (!ev)
+		return;
+
+	ev->event = event;
+	/*
+	 * Use the AP_VLAN's own ahvif_id as session_id, NOT parent_arvif->vdev_id.
+	 *
+	 * On WiFi8, vdev_id == ahvif_id (firmware global_vdev_id = ahvif_id).
+	 * The parent AP is already registered in IPA at vdev_to_iface[parent_ahvif_id].
+	 * Using parent_arvif->vdev_id here would collide: ath12k_ipa_wlan_evt()
+	 * would see vdev_to_iface[parent_ahvif_id] < max_iface and return
+	 * "Vdev already connected" silently, leaving WDS STA unregistered.
+	 *
+	 * The AP_VLAN has its own unique ahvif_id from ath12k_mac_ahvif_id_allocate().
+	 * It maps 1:1 to a unique VP (VP = ahvif_id + VP_MIN - 1).
+	 */
+	ev->session_id  = apvlan_ahvif->dp_vif.ahvif_id;
+	ev->pdev_idx = parent_arvif->ar->pdev_idx;
+	ev->device_id = ab->device_id;
+	ev->link_id  = parent_arvif->link_id;
+	/* Register AP_VLAN's netdev with IPA (iface_name + intf_idx) */
+	strscpy(ev->dev.name, dev->name, IFNAMSIZ);
+	ether_addr_copy(ev->dev.dev_addr, (const u8 *)dev->dev_addr);
+	ev->dev.ifindex = dev->ifindex;
+	/*
+	 * Pass NL80211_IFTYPE_AP so ath12k_ipa_wlan_evt() accepts it and
+	 * ath12k_ipa_mode() maps it to ATH12K_IPA_SAP.
+	 */
+	ev->mode  = NL80211_IFTYPE_AP;
+	ev->band  = chanctx->def.chan->band;
+	ether_addr_copy(ev->mac_addr, mac);
+	ev->is_mlo = is_mlo;
+
+
+	spin_lock_bh(&ipa_global_ctx->list_lock);
+	list_add_tail(&ev->list_elem, &ipa_global_ctx->list);
+	spin_unlock_bh(&ipa_global_ctx->list_lock);
+
+	queue_work(system_unbound_wq, &ipa_global_ctx->work);
+}
+
+/**
+ * ath12k_dp_ipa_apvlan_connect - Send WLAN_AP_CONNECT to IPA for a WDS STA
+ *   AP_VLAN interface.
+ * @hw:           ieee80211_hw (needed for wiphy_dereference)
+ * @apvlan_ahvif: AP_VLAN's ath12k_vif (provides the AP_VLAN netdev and vif)
+ *
+ * Derives the parent AP's ath12k_vif/ieee80211_vif from apvlan_ahvif's
+ * vlan_iface, finds the first active parent AP link with ar and chanctx,
+ * then enqueues a WLAN_AP_CONNECT event via ath12k_ipa_enqueue_evt_apvlan().
+ * Called from ath12k_wifi8_mac_op_sta_set_4addr() when 4addr mode is enabled.
+ */
+void ath12k_dp_ipa_apvlan_connect(struct ieee80211_hw *hw,
+				  struct ath12k_vif *apvlan_ahvif)
+{
+	struct ath12k_vlan_iface *vlan_iface = apvlan_ahvif->vlan_iface;
+	struct ath12k_link_vif *parent_arvif = NULL;
+	struct ath12k_vif *vlan_master_ahvif;
+	struct ieee80211_vif *vlan_master_vif;
+	struct ath12k_base *ab = NULL;
+	unsigned long parent_links;
+	bool is_mlo;
+	u8 id;
+
+	if (!vlan_iface || !vlan_iface->parent_vif)
+		return;
+
+	if (!ath12k_ipa_config_is_enabled() ) {
+		ath12k_err(ab, "AP_VLAN IPA: ipa_global_ctx not initialized\n");
+		return;
+	}
+
+	vlan_master_vif = vlan_iface->parent_vif;
+	vlan_master_ahvif = ath12k_vif_to_ahvif(vlan_master_vif);
+	if(!vlan_master_ahvif){
+		ath12k_err(ab, "AP_VLAN IPA: vlan_master_ahvif not found\n");
+		return;
+	}
+	parent_links = vlan_master_ahvif->links_map;
+	is_mlo = ieee80211_vif_is_mld(vlan_master_vif);
+
+	/*
+	 * Find first active parent link with ar and chanctx.
+	 * Also track any link with ar so we can use its ab for logging
+	 * if no fully-active link is found.
+	 */
+	for_each_set_bit(id, &parent_links, ATH12K_NUM_MAX_LINKS) {
+		struct ath12k_link_vif *arvif =
+			wiphy_dereference(hw->wiphy, vlan_master_ahvif->link[id]);
+
+		if (!arvif || !arvif->ar)
+			continue;
+		if (!ab)
+			ab = arvif->ar->ab;
+		if (arvif->chanctx.def.chan) {
+			parent_arvif = arvif;
+			break;
+		}
+	}
+
+	if (parent_arvif)
+		ath12k_ipa_enqueue_evt_apvlan(WLAN_AP_CONNECT, apvlan_ahvif,
+					      parent_arvif, apvlan_ahvif->vif->addr, is_mlo);
+	else
+		ath12k_warn(ab, "AP_VLAN IPA: no active parent arvif for %pM\n",
+			    apvlan_ahvif->vif->addr);
+
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_apvlan_connect);
+
+/**
+ * ath12k_dp_ipa_apvlan_disconnect - Send WLAN_AP_DISCONNECT to IPA for a WDS
+ *   STA AP_VLAN interface being torn down.
+ * @apvlan_ahvif:    AP_VLAN's ath12k_vif (provides the AP_VLAN netdev and vif)
+ * @parent_arvif:    Parent AP's link_vif (provides ar/chanctx/vdev_id)
+ * @vlan_master_vif: Parent AP's ieee80211_vif (for MLO check)
+ *
+ * Enqueues a WLAN_AP_DISCONNECT event via ath12k_ipa_enqueue_evt_apvlan().
+ * Called from ath12k_mac_op_remove_interface() in the AP_VLAN loop block.
+ *
+ * Returns true if the event was successfully enqueued, false if the link's
+ * ar or chanctx was already NULL (radio torn down before AP_VLAN removal).
+ */
+bool ath12k_dp_ipa_apvlan_disconnect(struct ath12k_vif *apvlan_ahvif,
+				     struct ath12k_link_vif *parent_arvif,
+				     struct ieee80211_vif *vlan_master_vif)
+{
+	bool is_mlo;
+
+	if (!ath12k_ipa_config_is_enabled())
+		return false;
+
+	if (!parent_arvif->ar || !parent_arvif->chanctx.def.chan)
+		return false;
+
+	is_mlo = ieee80211_vif_is_mld(vlan_master_vif);
+	ath12k_ipa_enqueue_evt_apvlan(WLAN_AP_DISCONNECT, apvlan_ahvif,
+				      parent_arvif, apvlan_ahvif->vif->addr, is_mlo);
+	return true;
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_apvlan_disconnect);
+
+/**
+ * ath12k_ahvif_from_wdev - get ath12k_vif for any interface type from wdev
+ *
+ * wdev_to_ieee80211_vif() returns NULL for AP_VLAN (IEEE80211_SDATA_IN_DRIVER
+ * not set).  wdev_to_ieee80211_vif_vlan() always returns the MASTER AP's vif
+ * for AP_VLAN — it is hardcoded to walk to master->vif in the AP_VLAN case.
+ *
+ * Use IEEE80211_WDEV_TO_SUB_IF() directly to get the interface's own sdata
+ * and therefore its own drv_priv (= ahvif), regardless of interface type.
+ */
+struct ath12k_vif *ath12k_ahvif_from_wdev(struct wireless_dev *wdev)
+{
+	struct ieee80211_sub_if_data *sdata;
+
+	if (!wdev)
+		return NULL;
+
+	sdata = IEEE80211_WDEV_TO_SUB_IF(wdev);
+
+	if (!sdata)
+		return NULL;
+
+	return ath12k_vif_to_ahvif(&sdata->vif);
+}
+EXPORT_SYMBOL(ath12k_ahvif_from_wdev);
+
+/**
+ * ath12k_dp_ipa_apvlan_sync_cleanup - synchronously clean up IPA state for
+ * an AP_VLAN whose parent links had arvif == NULL at teardown time.
+ */
+void ath12k_dp_ipa_apvlan_sync_cleanup(struct ieee80211_hw *hw,
+				       struct ath12k_vif *apvlan_ahvif)
+{
+	struct ath12k_hw *ah= hw->priv;
+	struct ath12k_base *ab = NULL;
+	struct ath12k_ipa *ipa_ctx = NULL;
+	struct ath12k_ipa_iface_context *iface_ctx;
+	u8 ahvif_id = apvlan_ahvif->dp_vif.ahvif_id;
+	bool is_iface_found = false;
+	int i;
+
+	if (!ath12k_ipa_config_is_enabled())
+		return;
+
+	if (ahvif_id == ATH12K_INVALID_AHVIF_ID)
+		return;
+
+	if (!ah || !ah->num_radio)
+		return;
+
+	/*
+	 * Find any valid ab in the group to reach the shared cumac ipa_ctx.
+	 */
+	for (i = 0; i < ah->num_radio; i++) {
+		if (!ah->radio[i].ab)
+			continue;
+		ipa_ctx = IPA_CTX(ah->radio[i].ab);
+		if (ipa_ctx) {
+			ab = ah->radio[i].ab;
+			break;
+		}
+	}
+
+	if (!ipa_ctx)
+		return;
+
+	mutex_lock(&ipa_ctx->event_lock);
+
+	for (i = 0; i < ipa_ctx->max_iface; i++) {
+		iface_ctx = &ipa_ctx->iface_context[i];
+		if (iface_ctx->session_id != ahvif_id)
+			continue;
+
+		wlan_ipa_cleanup_iface(iface_ctx, NULL, ipa_ctx->hdl,
+				       ahvif_id, iface_ctx->is_mlo_vdev);
+		is_iface_found = true;
+		break;
+	}
+
+	ipa_ctx->vdev_to_iface[ahvif_id] = ipa_ctx->max_iface;
+
+	if (ipa_ctx->session_link_mask && ahvif_id < ipa_ctx->max_session_id)
+		ipa_ctx->session_link_mask[ahvif_id] = 0;
+
+	mutex_unlock(&ipa_ctx->event_lock);
+
+	/*
+	 * Always attempt VP cleanup. If wlan_ipa_cleanup_iface was called
+	 * above it already ran cleanup_vp_num internally; this call is a
+	 * no-op in that case (dealloc_vp_num returns early when slot is
+	 * already NULL). If iface was not found (IPA registration never
+	 * completed), this frees the VP slot that alloc_vp_num acquired at
+	 * sta_set_4addr time, releasing the dev_hold.
+	 */
+	if (!is_iface_found)
+		ath12k_dp_ipa_arch_op_ipa_iface_cleanup_vp_num(ipa_ctx,
+							       ahvif_id,
+							       ipa_ctx->ab);
+}
+EXPORT_SYMBOL(ath12k_dp_ipa_apvlan_sync_cleanup);
 
 static
 int ath12k_wmi_ipa_offload_enable_disable_param_cmd(struct ath12k *ar, u32 vdev_id,

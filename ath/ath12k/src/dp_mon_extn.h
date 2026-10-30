@@ -66,6 +66,10 @@ struct ath12k_undecoded_metadata_event {
 	u8  vht_no_txop_ps;
 	u8  he_sig_a_su_crc;
 	u8  he_sig_a_mu_dl_crc;
+	u8  eht_sig_a_su_crc;
+	u8  eht_sig_a_mu_dl_crc;
+	u8  uhr_sig_a_su_crc;
+	u8  uhr_sig_a_mu_dl_crc;
 	u8  rssi_comb;
 	s8  rssi_chain[8];
 	u64 tsft;
@@ -77,6 +81,8 @@ struct ath12k_undecoded_metadata_event {
 	u16 ppdu_id;
 	u32 phyrx_error_mask;
 	u32 phyrx_error_mask_cont;
+	u32 phyrx_error_mask_cont2;
+	u32 phyrx_error_mask_cont3;
 };
 
 /**

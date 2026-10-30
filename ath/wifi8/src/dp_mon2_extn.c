@@ -5,6 +5,7 @@
 
 #include "dp_mon2_extn.h"
 #include "../../dp_mon_filter.h"
+#include "../../qcn_extns/dp_mon_extn.h"
 
 void ath12k_wifi8_hal_rx_get_phyrx_abort(struct hal_rx_mon_ppdu_info *ppdu_info,
 					 const void *tlv_data)
@@ -423,6 +424,79 @@ ath12k_wifi8_dp_rx_mon_check_phyrx_abort(struct ath12k_pdev_dp *pdev_dp,
 }
 EXPORT_SYMBOL(ath12k_wifi8_dp_rx_mon_check_phyrx_abort);
 
+static void
+ath12k_wifi8_dp_rx_mon_notify_undecoded_metadata(
+		struct hal_rx_mon_ppdu_info *ppdu_info,
+		struct ath12k_pdev_mon_dp_extn *mon_dp_extn)
+{
+	struct ath12k_undecoded_metadata_notif_event event;
+	struct ath12k_undecoded_metadata_event *evt;
+	struct ath12k_phyrx_abort_info *abort_info;
+	struct sk_buff *skb;
+
+	abort_info = ppdu_info->ppdu_info_extn.phyrx_abort_info;
+	if (!abort_info)
+		return;
+
+	skb = alloc_skb(sizeof(*evt), GFP_ATOMIC);
+	if (!skb) {
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "undecoded: alloc_skb failed for notifier\n");
+		return;
+	}
+
+	evt = skb_put_zero(skb, sizeof(*evt));
+	evt->phyrx_abort_reason = abort_info->phyrx_abort_reason;
+	evt->l_sig_length = abort_info->l_sig_length;
+	evt->l_sig_a_parity = abort_info->l_sig_a_parity;
+	evt->l_sig_a_pkt_type = abort_info->l_sig_a_pkt_type;
+	evt->ht_length = abort_info->ht_length;
+	evt->ht_stbc = abort_info->ht_stbc;
+	evt->ht_crc = abort_info->ht_crc;
+	evt->vht_crc = abort_info->vht_crc;
+	evt->vht_no_txop_ps = abort_info->vht_no_txop_ps;
+	evt->he_sig_a_su_crc = abort_info->he_sig_a_su_crc;
+	evt->he_sig_a_mu_dl_crc = abort_info->he_sig_a_mu_dl_crc;
+	evt->eht_sig_a_su_crc = abort_info->eht_sig_a_su_crc;
+	evt->eht_sig_a_mu_dl_crc = abort_info->eht_sig_a_mu_dl_crc;
+	evt->uhr_sig_a_su_crc = abort_info->uhr_sig_a_su_crc;
+	evt->uhr_sig_a_mu_dl_crc = abort_info->uhr_sig_a_mu_dl_crc;
+	evt->rssi_comb = ppdu_info->rssi_db_comb_chain_pri20;
+	memcpy(evt->rssi_chain, ppdu_info->ppdu_info_extn.rssi,
+	       sizeof(evt->rssi_chain));
+	evt->tsft = ppdu_info->tsft;
+	evt->chan_num = ppdu_info->chan_num;
+	evt->preamble_type = ppdu_info->preamble_type;
+	evt->mcs = ppdu_info->mcs;
+	evt->nss = ppdu_info->nss;
+	evt->bw = ppdu_info->bw;
+	evt->ppdu_id = ppdu_info->ppdu_id;
+	evt->phyrx_error_mask =
+		mon_dp_extn->undecoded_meta->phyrx_error_mask;
+	evt->phyrx_error_mask_cont =
+		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont;
+	evt->phyrx_error_mask_cont2 =
+		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont2;
+	evt->phyrx_error_mask_cont3 =
+		mon_dp_extn->undecoded_meta->phyrx_error_mask_cont3;
+
+	memset(&event, 0, sizeof(event));
+	event.skb = skb;
+
+	ath12k_undecoded_metadata_notif_call_chain(&event);
+
+	/*
+	 * NOTE: SKB is producer-owned.
+	 * Freeing or cloning from listener context will cause leaks.
+	 * Only skb_copy() is permitted if a separate buffer is needed.
+	 */
+	if (refcount_read(&skb->users) > 1)
+		ath12k_err(NULL,
+			   "undecoded: SKB ref cnt held by listener = %d\n",
+			   refcount_read(&skb->users));
+	kfree_skb(skb);
+}
+
 void
 ath12k_wifi8_dp_rx_ppdu_undecoded_metadata(struct ath12k_pdev_dp *pdev_dp,
 					   struct hal_rx_mon_ppdu_info *ppdu_info)
@@ -454,11 +528,7 @@ ath12k_wifi8_dp_rx_ppdu_undecoded_metadata(struct ath12k_pdev_dp *pdev_dp,
 				   mon_dp_extn->undecoded_meta->rx_undecoded_count);
 	}
 
-	/* TODO: Report undecoded frame metadata to userspace via cfg80211 vendor
-	 * event or Linux notifier chain. This should include:
-	 * - PHY abort reason (ppdu_info->ppdu_info_extn.phyrx_abort_reason)
-	 * - SIG/CRC fields from ppdu_info->ppdu_info_extn
-	 * - Other relevant PPDU metadata (channel, timestamp, RSSI, etc.)
-	 */
+	ath12k_wifi8_dp_rx_mon_notify_undecoded_metadata(ppdu_info,
+							 mon_dp_extn);
 }
 EXPORT_SYMBOL(ath12k_wifi8_dp_rx_ppdu_undecoded_metadata);

@@ -675,6 +675,18 @@ int ath12k_custom_tx_extn(struct ath12k_raw_pkt_ctx *raw_pkt_ctx)
 
 		__skb_unlink(skb, &raw_pkt_ctx->pkt_list);
 
+		/* SW mcast encrypt for acfg raw TX: encrypt matching unprotected
+		 * mcast data frames in place before they are queued to WMI. The
+		 * helper no-ops for frames that do not match the configured
+		 * mcast_encrypt_addr/key, and frees the skb itself on encrypt
+		 * failure. The skb is already unlinked from pkt_list here, so on
+		 * consume just roll back the tracking slot added above and skip.
+		 */
+		if (ath12k_mcast_encrypt_mon_extn(ar, skb)) {
+			raw_pkt_ctx->num_tracked_skbs--;
+			continue;
+		}
+
 		/* Queue the SKB to WMI management TX queue */
 		skb_queue_tail(q, skb);
 
@@ -2284,7 +2296,8 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
 /**
  * send_home_offchan_stats_work_fn_with_txn - Workqueue handler for
  * home/off-channel event with transaction ID
- * @work: Pointer to the work_struct member of offchan_event_work_with_txn structure
+ * @wiphy: Wiphy whose serialized workqueue is executing the event
+ * @work: Pointer to the wiphy_work member
  *
  * This function is scheduled by schedule_home_offchan_stats_event_ext() and runs in
  * process context. It retrieves the parent offchan_event_work_with_txn structure
@@ -2297,10 +2310,13 @@ int send_home_offchan_stats_event_with_transaction_id(struct wireless_dev *wdev,
  * Context: Process context (workqueue)
  * Memory: Frees the offchan_event_work_with_txn structure
  */
-static void send_home_offchan_stats_work_fn_with_txn(struct work_struct *work)
+static void send_home_offchan_stats_work_fn_with_txn(struct wiphy *wiphy,
+						      struct wiphy_work *work)
 {
 	struct offchan_event_work_with_txn *event_work =
 			container_of(work, struct offchan_event_work_with_txn, work);
+
+	lockdep_assert_wiphy(wiphy);
 
 	send_home_offchan_stats_event_with_transaction_id(event_work->wdev,
 							  event_work->transaction_id,
@@ -2314,6 +2330,9 @@ int schedule_home_offchan_stats_event_ext(struct wireless_dev *wdev, u32 transac
 {
 	struct offchan_event_work_with_txn *work;
 
+	if (!wdev)
+		return -EINVAL;
+
 	work = kzalloc(sizeof(*work), GFP_ATOMIC);
 	if (!work) {
 		ath12k_err(NULL, "Failed to allocate memory for event work, transaction 0x%x\n",
@@ -2324,8 +2343,9 @@ int schedule_home_offchan_stats_event_ext(struct wireless_dev *wdev, u32 transac
 	work->wdev = wdev;
 	work->transaction_id = transaction_id;
 	work->raw_pkt_ctx = raw_pkt_ctx;
-	INIT_WORK(&work->work, send_home_offchan_stats_work_fn_with_txn);
-	schedule_work(&work->work);
+	wiphy_work_init(&work->work,
+			send_home_offchan_stats_work_fn_with_txn);
+	wiphy_work_queue(wdev->wiphy, &work->work);
 
 	return 0;
 }

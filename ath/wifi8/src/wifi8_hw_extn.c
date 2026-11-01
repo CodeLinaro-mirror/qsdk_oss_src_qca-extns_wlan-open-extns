@@ -97,6 +97,7 @@ static const struct ieee80211_ops_extn ath12k_ops_wifi8_extn = {
 	.mesh_peer_update_caps_extn = ath12k_mac_op_mesh_peer_update_caps_extn_wifi8,
 #endif
 	.get_best_scan_radio_6ghz_power_mode = ath12k_get_best_6ghz_power_extn,
+	.vht_11ng_enabled = ath12k_vht_11ng_enabled_extn,
 };
 
 void ath12k_wifi8_hw_init_extn(struct ath12k_base *ab)

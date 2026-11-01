@@ -40,6 +40,7 @@
 #include "dp_mon_extn.h"
 #include "extap_extn.h"
 #include "../dp_mon.h"
+#include "../dp_tx_mon.h"
 #include "../net/mac80211/ieee80211_i.h"
 
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
@@ -3779,6 +3780,11 @@ static int ath12k_vendor_set_arvif_params(struct ath12k_link_vif *arvif, u32 par
 		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
 			   "rx_mon_fill_lvl: set requested val=%u\n", value);
 		ret = ath12k_dp_mon_set_fill_level(&ar->dp, value);
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_MON_FILL_LVL:
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "tx_mon_fill_lvl: set requested val=%u\n", value);
+		ret = ath12k_dp_tx_mon_set_fill_level(&ar->dp, value);
 		break;
 	case PARAM_RADIO_TXCHAINSOFT:
 		ret = ath12k_set_chainmask(ar, value, true,
@@ -7760,6 +7766,43 @@ static int ath12k_vendor_set_radio_params(struct wiphy *wiphy,
         return ret;
 }
 
+/* To continue for other cases this function needs to return -EOPNOTSUPP */
+static int ath12k_vendor_set_vif_params_extn(struct ieee80211_vif *vif,
+						 u32 param, u32 value)
+{
+	struct ath12k_vif *ahvif;
+	int ret = 0;
+
+	switch (param) {
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_11NG:
+		ath12k_err(NULL, "VHT_11NG set request vif=%p value=%u\n",
+			   vif, value);
+		ahvif = ath12k_vif_to_ahvif(vif);
+		if (!ahvif) {
+			ath12k_err(NULL, "VHT_11NG set failed: invalid vif=%p\n", vif);
+			ret = -EINVAL;
+			break;
+		}
+
+		if (value != 0 && value != 1) {
+			ath12k_err(NULL, "VHT_11NG set failed: invalid value=%u\n",
+				   value);
+			ret = -EINVAL;
+			break;
+		}
+
+		ahvif->ath12k_vif_extn.vht_11ng = !!value;
+		ath12k_dbg(NULL, ATH12K_DBG_CFG, "Set VHT_11NG for vif=%p enabled=%u\n",
+			   vif, ahvif->ath12k_vif_extn.vht_11ng);
+		break;
+	default:
+		ret = -EOPNOTSUPP;
+		break;
+	}
+
+	return ret;
+}
+
 /* Find the link-vif of the wdev with the link id to set params
  * If link id is invalid use the default link
  */
@@ -7788,6 +7831,9 @@ int ath12k_vendor_set_wifi_params_extn(struct wiphy *wiphy,
                 return -EINVAL;
 
         value = *data;
+	ret = ath12k_vendor_set_vif_params_extn(vif, param, value);
+	if (ret != -EOPNOTSUPP)
+		return ret;
 
         ahvif = ath12k_vif_to_ahvif(vif);
         if (!ahvif)
@@ -11926,6 +11972,12 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		ret = 0;
 		break;
 	}
+	case QCA_WLAN_VENDOR_VDEV_PARAM_TX_MON_FILL_LVL: {
+		ret = ath12k_dp_tx_mon_get_fill_level(&ar->dp, value);
+		ath12k_dbg(NULL, ATH12K_DBG_DP_MON,
+			   "tx_mon_fill_lvl: get cur_fill_lvl=%llu\n", *value);
+		break;
+	}
 	case QCA_WLAN_VENDOR_VDEV_PARAM_TEST:
 		*value = 0;
 		ret = 0;
@@ -12431,6 +12483,10 @@ static int ath12k_vendor_get_arvif_params(struct ath12k_link_vif *arvif,
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_MCS_10_11_NQ2Q_PEER_SUPP:
 		*value = arvif->arvif_extn.vht_mcs10_11_nq2q_peer_supp ? 1 : 0;
+		ret = 0;
+		break;
+	case QCA_WLAN_VENDOR_VDEV_PARAM_VHT_11NG:
+		*value = arvif->ahvif->ath12k_vif_extn.vht_11ng ? 1 : 0;
 		ret = 0;
 		break;
 	case QCA_WLAN_VENDOR_VDEV_PARAM_UNDECODED_METADATA_CAPTURE: {

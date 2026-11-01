@@ -10,6 +10,7 @@
 #include <linux/if_ether.h>
 #include <linux/mhi.h>
 #include <linux/uuid.h>
+#include <linux/kref.h>
 #include "../../net/mac80211/qcn_extns/cmn_extn.h"
 #include "rropinfo.h"
 #include "sa_api.h"
@@ -47,6 +48,7 @@ struct wmi_scan_event;
 struct sk_buff;
 struct wmi_scan_blanking_params_info;
 struct wmi_vdev_ratemask_arg;
+struct ath12k_srng_dump_filter;
 
 #ifndef ATH12K_NUM_CHANS
 #define ATH12K_NUM_CHANS 102
@@ -67,6 +69,7 @@ struct ath12k_vif_extn {
 	u8 ssid_len;
 	u8 bssid[ETH_ALEN];
 	bool bssid_set;
+	bool vht_11ng;
 };
 
 struct ath12k_dp_vif_extn {
@@ -549,6 +552,31 @@ enum ath12k_dfs_chan_state {
 	ATH12K_DFS_CHAN_STATE_PRECAC_COMPLETED,
 };
 
+/* Self-contained SW crypto key for mcast monitor encrypt/decrypt.
+ * Deliberately decoupled from struct ieee80211_key: this key is a
+ * monitor-mode-only side channel installed via sysfs, never through
+ * mac80211's normal key-management lifecycle (ieee80211_key_alloc/
+ * ieee80211_key_link). The CCMP/GCMP AAD/nonce/PN helpers are the
+ * exported net/mac80211/wpa.c primitives (see ath12k_mcast_decrypt_mon_extn/
+ * ath12k_mcast_encrypt_mon_extn in core_extn.c).
+ * @tfm: ccm(aes) or gcm(aes)
+ * @cipher: WLAN_CIPHER_SUITE_{CCMP,CCMP_256,GCMP,GCMP_256}
+ * @keyidx: key index from sysfs key write
+ * @mic_len: length based on cipher
+ * @tx_pn: PN counter for the encrypt path
+ * @ref: reference count; one owner ref held by mcast_encrypt_key while
+ *	installed, plus one datapath ref per in-flight TX/RX crypto op. Freed
+ *	when the count drops to zero.
+ */
+struct ath12k_mcast_key {
+	struct crypto_aead *tfm;
+	u32 cipher;
+	u8 keyidx;
+	u8 mic_len;
+	atomic64_t tx_pn;
+	struct kref ref;
+};
+
 /**
  * struct ath12k_extn - ath12k driver private extensions
  * @esp:  esp extensions structure
@@ -584,6 +612,13 @@ enum ath12k_dfs_chan_state {
  * @change_scan_vap_pwr_mode_work: A flag set when receiving an AFC power or afc
  *	expiry to request a scan VAP power-mode reselection. Consumed and
  *	cleared by ath12k_reg_notifier() to queue the work above.
+ * @mcast_encrypt_addr: Mcast address for SW encrypt/decrypt in monitor mode
+ * @mcast_encrypt_key: SW key for mcast encrypt/decrypt (CCMP/GCMP only)
+ * @mcast_kobj: sysfs kobject for mcast_encrypt/ under radioN
+ * @mcast_key_lock: spinlock (bh) protecting mcast_encrypt_addr and the
+ *	mcast_encrypt_key pointer itself (swap/lookup only). Does not protect
+ *	the key object's lifetime - that is governed by ath12k_mcast_key's
+ *	kref; do not hold this lock across crypto operations.
  */
 struct ath12k_extn {
 	struct esp_extn esp;
@@ -597,6 +632,12 @@ struct ath12k_extn {
 	DECLARE_BITMAP(blockdfs_disabled_chans, 64);
 	s32 cac_timeout_override_ms;
 	struct ath12k_vif_sysfs_entry *vif_entries[17];
+
+	/* mcast SW encrypt/decrypt for monitor mode */
+	u8 mcast_encrypt_addr[ETH_ALEN];
+	struct ath12k_mcast_key *mcast_encrypt_key;
+	struct kobject *mcast_kobj;
+	spinlock_t mcast_key_lock;
 	u16 dcs_config_bitmap;
 	struct rtplinst_extn rtplinst[ATH12K_NUM_CHANS];
 	struct wlan_intf_extn wlan_intf;
@@ -652,7 +693,7 @@ struct ath12k_reg_info_extn {
 
 /**
  * struct offchan_event_work_with_txn - Work structure for off-channel event
- * @work: Work structure for scheduling the event
+ * @work: Per-wiphy work structure for scheduling the event
  * @wdev: Pointer to the wireless device
  * @transaction_id: Transaction ID for correlation with user-space request
  * @raw_pkt_ctx: Pointer to raw packet context for per-packet status
@@ -661,7 +702,7 @@ struct ath12k_reg_info_extn {
  * with transaction ID support for request-response correlation.
  */
 struct offchan_event_work_with_txn {
-	struct work_struct work;
+	struct wiphy_work work;
 	struct wireless_dev *wdev;
 	u32 transaction_id;
 	struct ath12k_raw_pkt_ctx *raw_pkt_ctx;
@@ -953,6 +994,12 @@ static inline void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif)
 	return;
 }
 
+static inline bool
+ath12k_vht_11ng_enabled_extn(struct ieee80211_vif *vif)
+{
+	return false;
+}
+
 static inline void ath12k_gpr_debugfs_register_extn(struct ath12k_link_vif *arvif,
 						     struct dentry *link_debugfs)
 {
@@ -1064,6 +1111,18 @@ static inline void ath12k_sysfs_init_extn(struct ath12k *ar)
 
 static inline void ath12k_sysfs_cleanup_extn(struct ath12k *ar)
 {
+}
+
+static inline bool ath12k_mcast_decrypt_mon_extn(struct ath12k *ar,
+						  struct sk_buff *skb)
+{
+	return false;
+}
+
+static inline bool ath12k_mcast_encrypt_mon_extn(struct ath12k *ar,
+						  struct sk_buff *skb)
+{
+	return false;
 }
 
 static inline void ath12k_wmi_prepare_tx_params_extn(struct sk_buff *skb, struct ath12k_skb_cb *skb_cb,
@@ -1281,8 +1340,9 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
 	return len;
 }
 
-int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
-					   int len)
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt,
+					   const struct ath12k_srng_dump_filter *filter,
+					   char *buf, int size, int len)
 {
 	return len;
 }
@@ -1503,6 +1563,7 @@ struct ath12k_link_vif *ath12k_wifi8_mgmt_handler_extn(struct ieee80211_hw *hw,
 void ath12k_mac_init_arvif_extn(struct ath12k_vif *ahvif,
 				struct ath12k_link_vif *arvif);
 void ath12k_mac_deinit_arvif_extn(struct ath12k_link_vif *arvif);
+bool ath12k_vht_11ng_enabled_extn(struct ieee80211_vif *vif);
 void ath12k_mac_op_add_interface_extn(struct ieee80211_hw *hw,
 				      struct ieee80211_vif *vif);
 void ath12k_rtt_vdev_assoc_extn(struct ath12k *ar,
@@ -1674,6 +1735,8 @@ void ath12k_core_nol_extn_regdom_change_radio_locked(struct ath12k *ar);
 
 void ath12k_sysfs_init_extn(struct ath12k *ar);
 void ath12k_sysfs_cleanup_extn(struct ath12k *ar);
+bool ath12k_mcast_decrypt_mon_extn(struct ath12k *ar, struct sk_buff *skb);
+bool ath12k_mcast_encrypt_mon_extn(struct ath12k *ar, struct sk_buff *skb);
 
 /**
  * schedule_home_offchan_stats_event_ext - Schedule home/off-channel statistics event
@@ -2217,8 +2280,9 @@ ssize_t ath12k_debugfs_dump_device_mgmt_srng_stats_extn(struct ath12k_base *ab, 
  * @len: Length used
  * @size: Max size of the buffer
  */
-int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt, char *buf, int size,
-					   int len);
+int ath12k_wifi8_mgmt_dump_ring_stats_extn(struct ath12k_mgmt *mgmt,
+					   const struct ath12k_srng_dump_filter *filter,
+					   char *buf, int size, int len);
 
 /**
  * ath12k_wifi8_mgmt_dump_ring_sizes_extn - Dump mgmt ring sizes including highpri

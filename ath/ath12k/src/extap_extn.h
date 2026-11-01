@@ -25,6 +25,14 @@ struct ath12k_dp_peer;
 #define DHCP_SERVER_PORT 67
 #define DHCP_MAGIC_COOKIE 0x63825363
 
+/* Return values for ath12k_extap_rx():
+ *  > 0  : drop the frame
+ *    0  : converted — DMAC rewritten, deliver to network stack
+ *  < 0  : bypass — frame needs mac80211 processing (e.g. EAPOL)
+ */
+#define EXTAP_RX_BYPASS		(-1)
+#define EXTAP_RX_DROP		ENOENT
+
 #define NA_HDR_LEN (sizeof(struct nd_opt_hdr) + ETH_ALEN)
 
 struct ath12k_vif;

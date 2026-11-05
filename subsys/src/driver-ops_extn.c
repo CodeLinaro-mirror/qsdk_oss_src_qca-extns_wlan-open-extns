@@ -1295,7 +1295,7 @@ static int ieee80211_mesh_peer_update_cap(struct station_parameters *params,
 	}
 
 	if (mode < MESH_PREAMBLE_HE)
-	    return 0;
+		return 0;
 
 	ret = ieee80211_mesh_peer_he_mcsnssmap_update(mesh_he_cap, nss, bw,
 						      &params->link_sta_params.he_capa_len);
@@ -1312,6 +1312,34 @@ static int ieee80211_mesh_peer_update_cap(struct station_parameters *params,
 
 	return 0;
 }
+
+static u8 ieee80211_mesh_intersect_peer_add_mode_bss_mode(u8 mode,
+							  const struct mesh_bss_conf *mesh_caps)
+{
+	u8 bss_max = MESH_PREAMBLE_OFDM;
+
+	if (mesh_caps) {
+		/* Limit bss_max to HE if the BSS >= HE */
+		if (mesh_caps->eht_cap || mesh_caps->he_cap) {
+			bss_max = MESH_PREAMBLE_HE;
+		} else if (mesh_caps->vht_cap) {
+			bss_max = MESH_PREAMBLE_VHT;
+		} else if (mesh_caps->ht_cap) {
+			bss_max = MESH_PREAMBLE_HT;
+		}
+	}
+
+	/* Cap requested mode to BSS capability ceiling. */
+	if (mode > bss_max)
+		mode = bss_max;
+
+	/* For >= HE BSS, default auto-mode to HE. */
+	if (!mode && mesh_caps && (mesh_caps->he_cap || mesh_caps->eht_cap))
+		mode = MESH_PREAMBLE_HE;
+
+	return mode;
+}
+
 
 /**
  * ieee80211_mesh_station_param_update: Populates default capability and updates specific
@@ -1332,6 +1360,7 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	struct ieee80211_link_data *link;
 	struct ieee80211_bss_conf *link_conf;
 	struct ieee80211_vif *vif;
+	struct mesh_bss_conf *mesh_caps;
 	int ret = 0;
 	u64 caps;
 	enum nl80211_band band = NUM_NL80211_BANDS;
@@ -1360,6 +1389,11 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	    || (bw >= MESH_BW_MAX))
 		return -EINVAL;
 
+	mesh_caps = link_conf->bss_conf_extn ?
+		    &link_conf->bss_conf_extn->mesh_bss_caps : NULL;
+
+	mode = ieee80211_mesh_intersect_peer_add_mode_bss_mode(mode, mesh_caps);
+
 	band = link_conf->chanreq.oper.chan->band;
 
 	station_params->sta_flags_mask = BIT(NL80211_STA_FLAG_WME) |
@@ -1385,9 +1419,11 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 		station_params->link_sta_params.link_id =
 			link_conf->link_id;
 
-	station_params->link_sta_params.mld_mac =
-		is_zero_ether_addr(mesh_params->peer_mld_mac) ?
-		NULL : mesh_params->peer_mld_mac;
+	/* Do not pass mld_mac at peer-add: all peers start as HE and upgrade
+	 * to EHT/MLD dynamically via beacon ML-IE + WMI peer reassoc.
+	 * The MLD MAC from the command is stored in peer->mld.mld_mac for
+	 * beacon intersection */
+	station_params->link_sta_params.mld_mac = NULL;
 
 	station_params->link_sta_params.link_mac =
 			mesh_params->peers[0].peer_link_mac;
@@ -1406,7 +1442,8 @@ static int ieee80211_mesh_station_param_update(struct ieee80211_sub_if_data *sda
 	/* Update the protocol capabilities based on the BW, NSS and mode
 	 * programmed by the user for the mesh peer.
 	 */
-	ret = ieee80211_mesh_peer_update_cap(station_params, bw, nss, mode, band);
+	ret = ieee80211_mesh_peer_update_cap(station_params, bw, nss, mode,
+					     band);
 
 	return ret;
 }
@@ -1882,6 +1919,10 @@ int ieee80211_vendor_mesh_add_local_peer(struct wiphy *wiphy,
 	sta->sta_extn.peer_info.peer_caps_mfp_capability =
 		!!(mesh_params->peers[0].caps & MESH_CAPS_PEER_CAP_MFP_CAPABLE);
 	sta->sta_extn.peer_info.key_installed = false;
+	if (((mesh_params->peers[0].caps >> MESH_CAPS_MODE_OFFSET) & MESH_CAPS_NIBBLE_MASK)
+	    == MESH_PREAMBLE_EHT && !is_zero_ether_addr(mesh_params->peer_mld_mac))
+		ether_addr_copy(sta->sta_extn.peer_info.mld.mld_mac,
+				mesh_params->peer_mld_mac);
 	rcu_read_unlock();
 
 	ret = 0;
@@ -2034,7 +2075,6 @@ EXPORT_SYMBOL(ieee80211_vendor_mesh_set_default_key);
 static void ieee80211_mesh_send_deauth(struct ieee80211_sub_if_data *sdata,
 				       const u8 *peer_addr,
 				       const u8 *bssid,
-				       u16 reason,
 				       bool peer_mfp,
 				       bool key_installed,
 				       u8 *frame_buf)
@@ -2043,7 +2083,8 @@ static void ieee80211_mesh_send_deauth(struct ieee80211_sub_if_data *sdata,
 	struct sk_buff *skb;
 
 	ieee80211_send_deauth_disassoc(sdata, peer_addr, bssid,
-				       IEEE80211_STYPE_DEAUTH, reason,
+				       IEEE80211_STYPE_DEAUTH,
+				       WLAN_REASON_DEAUTH_LEAVING,
 				       false, frame_buf);
 
 	skb = dev_alloc_skb(local->hw.extra_tx_headroom + IEEE80211_DEAUTH_FRAME_LEN);
@@ -2146,6 +2187,7 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 	struct mesh_peer_del_ctx *del_ctx;
 	bool mfp_capable;
 	bool key_installed;
+	unsigned long flags;
 	int ret;
 	u16 sta_aid = 0;
 	u8 frame_buf[IEEE80211_DEAUTH_FRAME_LEN];
@@ -2190,7 +2232,6 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 
 	/* Send deauth OTA before tearing down the station's TX path. */
 	ieee80211_mesh_send_deauth(sdata, peer_addr, sdata->vif.addr,
-				   WLAN_REASON_DEAUTH_LEAVING,
 				   mfp_capable, key_installed, frame_buf);
 
 	/* Defer del_station so the ath12k WMI management TX work (queued ahead
@@ -2203,7 +2244,11 @@ int ieee80211_vendor_mesh_delete_local_peer(struct wiphy *wiphy,
 		ether_addr_copy(del_ctx->peer_addr, peer_addr);
 		del_ctx->sta_aid = sta_aid;
 		wiphy_work_init(&del_ctx->work, ieee80211_mesh_peer_del_work);
-		wiphy_work_queue(sdata->local->hw.wiphy, &del_ctx->work);
+		spin_lock_irqsave(&rdev->wiphy_work_lock, flags);
+		if (list_empty(&del_ctx->work.entry))
+			list_add_tail(&del_ctx->work.entry, &rdev->wiphy_work_list);
+		spin_unlock_irqrestore(&rdev->wiphy_work_lock, flags);
+		queue_work(system_unbound_wq, &rdev->wiphy_work);
 		return 0;
 	}
 
@@ -2318,7 +2363,8 @@ static u32 ieee80211_calc_beacon_ie_checksum_raw(const struct ieee80211_mgmt *mg
 				u8 ext_id = pos[2];
 				if (ext_id == WLAN_EID_EXT_HE_CAPABILITY ||
 				    ext_id == WLAN_EID_EXT_HE_OPERATION ||
-				    ext_id == WLAN_EID_EXT_EHT_CAPABILITY)
+				    ext_id == WLAN_EID_EXT_EHT_CAPABILITY ||
+					    ext_id == WLAN_EID_EXT_EHT_MULTI_LINK)
 					checksum = crc32(checksum, pos, 2 + ie_len);
 			}
 			break;
@@ -2479,6 +2525,9 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 	struct link_sta_info *link_sta;
 	int ret;
 
+	if (!local || !sdata)
+		return;
+
 	lockdep_assert_wiphy(local->hw.wiphy);
 
 	/* TODO: Currently only SLO support is enabled, link_sta extraction to be
@@ -2493,6 +2542,13 @@ ieee80211_update_mesh_peer_caps_work(struct wiphy *wiphy, struct wiphy_work *wor
 	if (ret < 0) {
 		printk(KERN_ERR "Mesh peer update failed for peer AID %d\n", sta->sta.aid);
 		sta->sta.sta_extn.peer_info.cap_update_failures++;
+		/* Mark intersection incomplete so the next beacon retries the
+		 * WMI update rather than being skipped by the checksum gate. */
+		sta->sta.sta_extn.peer_info.intersection_done = false;
+		if (sta->sta.sta_extn.peer_info.mld.upgraded) {
+			sta->sta.sta_extn.peer_info.mld.upgraded = false;
+			sta->sta.sta_extn.peer_info.mld.ml_upgrade_failed = true;
+		}
 		return;
 	} else {
 		sta->sta.sta_extn.peer_info.intersection_done = true;
@@ -2524,6 +2580,55 @@ ieee80211_timeout_mesh_peer_work(struct wiphy *wiphy, struct wiphy_work *work)
 	if (ret < 0)
 	    printk("Failure to delete timed out peer[AID]: %d", sta_info->sta.aid);
 }
+
+static bool ieee80211_mesh_peer_ml_parse(struct ieee802_11_elems *elems,
+					 struct mesh_peer_mld_ctx *mld)
+{
+	const struct ieee80211_multi_link_elem *ml;
+	const struct ieee80211_mle_basic_common_info *common;
+	u8 common_size;
+
+	if (!elems || !mld)
+		return false;
+
+	if (!elems->ml_basic || !elems->ml_basic_len || !elems->eht_cap ||
+	    !elems->eht_cap_len ||
+	    !ieee80211_mle_type_ok((const u8 *)elems->ml_basic,
+				    IEEE80211_ML_CONTROL_TYPE_BASIC,
+				    elems->ml_basic_len))
+		return false;
+
+	ml = elems->ml_basic;
+	common_size = ieee80211_mle_common_size((const u8 *)ml);
+	if (common_size < sizeof(*ml) + sizeof(*common) ||
+	    common_size > elems->ml_basic_len)
+		return false;
+
+	common = (const void *)ml->variable;
+	if (common->len < ETH_ALEN || !is_valid_ether_addr(common->mld_mac_addr))
+		return false;
+
+	if (!mld->upgraded) {
+		if (!is_zero_ether_addr(mld->mld_mac) &&
+		    !ether_addr_equal(mld->mld_mac, common->mld_mac_addr)) {
+			pr_warn_ratelimited("managed_mesh_dbg ml_parse: MLD MAC mismatch — configured(%pM) beacon(%pM)\n",
+					    mld->mld_mac, common->mld_mac_addr);
+			mld->ml_ie_invalid = true;
+			return false;
+		}
+		ether_addr_copy(mld->mld_mac, common->mld_mac_addr);
+	} else {
+		/* After upgrade, verify the MLD MAC has not changed. */
+		if (!ether_addr_equal(mld->mld_mac, common->mld_mac_addr)) {
+			pr_warn_ratelimited("managed_mesh_dbg ml_parse: identity changed after upgrade MLD MAC:(%pM)\n",
+					    mld->mld_mac);
+			mld->ml_ie_invalid = true;
+			return false;
+		}
+	}
+	return true;
+}
+
 
 static bool ieee80211_mesh_peer_bw_update(struct link_sta_info *link_sta,
 					  struct ieee802_11_elems *elems,
@@ -2707,14 +2812,22 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 					   enum nl80211_band band)
 {
 	struct wiphy *wiphy = NULL;
-	struct sta_info *sta = container_of(pubsta, struct sta_info, sta);
+	struct cfg80211_registered_device *_rdev;
+	struct sta_info *sta;
 	struct link_sta_info *link_sta;
 	struct ieee80211_supported_band *sband;
+	struct mesh_peer_info *peer;
+	struct mesh_bss_conf *mesh_caps;
+	unsigned long _flags;
+	bool ml_valid = false;
 	bool cap_changed = false;
 	bool rsn_check_passed = false;
 
-	if (!sdata->local)
+	if (!sdata->local || !pubsta || !link_conf)
 		return -EINVAL;
+
+	sta = container_of(pubsta, struct sta_info, sta);
+	peer = &sta->sta.sta_extn.peer_info;
 
 	wiphy = sdata->local->hw.wiphy;
 
@@ -2731,70 +2844,161 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 	if (!sband)
 		return -EINVAL;
 
+	mesh_caps = link_conf->bss_conf_extn ?
+		    &link_conf->bss_conf_extn->mesh_bss_caps : NULL;
+
 	/* Validate basic requirements */
 	if (!elems->supp_rates) {
 		pubsta->sta_extn.peer_info.cap_update_failures++;
 		return -EINVAL;
 	}
 
-	/* Update HT capabilities.
-	 * Per 802.11-2020 §10.3.3, HT rates must not be used when the pairwise
-	 * cipher is TKIP.  When peer_ht_restricted is set (TKIP detected during
-	 * RSN IE check), suppress HT caps to force legacy rates.  The peer is
-	 * not rejected — this preserves connectivity with legacy hardware. */
+	/* Update HT capabilities; cap at local BSS mode. */
 	if (elems->ht_cap_elem) {
 		if (sta->sta.sta_extn.peer_info.peer_ht_restricted) {
 			memset(&link_sta->pub->ht_cap, 0, sizeof(link_sta->pub->ht_cap));
 			cap_changed = true;
-		} else {
+		} else if (mesh_caps && mesh_caps->ht_cap) {
 			struct ieee80211_sta_ht_cap old_ht_cap = link_sta->pub->ht_cap;
 
 			ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, sband, elems->ht_cap_elem,
 							  link_sta);
 
-			if (memcmp(&old_ht_cap, &link_sta->pub->ht_cap, sizeof(old_ht_cap)))
+			if (memcmp(&old_ht_cap, &link_sta->pub->ht_cap, sizeof(old_ht_cap))) {
 				cap_changed = true;
+				pr_info("managed_mesh_dbg: peer %pM HT caps %s\n", sta->addr,
+					!old_ht_cap.ht_supported ? "upgraded" : "updated");
+			}
 		}
+	} else if (link_sta->pub->ht_cap.ht_supported) {
+		memset(&link_sta->pub->ht_cap, 0, sizeof(link_sta->pub->ht_cap));
+		cap_changed = true;
+		pr_info("managed_mesh_dbg: peer %pM HT caps cleared\n", sta->addr);
 	}
 
-	/* Update VHT capabilities */
-	if (elems->vht_cap_elem) {
+	/* Update VHT capabilities; cap at local BSS mode. */
+	if (mesh_caps && mesh_caps->vht_cap && elems->vht_cap_elem) {
 		struct ieee80211_sta_vht_cap old_vht_cap = link_sta->pub->vht_cap;
 
 		ieee80211_vht_cap_ie_to_sta_vht_cap(sdata, sband, elems->vht_cap_elem,
 						    NULL, link_sta);
 
-		if (memcmp(&old_vht_cap, &link_sta->pub->vht_cap, sizeof(old_vht_cap)))
+		if (memcmp(&old_vht_cap, &link_sta->pub->vht_cap, sizeof(old_vht_cap))) {
 			cap_changed = true;
+			pr_info("managed_mesh_dbg: peer %pM VHT caps %s\n", sta->addr,
+				!old_vht_cap.vht_supported ? "upgraded" : "updated");
+		}
+	} else if (link_sta->pub->vht_cap.vht_supported) {
+		memset(&link_sta->pub->vht_cap, 0, sizeof(link_sta->pub->vht_cap));
+		cap_changed = true;
+		pr_info("managed_mesh_dbg: peer %pM VHT caps cleared\n", sta->addr);
 	}
 
-	/* Update HE capabilities */
-	if (elems->he_cap && elems->he_cap_len) {
+	/* Update HE capabilities; cap at local BSS mode. */
+	if (mesh_caps && mesh_caps->he_cap && elems->he_cap && elems->he_cap_len) {
 		struct ieee80211_sta_he_cap old_he_cap = link_sta->pub->he_cap;
 
 		ieee80211_he_cap_ie_to_sta_he_cap(sdata, sband, elems->he_cap,
 						  elems->he_cap_len, elems->he_6ghz_capa,
 						  link_sta);
 
-		if (memcmp(&old_he_cap, &link_sta->pub->he_cap, sizeof(old_he_cap)))
+		if (memcmp(&old_he_cap, &link_sta->pub->he_cap, sizeof(old_he_cap))) {
 			cap_changed = true;
+			pr_info("managed_mesh_dbg: peer %pM HE caps %s\n", sta->addr,
+				!old_he_cap.has_he ? "upgraded" : "updated");
+		}
+	} else if (link_sta->pub->he_cap.has_he) {
+		memset(&link_sta->pub->he_cap, 0, sizeof(link_sta->pub->he_cap));
+		cap_changed = true;
+		pr_info("managed_mesh_dbg: peer %pM HE caps cleared\n", sta->addr);
 	}
 
-	/* Update EHT capabilities */
-	if (elems->eht_cap && elems->eht_cap_len) {
-		struct ieee80211_sta_eht_cap old_eht_cap = link_sta->pub->eht_cap;
+	/* Skip EHT cap processing on non-EHT BSS to avoid sending EHT peer
+	 * assoc to firmware.
+	 * For upgraded peers, EHT IE absence triggers the ML downgrade path
+	 */
+	if (mesh_caps && mesh_caps->eht_cap) {
+		if (elems->eht_cap && elems->eht_cap_len) {
+			struct ieee80211_sta_eht_cap old_eht_cap = link_sta->pub->eht_cap;
 
-		ieee80211_eht_cap_ie_to_sta_eht_cap(sdata, sband, elems->he_cap,
-						    elems->he_cap_len, elems->eht_cap,
-						    elems->eht_cap_len,	link_sta);
+			ieee80211_eht_cap_ie_to_sta_eht_cap(sdata, sband, elems->he_cap,
+							    elems->he_cap_len, elems->eht_cap,
+							    elems->eht_cap_len, link_sta);
 
-		if (memcmp(&old_eht_cap, &link_sta->pub->eht_cap, sizeof(old_eht_cap)))
+			if (memcmp(&old_eht_cap, &link_sta->pub->eht_cap, sizeof(old_eht_cap))) {
+				cap_changed = true;
+				pr_info("managed_mesh_dbg: peer %pM EHT caps %s\n", sta->addr,
+					!old_eht_cap.has_eht ? "upgraded" : "updated");
+			}
+		} else if (!peer->mld.upgraded && link_sta->pub->eht_cap.has_eht) {
+			memset(&link_sta->pub->eht_cap, 0, sizeof(link_sta->pub->eht_cap));
 			cap_changed = true;
+			pr_info("managed_mesh_dbg: peer %pM EHT caps cleared\n", sta->addr);
+		}
+	}
+
+	/* WAR: phymode downgrade to legacy (11A/B/G/N) via is_assoc=false
+	 * WMI peer_assoc triggers a rate-control assertion (ratectrl.c:582).
+	 * Disconnect instead.
+	 * TODO: revert once FW handles phymode downgrade in peer_assoc update. */
+	if (cap_changed &&
+	    !link_sta->pub->ht_cap.ht_supported &&
+	    !link_sta->pub->vht_cap.vht_supported &&
+	    !link_sta->pub->he_cap.has_he) {
+		peer->cnt_cap_downgrade++;
+		pr_info("managed_mesh_dbg: peer %pM downgraded to legacy — disconnecting (FW WAR)\n",
+			sta->addr);
+		_rdev = wiphy_to_rdev(wiphy);
+		spin_lock_irqsave(&_rdev->wiphy_work_lock, _flags);
+		if (list_empty(&sta->sta.sta_extn.timeout_wk.entry))
+			list_add_tail(&sta->sta.sta_extn.timeout_wk.entry, &_rdev->wiphy_work_list);
+		spin_unlock_irqrestore(&_rdev->wiphy_work_lock, _flags);
+		queue_work(system_unbound_wq, &_rdev->wiphy_work);
+		return -EUCLEAN;
 	}
 
 	/* Update Operating BW for the peer */
 	if (ieee80211_mesh_peer_bw_update(link_sta, elems, band))
 		cap_changed = true;
+
+	if (mesh_caps && mesh_caps->eht_cap && ieee80211_vif_is_mld(&sdata->vif)) {
+		ml_valid = ieee80211_mesh_peer_ml_parse(elems, &peer->mld);
+
+		if (ml_valid) {
+			if (!peer->mld.upgraded) {
+				peer->mld.upgraded = true;
+				cap_changed = true;
+				pr_info("managed_mesh_dbg: peer %pM EHT upgrade — MLD MAC %pM\n",
+					sta->addr, peer->mld.mld_mac);
+			}
+		} else if (peer->mld.upgraded ||
+			   (elems->eht_cap && !elems->ml_basic) ||
+			   (!elems->eht_cap && !is_zero_ether_addr(peer->mld.mld_mac))) {
+			/* Disconnect when:
+			 * - peer was EHT-upgraded but ML-IE is now gone, or
+			 * - peer advertises EHT cap but never had an ML-IE, or
+			 * - peer was added with explicit EHT (MLD MAC seeded) but
+			 *   beacon now shows no EHT cap — downgrade from commanded
+			 *   EHT to HE. */
+			peer->cnt_cap_downgrade++;
+			pr_info("managed_mesh_dbg: peer %pM %s, disconnecting\n",
+				sta->addr,
+				elems->eht_cap ? "EHT cap present but ML-IE absent" :
+				peer->mld.upgraded ? "EHT cap and ML-IE both absent" :
+						     "Peer add command as explicit EHT but beacon has no EHT cap or ML-IE");
+			_rdev = wiphy_to_rdev(wiphy);
+			spin_lock_irqsave(&_rdev->wiphy_work_lock, _flags);
+			if (list_empty(&sta->sta.sta_extn.timeout_wk.entry))
+				list_add_tail(&sta->sta.sta_extn.timeout_wk.entry, &_rdev->wiphy_work_list);
+			spin_unlock_irqrestore(&_rdev->wiphy_work_lock, _flags);
+			queue_work(system_unbound_wq, &_rdev->wiphy_work);
+			return -EUCLEAN;
+		} else {
+			/* ML-IE present but invalid (e.g. MLD MAC mismatch) —
+			 * non-fatal; ml_ie_invalid is set, retry next beacon. */
+			peer->cap_update_failures++;
+		}
+	}
 
 	/* Schedule update_cap_wk if capabilities changed, or if RSN check
 	 * passed and the peer still needs key install (secure BSS) or
@@ -2802,8 +3006,14 @@ static int ieee80211_mesh_beacon_intersect(struct ieee80211_sub_if_data *sdata,
 	 * is set, since the consumer manages both in that mode. */
 	if (cap_changed || (rsn_check_passed &&
 			    !sta->sta.sta_extn.peer_info.parse_beacon_install_key &&
-			    !sta->sta.sta_extn.peer_info.key_installed))
-		wiphy_work_queue(wiphy, &sta->sta.sta_extn.update_cap_wk);
+			    !sta->sta.sta_extn.peer_info.key_installed)) {
+		_rdev = wiphy_to_rdev(wiphy);
+		spin_lock_irqsave(&_rdev->wiphy_work_lock, _flags);
+		if (list_empty(&sta->sta.sta_extn.update_cap_wk.entry))
+			list_add_tail(&sta->sta.sta_extn.update_cap_wk.entry, &_rdev->wiphy_work_list);
+		spin_unlock_irqrestore(&_rdev->wiphy_work_lock, _flags);
+		queue_work(system_unbound_wq, &_rdev->wiphy_work);
+	}
 
 	return 0;
 }
@@ -3137,8 +3347,10 @@ ieee80211_rx_result
 ieee80211_process_mesh_peer_deauth_disassoc(struct ieee80211_rx_data *rx)
 {
 	struct ieee80211_sub_if_data *sdata = rx->sdata;
+	struct cfg80211_registered_device *_rdev;
 	struct ieee80211_mgmt *mgmt = (void *)rx->skb->data;
 	struct ieee80211_sta *sta;
+	unsigned long _flags;
 	u16 reason;
 
 	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode))
@@ -3196,7 +3408,12 @@ ieee80211_process_mesh_peer_deauth_disassoc(struct ieee80211_rx_data *rx)
 		   ieee80211_is_deauth(mgmt->frame_control) ?
 		   "DeAuth" : "DisAssoc", mgmt->sa, reason);
 
-	wiphy_work_queue(sdata->local->hw.wiphy, &sta->sta_extn.deauth_rx_wk);
+	_rdev = wiphy_to_rdev(sdata->local->hw.wiphy);
+	spin_lock_irqsave(&_rdev->wiphy_work_lock, _flags);
+	if (list_empty(&sta->sta_extn.deauth_rx_wk.entry))
+		list_add_tail(&sta->sta_extn.deauth_rx_wk.entry, &_rdev->wiphy_work_list);
+	spin_unlock_irqrestore(&_rdev->wiphy_work_lock, _flags);
+	queue_work(system_unbound_wq, &_rdev->wiphy_work);
 	rcu_read_unlock();
 
 	return RX_DROP_MONITOR;
@@ -3365,10 +3582,12 @@ EXPORT_SYMBOL(ieee80211_mesh_peer_cleanup);
  */
 void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 {
+	struct cfg80211_registered_device *_rdev;
 	struct sta_info *sta = NULL;
 	struct ieee80211_sub_if_data *sdata =
 		from_timer(sdata, t, u.ap.if_ap_extn.mesh_peer_cleanup_timer);
 	unsigned long now;
+	unsigned long _flags;
 
 	if (!IEEE80211_EXTN_VAP_IS_MESH_MODE(sdata->wdev.vap_submode))
 		return;
@@ -3395,8 +3614,12 @@ void ieee80211_mesh_peer_timeout_check(struct timer_list *t)
 		if (sta->sta.sta_extn.peer_info.beacon_miss_count >=
 		    sdata->u.ap.if_ap_extn.mesh_peer_timeout_cnt) {
 			/* Peer timeout - trigger cleanup */
-			wiphy_work_queue(sdata->local->hw.wiphy,
-					 &sta->sta.sta_extn.timeout_wk);
+			_rdev = wiphy_to_rdev(sdata->local->hw.wiphy);
+			spin_lock_irqsave(&_rdev->wiphy_work_lock, _flags);
+			if (list_empty(&sta->sta.sta_extn.timeout_wk.entry))
+				list_add_tail(&sta->sta.sta_extn.timeout_wk.entry, &_rdev->wiphy_work_list);
+			spin_unlock_irqrestore(&_rdev->wiphy_work_lock, _flags);
+			queue_work(system_unbound_wq, &_rdev->wiphy_work);
 		}
 	}
 	rcu_read_unlock();

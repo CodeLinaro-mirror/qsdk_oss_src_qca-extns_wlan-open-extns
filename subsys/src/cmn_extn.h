@@ -219,27 +219,63 @@ struct mesh_bss_conf {
 };
 
 /**
+ * struct mesh_peer_mld_ctx - ML/EHT transition state for a managed mesh peer
+ * @upgraded: True after a successful WMI peer re-association with ml_enabled=1;
+ *   when set, wifi7/wifi8 HW layer uses mld_mac for WMI peer commands
+ * @mld_mac: Peer MLD MAC address; seeded from the addlocalpeer command for
+ *   explicit EHT peers and confirmed/overwritten on first successful ML-IE
+ *   parse; pre-upgrade beacons with a mismatching MLD MAC set ml_ie_invalid;
+ *   post-upgrade beacons with a changed MLD MAC trigger disconnect
+ * @ml_ie_invalid: Set when ML-IE parse fails or MLD MAC mismatches;
+ *   informational flag surfaced via peer_dump
+ * @ml_upgrade_failed: Set when a WMI peer re-association for ML upgrade fails;
+ *   upgraded is rolled back to false
+ */
+struct mesh_peer_mld_ctx {
+	bool upgraded;
+	u8 mld_mac[ETH_ALEN];
+	bool ml_ie_invalid;
+	bool ml_upgrade_failed;
+};
+
+/**
  * struct mesh_peer_info - Mesh peer beacon intersection state
+ *
+ * Peer configuration (set at addlocalpeer, read-only thereafter):
  * @is_mesh_peer: True if this station is a configured mesh peer
  * @mesh_peer_phymode: Peer phymode
  * @mesh_peer_nss: Peer nss
+ * @parse_beacon_install_key: Runtime copy of the flag from ieee80211_mesh_config_params_extn;
+ *   when set, beacon intersection installs the VAP key on this peer
+ *
+ * Beacon tracking:
  * @beacon_ie_checksum: CRC32 checksum of critical IEs from last beacon
  * @beacon_miss_count: Number of consecutive missed beacons
  * @last_beacon_time: Timestamp of last received beacon (jiffies)
+ *
+ * Beacon intersection:
  * @intersection_done: True if initial intersection completed successfully
+ * @peer_ht_restricted: TKIP pairwise cipher detected with HT-capable peer;
+ *   HT caps are suppressed at beacon intersection per 802.11-2020 §10.3.3
+ *   to fall back to legacy rates; the peer is not rejected.
  * @intersect_attempts: Total number of intersection attempts
  * @intersect_successes: Number of successful intersections
  * @cap_update_failures: Number of failed intersections (capability/driver level)
- * @rsn_parse_failures: Number of RSN IE / security policy check failures;
- *   incremented each time beacon intersection fails the RSN gate; peer stays
- *   alive and intersection is retried on subsequent beacons
- * @parse_beacon_install_key: Runtime copy of the flag from ieee80211_mesh_config_params_extn;
- *   when set, beacon intersection installs the VAP key on this peer
- * @key_installed: True after per-peer key has been successfully installed
+ * @cnt_cap_downgrade: Number of times the peer was disconnected due to a
+ *   capability downgrade detected at beacon intersection; incremented before
+ *   del_station is scheduled so the count survives until the station is freed
+ *
+ * RSN/security negotiation:
  * @peer_wpa_versions: NL80211_WPA_VERSION_* bitmask derived from peer RSN IE
  * @peer_ucast_cipher: WLAN_CIPHER_SUITE_* selected pairwise cipher from peer RSN IE
  * @peer_mcast_cipher: WLAN_CIPHER_SUITE_* group cipher from peer RSN IE
  * @peer_akm_suite: WLAN_AKM_SUITE_* from peer RSN IE
+ * @key_installed: True after per-peer key has been successfully installed
+ * @peer_rsn_ie: Raw copy of peer RSN IE bytes
+ * @peer_rsn_ie_len: Length of peer_rsn_ie (0 if open)
+ * @rsn_parse_failures: Number of RSN IE / security policy check failures;
+ *   incremented each time beacon intersection fails the RSN gate; peer stays
+ *   alive and intersection is retried on subsequent beacons
  * @cnt_combo_sha256_ccmp256: Number of times PSK-SHA256/CCMP-256 was selected
  * @cnt_combo_psk_ccmp: Number of times PSK/CCMP was selected
  * @cnt_legacy_zero_rsn: Number of times the peer's RSN IE had zero pairwise
@@ -251,6 +287,8 @@ struct mesh_bss_conf {
  *   whose beacon had an RSN IE (Day-0 Case 3)
  * @cnt_combo_open: Number of times both local and peer were open security
  *   (no RSN IE on either side — no cipher negotiation performed)
+ *
+ * MFP (protected management frames):
  * @peer_mfp_capable: Peer RSN caps MFP enabled bit
  * @peer_mfp_required: Peer RSN caps MFP required bit
  * @peer_caps_mfp_capability: MESH_CAPS_PEER_CAP_MFP_CAPABLE set at addlocalpeer time;
@@ -258,59 +296,53 @@ struct mesh_bss_conf {
  * @cnt_mfp_legacy_bypass: #7 — peer_caps_mfp_capability clear, MFP off regardless of beacon
  * @cnt_mfp_beacon_no_mfpc: #8 — peer_caps_mfp_capability set but beacon MFPC absent
  * @cnt_mfp_enabled: #9 — peer_caps_mfp_capability and beacon MFPC both set, MFP on
- * @peer_rsn_ie: Raw copy of peer RSN IE bytes
- * @peer_rsn_ie_len: Length of peer_rsn_ie (0 if open)
- * @peer_ht_restricted: TKIP pairwise cipher detected with HT-capable peer;
- *   HT caps are suppressed at beacon intersection per 802.11-2020 §10.3.3
- *   to fall back to legacy rates; the peer is not rejected.
+ *
+ * ML/EHT transition:
+ * @mld: ML/EHT transition state; tracks ML-IE parse results, upgrade/downgrade
+ *   lifecycle, and associated diagnostic flags
  */
 struct mesh_peer_info {
+	/* Peer configuration: set at addlocalpeer, read-only thereafter */
 	bool is_mesh_peer;
 	u32 mesh_peer_phymode;
 	u32 mesh_peer_nss;
+	bool parse_beacon_install_key;
+	/* Beacon tracking */
 	u32 beacon_ie_checksum;
 	u8 beacon_miss_count;
 	unsigned long last_beacon_time;
+	/* Beacon intersection */
 	bool intersection_done;
-	/* Statistics */
+	bool peer_ht_restricted;
 	u32 intersect_attempts;
 	u32 intersect_successes;
 	u32 cap_update_failures;
-	u32 rsn_parse_failures;
-	/* Security fields — parse_beacon_install_key is copied from
-	 * ieee80211_mesh_config_params_extn at add_local_peer time.
-	 * Default: driver auto-installs the VAP key and authorizes
-	 * the peer after successful beacon intersection.
-	 * When true (MESH_CAPS_SKIP_KEY_INSTALL set): consumer manages key installation
-	 * and peer authorization; driver skips both. */
-	bool parse_beacon_install_key;
-	bool key_installed;
-	/* Crypto params extracted from peer RSN IE at beacon intersection */
+	u32 cnt_cap_downgrade;
+	/* RSN/security negotiation */
 	u32 peer_wpa_versions;
 	u32 peer_ucast_cipher;
 	u32 peer_mcast_cipher;
 	u32 peer_akm_suite;
-	/* AKM-cipher negotiation counters */
+	bool key_installed;
+	u8 peer_rsn_ie[MESH_RSN_IE_MAX_LEN];
+	u16 peer_rsn_ie_len;
+	u32 rsn_parse_failures;
 	u32 cnt_combo_sha256_ccmp256;
 	u32 cnt_combo_psk_ccmp;
 	u32 cnt_legacy_zero_rsn;
 	u32 cnt_no_common_combo;
-	/* Primitive Mesh counters */
 	u32 cnt_secured_no_peer_rsn;
 	u32 cnt_open_peer_rsn;
 	u32 cnt_combo_open;
+	/* MFP (protected management frames) */
 	bool peer_mfp_capable;
 	bool peer_mfp_required;
-	bool peer_caps_mfp_capability; /* MESH_CAPS_PEER_CAP_MFP_CAPABLE set at addlocalpeer time;
-	                               * read-only gate — never modified by beacon intersection */
-	/* MFP intersection counters */
-	u32 cnt_mfp_legacy_bypass;   /* #7: peer_caps_mfp_capability clear -> MFP off regardless of beacon */
-	u32 cnt_mfp_beacon_no_mfpc;  /* #8: peer_caps_mfp_capability set, beacon MFPC absent */
-	u32 cnt_mfp_enabled;         /* #9: peer_caps_mfp_capability + beacon MFPC both set -> MFP on */
-	u8 peer_rsn_ie[MESH_RSN_IE_MAX_LEN]; /* raw RSN IE: tag(1) + len(1) + body(up to 255) */
-	u16 peer_rsn_ie_len;  /* total stored length (0 if open) */
-	/* PHY mode cipher restrictions */
-	bool peer_ht_restricted;  /* TKIP+HT: HT caps suppressed, legacy rates only */
+	bool peer_caps_mfp_capability;
+	u32 cnt_mfp_legacy_bypass;
+	u32 cnt_mfp_beacon_no_mfpc;
+	u32 cnt_mfp_enabled;
+	/* ML/EHT transition */
+	struct mesh_peer_mld_ctx mld;
 };
 
 struct ieee80211_mesh_peer_info {

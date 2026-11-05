@@ -18188,6 +18188,10 @@ static int ath12k_vendor_mesh_peer_dump(struct wiphy *wiphy,
 		peer_entry->key_installed             = (u8)peer_info->key_installed;
 		peer_entry->peer_ucast_cipher         = peer_info->peer_ucast_cipher;
 		peer_entry->peer_akm_suite            = peer_info->peer_akm_suite;
+		peer_entry->mesh_ml_upgraded          = peer_info->mld.upgraded;
+		peer_entry->ml_ie_invalid             = peer_info->mld.ml_ie_invalid;
+		peer_entry->ml_upgrade_failed         = peer_info->mld.ml_upgrade_failed;
+		peer_entry->cnt_cap_downgrade         = peer_info->cnt_cap_downgrade;
 
 		if (peer_mld_mac)
 			break;

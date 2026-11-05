@@ -47,19 +47,24 @@ enum ath12k_extn_mesh_conf_cmd_type {
 
 /* Per-peer binary payload for the mesh peer_dump vendor reply. */
 struct ieee80211_mesh_peer_dump_entry {
+	/* Peer identity */
 	u8   mac[ETH_ALEN];
 	u16  aid;
 	u8   is_mesh_peer;
+	/* PHY negotiation */
 	u32  phymode;               /* enum wmi_phy_mode value */
 	u32  nss;
+	/* Beacon tracking */
 	u8   beacon_miss_count;
 	u64  last_beacon_jiffies;
 	u64  current_jiffies;
 	u64  beacon_age_sec;
+	/* Beacon intersection */
 	u8   intersection_done;
 	u32  intersect_attempts;
 	u32  intersect_successes;
 	u32  cap_update_failures;
+	/* RSN/security negotiation */
 	u32  rsn_parse_failures;
 	/* AKM-cipher negotiation counters */
 	u32  cnt_combo_sha256_ccmp256;
@@ -75,14 +80,19 @@ struct ieee80211_mesh_peer_dump_entry {
 	u32  cnt_mfp_legacy_bypass;   /* #7 */
 	u32  cnt_mfp_beacon_no_mfpc;  /* #8 */
 	u32  cnt_mfp_enabled;         /* #9 */
-	/* Key installation status */
-	u8   key_installed;          /* 1 if pairwise key has been installed */
-	u32  peer_ucast_cipher;      /* WLAN_CIPHER_SUITE_* of installed key; 0 = open */
-	u32  peer_akm_suite;         /* WLAN_AKM_SUITE_* selected at intersection; 0 = open */
+	/* Key installation */
+	u8   key_installed;           /* 1 if pairwise key has been installed */
+	u32  peer_ucast_cipher;       /* WLAN_CIPHER_SUITE_* selected at intersection; 0 = open */
+	u32  peer_akm_suite;          /* WLAN_AKM_SUITE_* selected at intersection; 0 = open */
+	/* ML/EHT state */
+	bool mesh_ml_upgraded;        /* true if peer upgraded to EHT via ML-IE beacon intersection */
+	bool ml_ie_invalid;
+	bool ml_upgrade_failed;
+	u32  cnt_cap_downgrade;
 } __packed;
 
 /* ABI size guard: keep in sync with the userspace definition. */
-static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 109,
+static_assert(sizeof(struct ieee80211_mesh_peer_dump_entry) == 116,
 	      "ieee80211_mesh_peer_dump_entry size mismatch");
 
 #define MESH_BYTE_MASK 0xFF

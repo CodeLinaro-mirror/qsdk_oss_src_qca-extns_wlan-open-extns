@@ -2707,6 +2707,14 @@ static int ath12k_vendor_chan144_apply(struct ath12k *ar, u8 enable)
 		chan->orig_flags &= ~IEEE80211_CHAN_DISABLED;
 	}
 
+	if (old_flags == chan->flags) {
+		ath12k_dbg(NULL, ATH12K_DBG_MAC,
+			   "CHAN144: no-op on radio %u (flags unchanged 0x%x), skip reg notify\n",
+			   ar->pdev_idx, chan->flags);
+		ar->radio_cfg.chan144_enabled = enable;
+		return 0;
+	}
+
 	if (enable) {
 		reg_rule = freq_reg_info(wiphy, MHZ_TO_KHZ(ATH12K_CHAN144_FREQ));
 		if (IS_ERR_OR_NULL(reg_rule)) {

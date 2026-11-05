@@ -336,8 +336,8 @@ static inline int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
     return -1;
 }
 
-static inline void ath12k_vendor_send_event(struct ath12k_base *ab,
-					    u8 event_flag)
+static inline void ath12k_vendor_send_event_all_radios(struct ath12k_base *ab,
+						       u8 event_flag)
 {
 
 }
@@ -360,6 +360,10 @@ static inline bool
 ath12k_mac_diagnostic_sta_vap_exists_extn(struct ath12k_hw *ah)
 {
 	return false;
+}
+
+static inline void ath12k_vendor_send_radio_event(struct ath12k *ar, u8 event_flag)
+{
 }
 
 static inline void ath12k_vendor_send_cbs_scan_event(struct ath12k *ar,
@@ -779,8 +783,9 @@ int ath12k_vendor_fw_recovery_event(struct wiphy *wiphy,
 				    u8 radio_idx,
 				    int event_type);
 
-void ath12k_vendor_send_event(struct ath12k_base *ab,
-			      u8 event_flag);
+void ath12k_vendor_send_event_all_radios(struct ath12k_base *ab, u8 event_flag);
+
+void ath12k_vendor_send_radio_event(struct ath12k *ar, u8 event_flag);
 
 void ath12k_mac_op_notify_diagnostic_sta_disconnect(struct ieee80211_hw *hw,
 						    struct ieee80211_vif *vif,

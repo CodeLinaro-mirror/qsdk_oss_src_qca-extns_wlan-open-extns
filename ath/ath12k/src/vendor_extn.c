@@ -15934,42 +15934,34 @@ fail:
 	return ret;
 }
 
-/*
- * ath12k_vendor_send_event - Driver helper to
- * send a device-wide firmware recovery vendor event
- * @ab: Pointer to the ath12k base device context
- * @event_flag: Vendor-defined recovery event type
- * (e.g., ASSERT, RECOVERY_DONE, COREDUMP_COMPLETE)
- */
-void ath12k_vendor_send_event(struct ath12k_base *ab,
-			      u8 event_flag)
+/* Send one recovery event for a single radio. */
+void ath12k_vendor_send_radio_event(struct ath12k *ar, u8 event_flag)
 {
-	struct ath12k_pdev *pdev;
-	struct ath12k *ar;
-
-	if (ab->num_radios > 0) {
-		/*
-		* Use the first radio's pdev context to send the vendor event.
-		* This assumes that the recovery event is device-wide and not
-		* specific to a particular radio.
-		*/
-		pdev = &ab->pdevs[0];
-		ar = pdev->ar;
-
-		if (ar && ar->ah && ar->ah->hw && ar->ah->hw->wiphy) {
-			ath12k_vendor_fw_recovery_event(ar->ah->hw->wiphy, NULL,
-							ar->hw_link_id,
-							ar->radio_idx,
-							event_flag);
-			ath12k_info(ab, "FW recovery vendor event send: event_type: %u link: %u, radio_idx: %u\n",
-					event_flag, ar->hw_link_id, ar->radio_idx);
-		} else {
-			ath12k_err(ab, "Cannot send recovery vendor event: invalid radio context\n");
-
-		}
+	if (ar && ar->ah && ar->ah->hw && ar->ah->hw->wiphy) {
+		ath12k_vendor_fw_recovery_event(ar->ah->hw->wiphy, NULL,
+						ar->hw_link_id,
+						ar->radio_idx,
+						event_flag);
+		ath12k_info(ar->ab, "FW recovery vendor event send: event_type: %u link: %u, radio_idx: %u\n",
+			    event_flag, ar->hw_link_id, ar->radio_idx);
 	} else {
-		ath12k_err(ab, "Cannot send recovery vendor event: no radios available\n");
+		ath12k_err(ar ? ar->ab : NULL,
+			   "Cannot send recovery vendor event: invalid radio context\n");
 	}
+}
+
+/* Send one recovery event per radio on the SoC (e.g. FW assert). */
+void ath12k_vendor_send_event_all_radios(struct ath12k_base *ab, u8 event_flag)
+{
+	int i;
+
+	if (ab->num_radios <= 0) {
+		ath12k_err(ab, "Cannot send recovery vendor event: no radios available\n");
+		return;
+	}
+
+	for (i = 0; i < ab->num_radios; i++)
+		ath12k_vendor_send_radio_event(ab->pdevs[i].ar, event_flag);
 }
 
 /*

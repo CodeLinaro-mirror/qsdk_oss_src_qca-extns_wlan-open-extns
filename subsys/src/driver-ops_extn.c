@@ -509,27 +509,6 @@ void ieee80211_bss_conf_extn_free(struct ieee80211_bss_conf *link_conf)
 	link_conf->bss_conf_extn = NULL;
 }
 
-/**
- * ieee80211_cap_rx_ba_bufsize_extn - Cap the negotiated RX BA buffer size
- *
- * @link_conf: Pointer to BSS conf
- * @buf_size: Buffer size negotiated from the ADDBA request
- *
- * Return: buf_size capped to link_conf->bss_conf_extn->ba_bufsize when a
- * non-zero limit is configured, otherwise buf_size unchanged.
- */
-u16 ieee80211_cap_rx_ba_bufsize_extn(struct ieee80211_bss_conf *link_conf, u16 buf_size)
-{
-	if (!link_conf)
-		return buf_size;
-
-	if (link_conf->bss_conf_extn && link_conf->bss_conf_extn->ba_bufsize &&
-	    buf_size > link_conf->bss_conf_extn->ba_bufsize)
-		return link_conf->bss_conf_extn->ba_bufsize;
-
-	return buf_size;
-}
-
 #ifdef CPTCFG_QCN_EXTN_MESH_SUPPORT
 void ieee80211_mark_mmesh_frame(struct ieee80211_rx_status *status)
 {

@@ -2428,7 +2428,7 @@ ath12k_reg_build_for_noncountry(struct ath12k_base *ab,
  *
  * Returns true if the rule is non-country rule, otherwise return false.
  */
-static inline bool ath12k_is_rule_non_country(struct ieee80211_reg_rule *rule)
+static inline bool ath12k_is_rule_non_country(const struct ieee80211_reg_rule *rule)
 {
 	return rule->mode == NL80211_REG_NO_POWER_MODE;
 }
